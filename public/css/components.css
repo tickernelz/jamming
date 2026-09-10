@@ -1844,6 +1844,12 @@
     border: 1px solid rgba(99, 102, 241, 0.4);
 }
 
+.user-role-badge.punished {
+    background: rgba(239, 68, 68, 0.2);
+    color: #f87171;
+    border: 1px solid rgba(239, 68, 68, 0.45);
+}
+
 /* --- CHAT ACTIVITY NOTICES (BLAME LOGS) --- */
 .chat-activity-notice {
     display: flex;
@@ -1872,5 +1878,631 @@
     color: var(--text-main);
     font-weight: 600;
 }
+
+/* ==========================================================================
+   PUNISHMENT BANNER & CONTROLS LOCKDOWN
+   ========================================================================== */
+.room-penalty-banner {
+    display: flex;
+    align-items: center;
+    background: linear-gradient(90deg, rgba(239, 68, 68, 0.25) 0%, rgba(185, 28, 28, 0.15) 100%);
+    border: 1px solid rgba(239, 68, 68, 0.45);
+    border-radius: var(--radius-md);
+    padding: 10px 16px;
+    margin-bottom: 14px;
+    box-shadow: 0 0 24px rgba(239, 68, 68, 0.2);
+    animation: pulseBorder 2s infinite ease-in-out;
+}
+
+@keyframes pulseBorder {
+    0%, 100% { border-color: rgba(239, 68, 68, 0.4); box-shadow: 0 0 15px rgba(239, 68, 68, 0.15); }
+    50% { border-color: rgba(239, 68, 68, 0.8); box-shadow: 0 0 25px rgba(239, 68, 68, 0.35); }
+}
+
+.penalty-banner-content {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+}
+
+.penalty-icon {
+    font-size: 24px;
+    flex-shrink: 0;
+}
+
+.penalty-text-group {
+    flex: 1;
+}
+
+.penalty-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: #f87171;
+}
+
+.penalty-desc {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.penalty-countdown-badge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(239, 68, 68, 0.3);
+    border: 1px solid rgba(239, 68, 68, 0.6);
+    padding: 6px 12px;
+    border-radius: var(--radius-full);
+    color: #ffffff;
+    font-family: var(--font-mono);
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    flex-shrink: 0;
+}
+
+/* ==========================================================================
+   MINI GAMES PANEL (LAUNCHER TAB)
+   ========================================================================== */
+.games-panel-wrapper {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.games-panel-header {
+    margin-bottom: 4px;
+}
+
+.games-header-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text-main);
+    margin-bottom: 4px;
+}
+
+.games-header-sub {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.game-cards-selector {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+}
+
+.game-select-card {
+    background: var(--bg-surface-elevated);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 16px;
+    cursor: pointer;
+    position: relative;
+    transition: all 0.2s ease;
+    display: flex;
+    flex-direction: column;
+}
+
+.game-select-card:hover {
+    border-color: var(--primary);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.game-select-card.selected {
+    background: rgba(239, 68, 68, 0.08);
+    border: 2px solid var(--primary);
+    box-shadow: 0 0 20px rgba(239, 68, 68, 0.25);
+}
+
+.game-card-badge {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    font-size: 10px;
+    font-weight: 700;
+    background: rgba(255, 255, 255, 0.1);
+    padding: 2px 8px;
+    border-radius: 10px;
+    color: var(--text-muted);
+}
+
+.game-select-card.selected .game-card-badge {
+    background: var(--primary);
+    color: #ffffff;
+}
+
+.game-card-emoji {
+    font-size: 32px;
+    margin-bottom: 8px;
+}
+
+.game-card-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text-main);
+    margin-bottom: 6px;
+}
+
+.game-card-desc {
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.4;
+}
+
+.game-settings-bar {
+    background: var(--bg-surface-elevated);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.penalty-setting-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.penalty-setting-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-main);
+}
+
+.penalty-duration-btns {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.btn-penalty-opt {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-muted);
+    padding: 6px 14px;
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.btn-penalty-opt:hover {
+    color: var(--text-main);
+    border-color: var(--border-color);
+}
+
+.btn-penalty-opt.active {
+    background: var(--primary);
+    color: #ffffff;
+    border-color: var(--primary);
+    box-shadow: 0 0 12px rgba(239, 68, 68, 0.4);
+}
+
+.btn-start-game-cta {
+    width: 100%;
+    padding: 12px !important;
+    font-size: 14px !important;
+    font-weight: 700 !important;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    box-shadow: 0 4px 18px rgba(239, 68, 68, 0.4);
+}
+
+.active-punishments-section {
+    margin-top: 4px;
+}
+
+.empty-punish-box {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    background: rgba(16, 185, 129, 0.08);
+    border: 1px solid rgba(16, 185, 129, 0.2);
+    border-radius: var(--radius-md);
+    font-size: 12px;
+    color: #34d399;
+}
+
+.active-punish-header {
+    margin-bottom: 8px;
+}
+
+.punish-heading {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+}
+
+.punish-users-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.punish-user-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.25);
+    border-radius: var(--radius-md);
+}
+
+.p-avatar {
+    font-size: 20px;
+}
+
+.p-info {
+    flex: 1;
+}
+
+.p-nick {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-main);
+    display: block;
+}
+
+.p-reason {
+    font-size: 11px;
+    color: #f87171;
+}
+
+.p-timer {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: #fca5a5;
+}
+
+.btn-clear-punish {
+    color: var(--text-muted);
+    border: 1px solid var(--border-subtle);
+    padding: 2px 8px;
+}
+
+.btn-clear-punish:hover {
+    color: #34d399;
+    border-color: #34d399;
+}
+
+/* ==========================================================================
+   SYNCHRONIZED GAME ARENA MODAL OVERLAY
+   ========================================================================== */
+.game-arena-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.82);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    animation: fadeIn 0.2s ease-out;
+}
+
+.game-arena-box {
+    background: #0f1117;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8), 0 0 30px rgba(239, 68, 68, 0.2);
+    width: 100%;
+    max-width: 580px;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    animation: modalIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.arena-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.arena-title-area {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.arena-game-badge {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text-main);
+}
+
+.arena-stakes-badge {
+    font-size: 11px;
+    font-weight: 600;
+    background: rgba(239, 68, 68, 0.2);
+    color: #f87171;
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    padding: 2px 8px;
+    border-radius: 12px;
+}
+
+.arena-body {
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 280px;
+    overflow-y: auto;
+}
+
+/* --- Adu Dadu Arena --- */
+.dice-arena-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 12px;
+    width: 100%;
+}
+
+.dice-player-card {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--radius-md);
+    padding: 12px 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    position: relative;
+    transition: all 0.3s ease;
+}
+
+.dice-player-card.is-loser {
+    background: rgba(239, 68, 68, 0.2);
+    border-color: #ef4444;
+    box-shadow: 0 0 25px rgba(239, 68, 68, 0.5);
+    transform: scale(1.05);
+}
+
+.dice-player-card.is-safe {
+    background: rgba(16, 185, 129, 0.06);
+    border-color: rgba(16, 185, 129, 0.3);
+}
+
+.dice-p-avatar {
+    font-size: 26px;
+    margin-bottom: 4px;
+}
+
+.dice-p-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-main);
+    margin-bottom: 8px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dice-cubes-row {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+.dice-box {
+    width: 44px;
+    height: 44px;
+    background: #ffffff;
+    color: #111827;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 28px;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
+    transition: transform 0.15s ease;
+}
+
+.dice-box.rolling {
+    animation: diceTumble 0.25s infinite alternate;
+}
+
+@keyframes diceTumble {
+    0% { transform: rotate(-15deg) scale(0.9); }
+    100% { transform: rotate(15deg) scale(1.1); }
+}
+
+.dice-total-score {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.loser-stamp {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) rotate(-15deg);
+    background: #ef4444;
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: 900;
+    padding: 4px 10px;
+    border-radius: 4px;
+    border: 2px solid #ffffff;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.6);
+    pointer-events: none;
+    animation: popIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* --- Adu Angka Arena --- */
+.number-arena-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 12px;
+    width: 100%;
+}
+
+.number-player-card {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--radius-md);
+    padding: 12px 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    transition: all 0.3s ease;
+}
+
+.number-player-card.is-loser {
+    background: rgba(239, 68, 68, 0.2);
+    border-color: #ef4444;
+    box-shadow: 0 0 25px rgba(239, 68, 68, 0.5);
+    transform: scale(1.05);
+}
+
+.num-p-avatar {
+    font-size: 26px;
+    margin-bottom: 4px;
+}
+
+.num-p-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-main);
+    margin-bottom: 6px;
+}
+
+.num-digital-display {
+    background: #000000;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    padding: 6px 14px;
+    margin-bottom: 6px;
+    box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.8);
+}
+
+.digital-number {
+    font-family: var(--font-mono);
+    font-size: 28px;
+    font-weight: 800;
+    color: #60a5fa;
+    text-shadow: 0 0 10px rgba(96, 165, 250, 0.8);
+    letter-spacing: 2px;
+}
+
+.digital-number.rolling-number {
+    color: #fbbf24;
+    text-shadow: 0 0 10px rgba(251, 191, 36, 0.8);
+}
+
+.num-status-label {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+/* --- Roulette Spin Wheel Arena --- */
+.wheel-arena-wrapper {
+    position: relative;
+    width: 320px;
+    height: 320px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.wheel-canvas {
+    width: 300px;
+    height: 300px;
+    border-radius: 50%;
+    box-shadow: 0 0 30px rgba(0, 0, 0, 0.9), 0 0 20px rgba(251, 191, 36, 0.3);
+}
+
+.wheel-pointer-arrow {
+    position: absolute;
+    top: -8px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10;
+    filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.8));
+    animation: pointerWobble 0.2s infinite alternate;
+}
+
+@keyframes pointerWobble {
+    0% { transform: translateX(-50%) rotate(-3deg); }
+    100% { transform: translateX(-50%) rotate(3deg); }
+}
+
+.wheel-center-hub {
+    position: absolute;
+    width: 44px;
+    height: 44px;
+    background: #111827;
+    border: 3px solid #fbbf24;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.8);
+    z-index: 5;
+    pointer-events: none;
+}
+
+/* --- Result Summary Bar --- */
+.arena-footer {
+    padding: 14px 20px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.02);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.result-summary-box {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 6px;
+    width: 100%;
+}
+
+.result-summary-box.you-lost .result-headline {
+    color: #ef4444;
+    font-size: 18px;
+    font-weight: 800;
+}
+
+.result-summary-box.safe .result-headline {
+    color: #10b981;
+    font-size: 16px;
+    font-weight: 700;
+}
+
+.result-penalty-info {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+}
+
 
 

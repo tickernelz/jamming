@@ -173,6 +173,20 @@ class JamriWebSocket {
         this.send('voice_state', { speaking: !!isSpeaking });
     }
 
+    sendGameStart(gameType, penaltyMinutes = 2, options = {}) {
+        this.send('game_start', {
+            game_type: gameType,
+            penalty_minutes: parseInt(penaltyMinutes, 10) || 2,
+            options: options
+        });
+    }
+
+    sendPunishmentClear(deviceId) {
+        this.send('punishment_clear', {
+            device_id: deviceId
+        });
+    }
+
     disconnect() {
         this.roomId = null;
         if (this.pingInterval) {

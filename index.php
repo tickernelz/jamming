@@ -236,6 +236,7 @@
     <script src="public/js/search.js?v=<?= time() ?>"></script>
     <script src="public/js/soundboard.js?v=<?= time() ?>"></script>
     <script src="public/js/voice-ptt.js?v=<?= time() ?>"></script>
+    <script src="public/js/games.js?v=<?= time() ?>"></script>
     <script src="public/js/app.js?v=<?= time() ?>"></script>
 </body>
 </html>

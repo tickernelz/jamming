@@ -560,6 +560,9 @@ function renderRoomShell(roomDetail) {
             </div>
             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
                 <div id="room-ptt-slot"></div>
+                <button type="button" id="btn-room-minigames" class="btn btn-outline btn-sm" title="Mainkan Mini Games Realtime">
+                    <span>Mini Games 🎲</span>
+                </button>
                 <button type="button" id="btn-room-search" class="btn btn-primary btn-sm">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="11" cy="11" r="8"></circle>
@@ -601,6 +604,14 @@ function renderRoomShell(roomDetail) {
                         </svg>
                         <span>Soundboard 🔊</span>
                     </button>
+                    <button type="button" class="tab-nav-item" data-tab="room-games">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect>
+                            <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"></circle>
+                            <circle cx="15.5" cy="15.5" r="1.5" fill="currentColor"></circle>
+                        </svg>
+                        <span>Games 🎲</span>
+                    </button>
                     <button type="button" id="btn-shuffle-room-queue" class="btn btn-ghost btn-sm" style="margin-left:auto;" title="Acak Antrean">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polyline points="16 3 21 3 21 8"></polyline>
@@ -637,6 +648,7 @@ function renderRoomShell(roomDetail) {
                         <div id="soundboard-grid" class="soundboard-grid-wrapper"></div>
                     </div>
                 </div>
+                <div id="room-games-tab-panel" class="tab-panel" style="display:none;"></div>
             </div>
 
             <!-- Kolom Kanan: Live Chat & Peserta -->
@@ -661,6 +673,10 @@ function renderRoomShell(roomDetail) {
     const btnShuffleRoom = container.querySelector('#btn-shuffle-room-queue');
     if (btnShuffleRoom) {
         btnShuffleRoom.addEventListener('click', () => {
+            if (window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
+                alert('🚫 Anda sedang dihukum kalah game! Tidak bisa mengacak antrean.');
+                return;
+            }
             window.JAMRI_APP.wsClient.sendQueueShuffle();
         });
         window.JAMRI_APP.player.on('shuffle_change', (isShuffled) => {
@@ -668,6 +684,15 @@ function renderRoomShell(roomDetail) {
             btnShuffleRoom.classList.toggle('btn-primary', isShuffled);
             btnShuffleRoom.classList.toggle('btn-ghost', !isShuffled);
             btnShuffleRoom.title = isShuffled ? 'Acak Antrean: AKTIF' : 'Acak Antrean: NON-AKTIF';
+        });
+    }
+
+    // Quick Mini Games button in header
+    const btnMiniGames = container.querySelector('#btn-room-minigames');
+    if (btnMiniGames) {
+        btnMiniGames.addEventListener('click', () => {
+            const gamesTabBtn = container.querySelector('[data-tab="room-games"]');
+            if (gamesTabBtn) gamesTabBtn.click();
         });
     }
 
@@ -681,6 +706,11 @@ function renderRoomShell(roomDetail) {
             container.querySelector('#room-queue-tab-panel').style.display = target === 'room-queue' ? 'block' : 'none';
             container.querySelector('#room-playlist-tab-panel').style.display = target === 'room-playlist' ? 'block' : 'none';
             container.querySelector('#room-soundboard-tab-panel').style.display = target === 'room-soundboard' ? 'block' : 'none';
+            container.querySelector('#room-games-tab-panel').style.display = target === 'room-games' ? 'block' : 'none';
+
+            if (target === 'room-games' && window.JAMRI_APP.games) {
+                window.JAMRI_APP.games.renderPanel(container.querySelector('#room-games-tab-panel'));
+            }
         });
     });
 
@@ -720,6 +750,12 @@ function renderRoomShell(roomDetail) {
         window.JAMRI_APP.voicePTT = new JamriVoicePTT();
     }
     window.JAMRI_APP.voicePTT.attach(room.id, window.JAMRI_USER, window.JAMRI_APP.wsClient);
+
+    // Initialize & Attach Mini Games
+    if (!window.JAMRI_APP.games) {
+        window.JAMRI_APP.games = new JamriGames();
+    }
+    window.JAMRI_APP.games.attach(room.id, window.JAMRI_USER, window.JAMRI_APP.wsClient);
 }
 
 function bindRoomWebSocketEvents(ws, player, roomDetail) {
@@ -732,6 +768,9 @@ function bindRoomWebSocketEvents(ws, player, roomDetail) {
         }
         if (data.online_users && window.JAMRI_APP.currentChat) {
             window.JAMRI_APP.currentChat.setOnlineUsers(data.online_users);
+        }
+        if (data.punishments && window.JAMRI_APP.games) {
+            window.JAMRI_APP.games.setPunishments(data.punishments);
         }
         player.serverPlaybackState = data.state || 'stopped';
         player.serverBasePos = data.position || 0;
@@ -766,8 +805,26 @@ function bindRoomWebSocketEvents(ws, player, roomDetail) {
         if (data.online_users && window.JAMRI_APP.currentChat) {
             window.JAMRI_APP.currentChat.setOnlineUsers(data.online_users);
         }
+        if (data.punishments && window.JAMRI_APP.games) {
+            window.JAMRI_APP.games.setPunishments(data.punishments);
+        }
         if (data.user && window.JAMRI_APP.currentChat) {
             window.JAMRI_APP.currentChat.appendActivityNotice('bergabung ke room 👋', '👋', data.user.nickname);
+        }
+    });
+
+    ws.on('game_started', (data) => {
+        if (data.started_by && window.JAMRI_APP.currentChat) {
+            window.JAMRI_APP.currentChat.appendActivityNotice(`memulai permainan ${data.game_name} 🎮`, '🎮', data.started_by);
+        }
+    });
+
+    ws.on('punishments_updated', (data) => {
+        if (window.JAMRI_APP.games) {
+            window.JAMRI_APP.games.setPunishments(data.punishments || []);
+        }
+        if (data.cleared_user && window.JAMRI_APP.currentChat) {
+            window.JAMRI_APP.currentChat.appendActivityNotice(`hukuman untuk ${data.cleared_user} telah diampuni oleh ${data.triggered_by || 'Host'} 🕊️`, '🕊️', 'Sistem');
         }
     });
 
@@ -957,6 +1014,11 @@ function renderRoomQueue(queue) {
         item.addEventListener('drop', (e) => {
             e.preventDefault();
             item.classList.remove('drag-over');
+            if (window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
+                alert('🚫 Anda sedang dihukum kalah game! Tidak bisa mengubah urutan antrean.');
+                list._draggedIdx = null;
+                return;
+            }
             const fromIdx = list._draggedIdx;
             const toIdx = idx;
             if (fromIdx !== undefined && fromIdx !== null && fromIdx !== toIdx) {
@@ -996,6 +1058,12 @@ function renderRoomQueue(queue) {
                     const toIdx = parseInt(targetCard.getAttribute('data-index'), 10);
                     const fromIdx = list._touchFromIdx;
                     if (!isNaN(toIdx) && fromIdx !== undefined && fromIdx !== toIdx) {
+                        if (window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
+                            alert('🚫 Anda sedang dihukum kalah game! Tidak bisa mengubah urutan antrean.');
+                            list._touchTargetCard = null;
+                            list._touchFromIdx = null;
+                            return;
+                        }
                         const newQueue = [...queue];
                         const [moved] = newQueue.splice(fromIdx, 1);
                         newQueue.splice(toIdx, 0, moved);
@@ -1009,6 +1077,10 @@ function renderRoomQueue(queue) {
         }
 
         const playTrackFn = () => {
+            if (window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
+                alert('🚫 Anda sedang dihukum kalah game! Tidak bisa memutar lagu.');
+                return;
+            }
             window.JAMRI_APP.wsClient.sendSetTrack(track);
         };
 
@@ -1027,6 +1099,10 @@ function renderRoomQueue(queue) {
 
         item.querySelector('.btn-remove-q').addEventListener('click', (e) => {
             e.stopPropagation();
+            if (window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
+                alert('🚫 Anda sedang dihukum kalah game! Tidak bisa menghapus lagu dari antrean.');
+                return;
+            }
             window.JAMRI_APP.wsClient.sendQueueRemove(track.id);
         });
 
@@ -1075,6 +1151,10 @@ function renderRoomPlaylist(playlist) {
         `;
 
         item.querySelector('.btn-enqueue-p').addEventListener('click', () => {
+            if (window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
+                alert('🚫 Anda sedang dihukum kalah game! Tidak bisa menambah lagu ke antrean.');
+                return;
+            }
             if (window.JAMRI_APP.roomQueue && window.JAMRI_APP.roomQueue.some(t => t.youtube_id === track.youtube_id)) {
                 showToast('Lagu ini sudah ada di antrean.', 'warning');
                 return;
@@ -1086,6 +1166,10 @@ function renderRoomPlaylist(playlist) {
         const btnRemove = item.querySelector('.btn-remove-p');
         if (btnRemove) {
             btnRemove.addEventListener('click', () => {
+                if (window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
+                    alert('🚫 Anda sedang dihukum kalah game! Tidak bisa menghapus lagu dari Bank Musik.');
+                    return;
+                }
                 window.JAMRI_APP.wsClient.sendPlaylistRemove(track.id);
             });
         }
@@ -1627,13 +1711,27 @@ function bindPlayerDock(player) {
     // Initialize local volume display
     updateVolumeUi(player.volume);
 
+    function checkControlPermitted() {
+        if (window.JAMRI_APP && window.JAMRI_APP.currentView === 'room' && window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
+            const sec = window.JAMRI_APP.games.getPunishmentRemainingSeconds();
+            const m = Math.floor(sec / 60);
+            const s = sec % 60;
+            const timeStr = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+            alert(`🚫 Anda sedang dihukum kalah game! Kontrol musik terkunci (sisa ${timeStr}).`);
+            return false;
+        }
+        return true;
+    }
+
     // Play / Pause Click
     btnPlay.addEventListener('click', () => {
+        if (!checkControlPermitted()) return;
         player.togglePlay();
     });
 
     let isNavThrottled = false;
     btnPrev.addEventListener('click', () => {
+        if (!checkControlPermitted()) return;
         if (isNavThrottled) return;
         isNavThrottled = true;
         btnPrev.style.opacity = '0.5';
@@ -1647,6 +1745,7 @@ function bindPlayerDock(player) {
     });
 
     btnNext.addEventListener('click', () => {
+        if (!checkControlPermitted()) return;
         if (isNavThrottled) return;
         isNavThrottled = true;
         btnNext.style.opacity = '0.5';
@@ -1660,11 +1759,13 @@ function bindPlayerDock(player) {
     });
 
     btnLoop.addEventListener('click', () => {
+        if (!checkControlPermitted()) return;
         player.toggleLoop();
     });
 
     if (btnShuffle) {
         btnShuffle.addEventListener('click', () => {
+            if (!checkControlPermitted()) return;
             player.toggleShuffle();
         });
     }
@@ -1702,6 +1803,7 @@ function bindPlayerDock(player) {
 
     // Progress Scrubber Click
     progressBar.addEventListener('click', (e) => {
+        if (!checkControlPermitted()) return;
         const rect = progressBar.getBoundingClientRect();
         const clickX = e.clientX - rect.left;
         const width = rect.width;

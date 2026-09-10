@@ -243,6 +243,11 @@ class JamriSearch {
                 const activeWs = this.ws || (window.JAMRI_APP && window.JAMRI_APP.wsClient);
                 const isCurrentlyJamming = this.player.mode === 'jamming' || !!(window.JAMRI_APP && window.JAMRI_APP.activeRoomId);
 
+                if (isCurrentlyJamming && window.JAMRI_APP && window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
+                    alert('🚫 Anda sedang dihukum kalah game! Tidak bisa memutar lagu.');
+                    return;
+                }
+
                 if (isCurrentlyJamming && activeWs && activeWs.isConnected) {
                     activeWs.sendSetTrack(track);
                 } else {
@@ -256,6 +261,11 @@ class JamriSearch {
                 e.stopPropagation();
                 const activeWs = this.ws || (window.JAMRI_APP && window.JAMRI_APP.wsClient);
                 const isCurrentlyJamming = this.player.mode === 'jamming' || !!(window.JAMRI_APP && window.JAMRI_APP.activeRoomId);
+
+                if (isCurrentlyJamming && window.JAMRI_APP && window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
+                    alert('🚫 Anda sedang dihukum kalah game! Tidak bisa menambah antrean.');
+                    return;
+                }
 
                 if (isCurrentlyJamming) {
                     if (window.JAMRI_APP && window.JAMRI_APP.roomQueue && window.JAMRI_APP.roomQueue.some(t => t.youtube_id === track.youtube_id)) {
@@ -286,6 +296,11 @@ class JamriSearch {
                 e.stopPropagation();
                 const activeWs = this.ws || (window.JAMRI_APP && window.JAMRI_APP.wsClient);
                 const isCurrentlyJamming = this.player.mode === 'jamming' || !!(window.JAMRI_APP && window.JAMRI_APP.activeRoomId);
+
+                if (isCurrentlyJamming && window.JAMRI_APP && window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
+                    alert('🚫 Anda sedang dihukum kalah game! Tidak bisa menambah lagu ke Bank Musik.');
+                    return;
+                }
 
                 if (isCurrentlyJamming) {
                     if (window.JAMRI_APP && window.JAMRI_APP.roomPlaylist && window.JAMRI_APP.roomPlaylist.some(t => t.youtube_id === track.youtube_id)) {

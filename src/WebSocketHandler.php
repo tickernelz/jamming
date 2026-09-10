@@ -95,6 +95,7 @@ class WebSocketHandler implements MessageComponentInterface
                 'loop_mode' => 'off',
                 'history' => [],
                 'is_shuffled' => false,
+                'punishments' => [],
             ];
         }
 
@@ -117,6 +118,7 @@ class WebSocketHandler implements MessageComponentInterface
             'queue' => $queue,
             'server_time' => (int)(microtime(true) * 1000),
             'online_users' => $this->getOnlineUsers($roomId),
+            'punishments' => $this->getActivePunishments($roomId),
         ]));
 
         // Broadcast to others that a user joined
@@ -128,6 +130,7 @@ class WebSocketHandler implements MessageComponentInterface
                 'device_id' => $deviceId,
             ],
             'online_users' => $this->getOnlineUsers($roomId),
+            'punishments' => $this->getActivePunishments($roomId),
         ], $conn);
     }
 
@@ -147,6 +150,34 @@ class WebSocketHandler implements MessageComponentInterface
         }
 
         $type = $data['type'];
+
+        // Guard: Check if music control action is attempted by a currently punished user
+        $musicControlActions = [
+            'play', 'pause', 'seek', 'set_track', 'next', 'prev',
+            'set_loop', 'queue_add', 'queue_reorder', 'queue_remove',
+            'queue_shuffle', 'playlist_add', 'playlist_remove'
+        ];
+
+        if (in_array($type, $musicControlActions, true)) {
+            if ($this->isUserPunished($roomId, $meta['device_id'], $meta['nickname'])) {
+                $p = $this->getUserPunishment($roomId, $meta['device_id'], $meta['nickname']);
+                $remainSec = max(1, ($p['until'] ?? time()) - time());
+                $remStr = sprintf('%02d:%02d', floor($remainSec / 60), $remainSec % 60);
+                $gameName = $p['game_name'] ?? 'Mini Game';
+
+                $from->send(json_encode([
+                    'type' => 'notice',
+                    'message' => "🚫 Kamu sedang dihukum kalah di {$gameName}! Tidak bisa mengatur musik (sisa {$remStr}).",
+                    'level' => 'warning',
+                ]));
+                $from->send(json_encode([
+                    'type' => 'punishment_status',
+                    'punished' => true,
+                    'punishment' => $p,
+                ]));
+                return;
+            }
+        }
 
         switch ($type) {
             case 'ping':
@@ -457,6 +488,24 @@ class WebSocketHandler implements MessageComponentInterface
                     'sender_emoji' => $meta['emoji'],
                 ]);
                 break;
+
+            case 'game_start':
+                $this->handleGameStart($roomId, $meta, $data);
+                break;
+
+            case 'punishment_clear':
+                $targetDevId = $data['device_id'] ?? '';
+                if ($targetDevId !== '' && isset($this->rooms[$roomId]['punishments'][$targetDevId])) {
+                    $cleared = $this->rooms[$roomId]['punishments'][$targetDevId];
+                    unset($this->rooms[$roomId]['punishments'][$targetDevId]);
+                    $this->broadcastToRoom($roomId, [
+                        'type' => 'punishments_updated',
+                        'punishments' => array_values($this->rooms[$roomId]['punishments']),
+                        'cleared_user' => $cleared['nickname'] ?? '',
+                        'triggered_by' => $meta['nickname'],
+                    ]);
+                }
+                break;
         }
     }
 
@@ -714,6 +763,217 @@ class WebSocketHandler implements MessageComponentInterface
             } catch (\Throwable $e) {
                 // If a connection dropped or failed, ignore and continue to others
             }
+        }
+    }
+
+    private function handleGameStart(string $roomId, array $meta, array $data): void
+    {
+        $gameType = in_array($data['game_type'] ?? '', ['dice', 'number', 'wheel'], true) ? $data['game_type'] : 'dice';
+        $penaltyMinutes = max(1, min(15, (int)($data['penalty_minutes'] ?? 2)));
+
+        $onlineUsers = $this->getOnlineUsers($roomId);
+        if (empty($onlineUsers)) {
+            return;
+        }
+
+        $gameTitles = [
+            'dice' => 'Adu Dadu 🎲',
+            'number' => 'Adu Angka 🎯',
+            'wheel' => 'Roulette Spin Wheel 🎡',
+        ];
+        $gameName = $gameTitles[$gameType] ?? 'Mini Game';
+
+        $participants = [];
+        $loser = null;
+        $animationMs = 4500;
+
+        if ($gameType === 'dice') {
+            $minScore = 999;
+            $loserCandidates = [];
+            foreach ($onlineUsers as $u) {
+                $d1 = mt_rand(1, 6);
+                $d2 = mt_rand(1, 6);
+                $total = $d1 + $d2;
+                $pData = [
+                    'nickname' => $u['nickname'],
+                    'emoji' => $u['emoji'],
+                    'device_id' => $u['device_id'],
+                    'die1' => $d1,
+                    'die2' => $d2,
+                    'score' => $total,
+                ];
+                $participants[] = $pData;
+
+                if ($total < $minScore) {
+                    $minScore = $total;
+                    $loserCandidates = [$pData];
+                } elseif ($total === $minScore) {
+                    $loserCandidates[] = $pData;
+                }
+            }
+
+            $loser = $loserCandidates[array_rand($loserCandidates)];
+            $animationMs = 4000;
+
+        } elseif ($gameType === 'number') {
+            $usedNumbers = [];
+            $minScore = 999;
+            $loserCandidates = [];
+            foreach ($onlineUsers as $u) {
+                do {
+                    $score = mt_rand(1, 100);
+                } while (in_array($score, $usedNumbers, true) && count($usedNumbers) < 100);
+                $usedNumbers[] = $score;
+
+                $pData = [
+                    'nickname' => $u['nickname'],
+                    'emoji' => $u['emoji'],
+                    'device_id' => $u['device_id'],
+                    'score' => $score,
+                ];
+                $participants[] = $pData;
+
+                if ($score < $minScore) {
+                    $minScore = $score;
+                    $loserCandidates = [$pData];
+                } elseif ($score === $minScore) {
+                    $loserCandidates[] = $pData;
+                }
+            }
+            $loser = $loserCandidates[array_rand($loserCandidates)];
+            $animationMs = 4500;
+
+        } else { // wheel
+            foreach ($onlineUsers as $idx => $u) {
+                $participants[] = [
+                    'nickname' => $u['nickname'],
+                    'emoji' => $u['emoji'],
+                    'device_id' => $u['device_id'],
+                    'index' => $idx,
+                ];
+            }
+
+            $loserIndex = array_rand($participants);
+            $loser = $participants[$loserIndex];
+
+            $count = count($participants);
+            $sliceDeg = 360 / max(1, $count);
+            $jitter = ($sliceDeg * 0.3) * ((mt_rand(-80, 80)) / 100.0);
+            $sliceCenter = ($loserIndex * $sliceDeg) + ($sliceDeg / 2.0) + $jitter;
+            $rotations = 5;
+            $landingDeg = ($rotations * 360) + (360 - fmod($sliceCenter - 270 + 360, 360));
+
+            $animationMs = 6500;
+        }
+
+        // Apply penalty to the loser
+        $now = time();
+        $until = $now + ($penaltyMinutes * 60);
+        $punishment = [
+            'id' => uniqid('punish_'),
+            'nickname' => $loser['nickname'],
+            'device_id' => $loser['device_id'],
+            'emoji' => $loser['emoji'] ?? '🎧',
+            'game_type' => $gameType,
+            'game_name' => $gameName,
+            'penalty_minutes' => $penaltyMinutes,
+            'until' => $until,
+            'created_at' => $now,
+        ];
+
+        if (!isset($this->rooms[$roomId]['punishments'])) {
+            $this->rooms[$roomId]['punishments'] = [];
+        }
+        $this->rooms[$roomId]['punishments'][$loser['device_id']] = $punishment;
+
+        $gamePayload = [
+            'type' => 'game_started',
+            'game_id' => uniqid('gm_'),
+            'game_type' => $gameType,
+            'game_name' => $gameName,
+            'penalty_minutes' => $penaltyMinutes,
+            'started_by' => $meta['nickname'],
+            'started_by_emoji' => $meta['emoji'],
+            'participants' => $participants,
+            'loser' => $loser,
+            'landing_deg' => isset($landingDeg) ? $landingDeg : 0,
+            'animation_ms' => $animationMs,
+            'punishment' => $punishment,
+            'server_time' => (int)(microtime(true) * 1000),
+        ];
+
+        $this->broadcastToRoom($roomId, $gamePayload);
+
+        // Broadcast updated punishments list
+        $this->broadcastToRoom($roomId, [
+            'type' => 'punishments_updated',
+            'punishments' => array_values($this->rooms[$roomId]['punishments']),
+        ]);
+    }
+
+    public function isUserPunished(string $roomId, string $deviceId, string $nickname): bool
+    {
+        $this->cleanExpiredPunishments($roomId);
+        if (!isset($this->rooms[$roomId]['punishments'])) {
+            return false;
+        }
+
+        foreach ($this->rooms[$roomId]['punishments'] as $p) {
+            if (($deviceId !== '' && $p['device_id'] === $deviceId) || ($nickname !== '' && $p['nickname'] === $nickname)) {
+                if ($p['until'] > time()) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    public function getUserPunishment(string $roomId, string $deviceId, string $nickname): ?array
+    {
+        $this->cleanExpiredPunishments($roomId);
+        if (!isset($this->rooms[$roomId]['punishments'])) {
+            return null;
+        }
+
+        foreach ($this->rooms[$roomId]['punishments'] as $p) {
+            if (($deviceId !== '' && $p['device_id'] === $deviceId) || ($nickname !== '' && $p['nickname'] === $nickname)) {
+                if ($p['until'] > time()) {
+                    return $p;
+                }
+            }
+        }
+        return null;
+    }
+
+    public function getActivePunishments(string $roomId): array
+    {
+        $this->cleanExpiredPunishments($roomId);
+        if (!isset($this->rooms[$roomId]['punishments'])) {
+            return [];
+        }
+        return array_values($this->rooms[$roomId]['punishments']);
+    }
+
+    public function cleanExpiredPunishments(string $roomId): void
+    {
+        if (!isset($this->rooms[$roomId]['punishments'])) {
+            return;
+        }
+
+        $now = time();
+        $expiredCount = 0;
+        foreach ($this->rooms[$roomId]['punishments'] as $key => $p) {
+            if ($p['until'] <= $now) {
+                unset($this->rooms[$roomId]['punishments'][$key]);
+                $expiredCount++;
+            }
+        }
+
+        if ($expiredCount > 0) {
+            $this->broadcastToRoom($roomId, [
+                'type' => 'punishments_updated',
+                'punishments' => array_values($this->rooms[$roomId]['punishments']),
+            ]);
         }
     }
 }

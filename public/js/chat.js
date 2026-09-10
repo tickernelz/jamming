@@ -243,9 +243,13 @@ class JamriChat {
             return;
         }
 
+        const now = Math.floor(Date.now() / 1000);
         const myNickname = window.JAMRI_USER ? window.JAMRI_USER.nickname : '';
         container.innerHTML = this.onlineUsers.map(user => {
             const isMe = user.nickname === myNickname;
+            const isPunished = (this.punishments || []).some(p => 
+                (p.nickname === user.nickname || (user.device_id && p.device_id === user.device_id)) && p.until > now
+            );
             return `
                 <div class="online-user-row ${isMe ? 'is-me' : ''}">
                     <div class="online-user-avatar">${user.emoji || '🎧'}</div>
@@ -253,11 +257,20 @@ class JamriChat {
                         <span class="online-user-name">${this.escape(user.nickname)}</span>
                         ${isMe ? '<span class="user-role-badge me">Anda</span>' : ''}
                         ${user.is_host ? '<span class="user-role-badge host">👑 Host</span>' : ''}
+                        ${isPunished ? '<span class="user-role-badge punished">🚫 Dihukum</span>' : ''}
                     </div>
                     <span class="online-indicator-dot" title="Online"></span>
                 </div>
             `;
         }).join('');
+    }
+
+    setPunishments(list) {
+        this.punishments = list || [];
+        const modal = document.getElementById('modal-room-online-users');
+        if (modal && modal.style.display !== 'none') {
+            this.renderOnlineUsersList(modal);
+        }
     }
 
     appendActivityNotice(actionText, icon = 'ℹ️', triggeredBy = '') {
