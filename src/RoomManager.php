@@ -408,6 +408,69 @@ class RoomManager
         return array_reverse($rows);
     }
 
+    public function getSoundboards(string $roomId): array
+    {
+        $stmt = $this->pdo->prepare('
+            SELECT * FROM room_soundboard
+            WHERE room_id = :room_id
+            ORDER BY id ASC
+        ');
+        $stmt->execute([':room_id' => $roomId]);
+        return $stmt->fetchAll();
+    }
+
+    public function addSoundboard(
+        string $roomId,
+        string $title,
+        string $emoji,
+        string $fileUrl,
+        float $duration,
+        string $nickname
+    ): array {
+        $stmt = $this->pdo->prepare('
+            INSERT INTO room_soundboard (room_id, title, emoji, file_url, duration_seconds, added_by_nickname)
+            VALUES (:room_id, :title, :emoji, :file_url, :duration_seconds, :added_by_nickname)
+        ');
+        $stmt->execute([
+            ':room_id' => $roomId,
+            ':title' => $title,
+            ':emoji' => $emoji ?: '🔊',
+            ':file_url' => $fileUrl,
+            ':duration_seconds' => $duration,
+            ':added_by_nickname' => $nickname,
+        ]);
+
+        $id = (int)$this->pdo->lastInsertId();
+        return [
+            'id' => $id,
+            'room_id' => $roomId,
+            'title' => $title,
+            'emoji' => $emoji ?: '🔊',
+            'file_url' => $fileUrl,
+            'duration_seconds' => $duration,
+            'added_by_nickname' => $nickname,
+            'created_at' => date('Y-m-d H:i:s'),
+        ];
+    }
+
+    public function deleteSoundboard(string $roomId, int $soundboardId): bool
+    {
+        // Retrieve file to delete
+        $stmt = $this->pdo->prepare('SELECT file_url FROM room_soundboard WHERE id = :id AND room_id = :room_id');
+        $stmt->execute([':id' => $soundboardId, ':room_id' => $roomId]);
+        $row = $stmt->fetch();
+        if ($row && !empty($row['file_url'])) {
+            $baseDir = dirname(__DIR__);
+            $localPath = $baseDir . '/' . ltrim($row['file_url'], '/');
+            if (file_exists($localPath) && is_file($localPath)) {
+                @unlink($localPath);
+            }
+        }
+
+        $delStmt = $this->pdo->prepare('DELETE FROM room_soundboard WHERE id = :id AND room_id = :room_id');
+        return $delStmt->execute([':id' => $soundboardId, ':room_id' => $roomId]);
+    }
+
     private function generateUuid(): string
     {
         $data = random_bytes(16);

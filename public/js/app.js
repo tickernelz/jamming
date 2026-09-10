@@ -470,6 +470,12 @@ function leaveRoom() {
         window.JAMRI_APP.wsClient.disconnect();
         window.JAMRI_APP.activeRoomId = null;
     }
+    if (window.JAMRI_APP.soundboard) {
+        window.JAMRI_APP.soundboard.detach();
+    }
+    if (window.JAMRI_APP.voicePTT) {
+        window.JAMRI_APP.voicePTT.detach();
+    }
     const player = window.JAMRI_APP.player;
     // Hentikan musik di device saat keluar dari room jamming
     player.stop();
@@ -552,7 +558,8 @@ function renderRoomShell(roomDetail) {
                     </div>
                 </div>
             </div>
-            <div style="display:flex; gap:10px;">
+            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                <div id="room-ptt-slot"></div>
                 <button type="button" id="btn-room-search" class="btn btn-primary btn-sm">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="11" cy="11" r="8"></circle>
@@ -563,8 +570,11 @@ function renderRoomShell(roomDetail) {
             </div>
         </div>
 
+        <!-- Indicator bar for active speakers (Push-to-Talk) -->
+        <div id="room-active-speakers-bar" class="active-speakers-bar" style="display:none;"></div>
+
         <div class="room-main-layout">
-            <!-- Kolom Kiri: Queue & Playlist Tabs -->
+            <!-- Kolom Kiri: Queue, Playlist & Soundboard Tabs -->
             <div class="room-left-col">
                 <div class="tabs-nav-bar">
                     <button type="button" class="tab-nav-item active" data-tab="room-queue">
@@ -576,13 +586,20 @@ function renderRoomShell(roomDetail) {
                             <line x1="3" y1="12" x2="3.01" y2="12"></line>
                             <line x1="3" y1="18" x2="3.01" y2="18"></line>
                         </svg>
-                        <span>Antrean Lagu (<span id="room-queue-count">0</span>)</span>
+                        <span>Antrean (<span id="room-queue-count">0</span>)</span>
                     </button>
                     <button type="button" class="tab-nav-item" data-tab="room-playlist">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path>
                         </svg>
                         <span>Bank Musik</span>
+                    </button>
+                    <button type="button" class="tab-nav-item" data-tab="room-soundboard">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                        </svg>
+                        <span>Soundboard 🔊</span>
                     </button>
                     <button type="button" id="btn-shuffle-room-queue" class="btn btn-ghost btn-sm" style="margin-left:auto;" title="Acak Antrean">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -602,11 +619,32 @@ function renderRoomShell(roomDetail) {
                 <div id="room-playlist-tab-panel" class="tab-panel" style="display:none;">
                     <div class="track-list-box" id="room-playlist-list"></div>
                 </div>
+                <div id="room-soundboard-tab-panel" class="tab-panel" style="display:none;">
+                    <div class="soundboard-container">
+                        <div class="soundboard-header-toolbar">
+                            <div class="soundboard-vol-wrapper" title="Volume Suara Soundboard (Lokal di perangkat Anda)">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                                    <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                                </svg>
+                                <span style="font-size:12px; color:var(--text-muted);">Vol Soundboard:</span>
+                                <input type="range" id="soundboard-volume-slider" min="0" max="1" step="0.05" value="0.9" style="width:70px;" />
+                            </div>
+                            <button type="button" id="btn-soundboard-stop" class="btn btn-ghost btn-xs" title="Hentikan semua suara soundboard yang sedang berputar di perangkat Anda">
+                                ⏹️ Hentikan Suara
+                            </button>
+                        </div>
+                        <div id="soundboard-grid" class="soundboard-grid-wrapper"></div>
+                    </div>
+                </div>
             </div>
 
             <!-- Kolom Kanan: Live Chat & Peserta -->
             <div class="room-right-col" id="room-chat-slot"></div>
         </div>
+
+        <!-- Floating container for Discord-like soundboard emoji reactions -->
+        <div id="soundboard-floating-container" class="soundboard-floating-container"></div>
     `;
 
     // Leave room
@@ -642,6 +680,7 @@ function renderRoomShell(roomDetail) {
             const target = btn.dataset.tab;
             container.querySelector('#room-queue-tab-panel').style.display = target === 'room-queue' ? 'block' : 'none';
             container.querySelector('#room-playlist-tab-panel').style.display = target === 'room-playlist' ? 'block' : 'none';
+            container.querySelector('#room-soundboard-tab-panel').style.display = target === 'room-soundboard' ? 'block' : 'none';
         });
     });
 
@@ -654,6 +693,33 @@ function renderRoomShell(roomDetail) {
     // Render initial queue & playlist
     renderRoomQueue(roomDetail.queue || []);
     renderRoomPlaylist(roomDetail.playlist || []);
+
+    // Initialize & Attach Soundboard
+    if (!window.JAMRI_APP.soundboard) {
+        window.JAMRI_APP.soundboard = new JamriSoundboard();
+    }
+    window.JAMRI_APP.soundboard.attach(room.id, window.JAMRI_USER, window.JAMRI_APP.wsClient);
+
+    const sbVolSlider = container.querySelector('#soundboard-volume-slider');
+    if (sbVolSlider && window.JAMRI_APP.soundboard) {
+        sbVolSlider.value = window.JAMRI_APP.soundboard.volume;
+        sbVolSlider.addEventListener('input', (e) => {
+            window.JAMRI_APP.soundboard.setVolume(parseFloat(e.target.value));
+        });
+    }
+
+    const btnSbStop = container.querySelector('#btn-soundboard-stop');
+    if (btnSbStop && window.JAMRI_APP.soundboard) {
+        btnSbStop.addEventListener('click', () => {
+            window.JAMRI_APP.soundboard.stopAll();
+        });
+    }
+
+    // Initialize & Attach Push-to-Talk (PTT)
+    if (!window.JAMRI_APP.voicePTT) {
+        window.JAMRI_APP.voicePTT = new JamriVoicePTT();
+    }
+    window.JAMRI_APP.voicePTT.attach(room.id, window.JAMRI_USER, window.JAMRI_APP.wsClient);
 }
 
 function bindRoomWebSocketEvents(ws, player, roomDetail) {

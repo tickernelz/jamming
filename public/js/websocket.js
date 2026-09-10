@@ -142,6 +142,33 @@ class JamriWebSocket {
         this.send('chat', { message });
     }
 
+    // Soundboard
+    sendSoundboardPlay(sound) {
+        this.send('soundboard_play', {
+            sound_id: sound.id || sound.sound_id || '',
+            title: sound.title || 'Soundboard',
+            emoji: sound.emoji || '🔊',
+            file_url: sound.file_url || ''
+        });
+    }
+
+    sendSoundboardAdd(soundboard) {
+        this.send('soundboard_add', { soundboard });
+    }
+
+    sendSoundboardDelete(soundboardId) {
+        this.send('soundboard_delete', { soundboard_id: soundboardId });
+    }
+
+    // Push to Talk (Voice)
+    sendVoiceChunk(audioBase64, mime = 'audio/webm') {
+        this.send('voice_chunk', { audio: audioBase64, mime });
+    }
+
+    sendVoiceState(isSpeaking) {
+        this.send('voice_state', { speaking: !!isSpeaking });
+    }
+
     disconnect() {
         this.roomId = null;
         if (this.pingInterval) {

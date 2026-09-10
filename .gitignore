@@ -19,8 +19,9 @@
 websocket.log
 error_log
 
-# Temporary & Archive files
+# Temporary, Uploads & Archive files
 /scratch/
+/public/uploads/
 *.zip
 *.tar.gz
 *.rar

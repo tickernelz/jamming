@@ -121,6 +121,19 @@ class Database
             thumbnail_url TEXT NULL,
             expires_at INTEGER NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS room_soundboard (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            room_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            emoji TEXT DEFAULT '🔊',
+            file_url TEXT NOT NULL,
+            duration_seconds REAL DEFAULT 0,
+            added_by_nickname TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_soundboard_room ON room_soundboard(room_id, id);
         ";
 
         $pdo->exec($sql);

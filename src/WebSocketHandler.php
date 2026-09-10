@@ -381,6 +381,62 @@ class WebSocketHandler implements MessageComponentInterface
                     ]);
                 }
                 break;
+
+            case 'soundboard_play':
+                $this->broadcastToRoom($roomId, [
+                    'type' => 'soundboard_play',
+                    'sound_id' => $data['sound_id'] ?? '',
+                    'title' => $data['title'] ?? 'Soundboard',
+                    'emoji' => $data['emoji'] ?? '🔊',
+                    'file_url' => $data['file_url'] ?? '',
+                    'triggered_by' => $meta['nickname'],
+                    'sender_emoji' => $meta['emoji'],
+                ]);
+                break;
+
+            case 'soundboard_add':
+                $soundboard = $data['soundboard'] ?? null;
+                if ($soundboard) {
+                    $this->broadcastToRoom($roomId, [
+                        'type' => 'soundboard_added',
+                        'soundboard' => $soundboard,
+                        'triggered_by' => $meta['nickname'],
+                    ]);
+                }
+                break;
+
+            case 'soundboard_delete':
+                $soundboardId = (int)($data['soundboard_id'] ?? 0);
+                if ($soundboardId > 0) {
+                    $this->broadcastToRoom($roomId, [
+                        'type' => 'soundboard_deleted',
+                        'soundboard_id' => $soundboardId,
+                        'triggered_by' => $meta['nickname'],
+                    ]);
+                }
+                break;
+
+            case 'voice_chunk':
+                $audio = $data['audio'] ?? '';
+                if ($audio !== '') {
+                    $this->broadcastToRoom($roomId, [
+                        'type' => 'voice_chunk',
+                        'audio' => $audio,
+                        'mime' => $data['mime'] ?? 'audio/webm',
+                        'sender_nickname' => $meta['nickname'],
+                        'sender_emoji' => $meta['emoji'],
+                    ], $from);
+                }
+                break;
+
+            case 'voice_state':
+                $this->broadcastToRoom($roomId, [
+                    'type' => 'voice_state',
+                    'speaking' => !empty($data['speaking']),
+                    'sender_nickname' => $meta['nickname'],
+                    'sender_emoji' => $meta['emoji'],
+                ]);
+                break;
         }
     }
 
