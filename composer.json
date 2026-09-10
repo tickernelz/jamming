@@ -1,0 +1,14 @@
+{
+    "name": "jamri/jamri",
+    "description": "Collaborative office jamming and solo audio platform with .jamri compression",
+    "type": "project",
+    "require": {
+        "php": ">=8.1",
+        "cboden/ratchet": "^0.4.4"
+    },
+    "autoload": {
+        "psr-4": {
+            "Jamri\\": "src/"
+        }
+    }
+}

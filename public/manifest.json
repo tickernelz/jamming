@@ -1,0 +1,21 @@
+{
+    "name": "Jamri - Office Music Jamming & Solo Player",
+    "short_name": "Jamri",
+    "description": "Collaborative office music jamming & offline-capable solo player with .jamri compression",
+    "start_url": "./index.php",
+    "display": "standalone",
+    "background_color": "#090b10",
+    "theme_color": "#2563eb",
+    "icons": [
+        {
+            "src": "icon-192.svg",
+            "sizes": "192x192",
+            "type": "image/svg+xml"
+        },
+        {
+            "src": "icon-512.svg",
+            "sizes": "512x512",
+            "type": "image/svg+xml"
+        }
+    ]
+}
