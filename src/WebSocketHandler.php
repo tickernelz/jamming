@@ -40,6 +40,8 @@ class WebSocketHandler implements MessageComponentInterface
     {
         $this->roomManager = $roomManager;
         $this->ytService = $ytService;
+        $this->restoreRuntimeState();
+        register_shutdown_function([$this, 'persistRuntimeState']);
     }
 
     public function onOpen(ConnectionInterface $conn): void
@@ -974,6 +976,80 @@ class WebSocketHandler implements MessageComponentInterface
                 'type' => 'punishments_updated',
                 'punishments' => array_values($this->rooms[$roomId]['punishments']),
             ]);
+        }
+    }
+
+    public function persistRuntimeState(): void
+    {
+        $file = dirname(__DIR__) . '/data/runtime_rooms.json';
+        $data = [
+            'saved_at' => microtime(true),
+            'rooms' => [],
+        ];
+
+        foreach ($this->rooms as $roomId => $room) {
+            $data['rooms'][$roomId] = [
+                'current_track' => $room['current_track'] ?? null,
+                'playback_state' => $room['playback_state'] ?? 'stopped',
+                'position' => $this->getCurrentPosition($roomId),
+                'loop_mode' => $room['loop_mode'] ?? 'off',
+                'is_shuffled' => !empty($room['is_shuffled']),
+                'punishments' => $room['punishments'] ?? [],
+                'history' => $room['history'] ?? [],
+            ];
+        }
+
+        @file_put_contents($file, json_encode($data), LOCK_EX);
+    }
+
+    private function restoreRuntimeState(): void
+    {
+        $file = dirname(__DIR__) . '/data/runtime_rooms.json';
+        if (!file_exists($file)) {
+            return;
+        }
+
+        $raw = @file_get_contents($file);
+        if (!$raw) {
+            return;
+        }
+
+        $data = json_decode($raw, true);
+        if (!$data || empty($data['saved_at']) || empty($data['rooms'])) {
+            return;
+        }
+
+        $now = microtime(true);
+        $elapsed = $now - (float)$data['saved_at'];
+
+        // Only restore if snapshot is fresh (< 10 minutes old)
+        if ($elapsed > 600.0) {
+            @unlink($file);
+            return;
+        }
+
+        foreach ($data['rooms'] as $roomId => $saved) {
+            $state = $saved['playback_state'] ?? 'stopped';
+            $pos = (float)($saved['position'] ?? 0.0);
+
+            // If it was actively playing, smoothly advance position by the downtime seconds
+            if ($state === 'playing') {
+                $pos += max(0.0, $elapsed);
+            }
+
+            $this->rooms[$roomId] = [
+                'clients' => [],
+                'current_track' => $saved['current_track'] ?? null,
+                'playback_state' => $state,
+                'position' => $pos,
+                'last_sync_timestamp' => $now,
+                'last_track_transition' => $now,
+                'empty_since' => null,
+                'loop_mode' => $saved['loop_mode'] ?? 'off',
+                'history' => $saved['history'] ?? [],
+                'is_shuffled' => !empty($saved['is_shuffled']),
+                'punishments' => $saved['punishments'] ?? [],
+            ];
         }
     }
 }

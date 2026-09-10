@@ -889,9 +889,9 @@ class JamriPlayer {
 
         if (serverState === 'playing') {
             const cur = this.getCurrentTime();
-            // Hanya posisikan ulang audio lokal jika deviasi nyata (> 3.0 detik) agar tidak memicu re-buffering
+            // Hanya posisikan ulang audio lokal jika deviasi nyata (> 4.5 detik) agar tidak memicu re-buffering saat server restart/deploy
             // HANYA panggil _internalSeek() agar TIDAK PERNAH memantulkan paket 'seek' ke server!
-            if (Math.abs(cur - targetPos) > 3.0) {
+            if (Math.abs(cur - targetPos) > 4.5) {
                 this._internalSeek(targetPos);
             }
             if (!this.isPlaying) {

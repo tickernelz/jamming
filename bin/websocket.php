@@ -35,6 +35,11 @@ $loop->addPeriodicTimer(30.0, function () use ($wsHandler) {
     $wsHandler->checkInactivity();
 });
 
+// Periodic timer to save runtime state snapshot for zero-downtime restarts (every 3 seconds)
+$loop->addPeriodicTimer(3.0, function () use ($wsHandler) {
+    $wsHandler->persistRuntimeState();
+});
+
 $socket = new SocketServer("0.0.0.0:{$port}", [], $loop);
 $server = new IoServer(
     new HttpServer(

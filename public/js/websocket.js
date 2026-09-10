@@ -65,7 +65,10 @@ class JamriWebSocket {
         if (!this.roomId || !this.user) return;
         if (this.reconnectAttempts < this.maxReconnectAttempts) {
             this.reconnectAttempts++;
-            const delay = Math.min(10000, 1500 * Math.pow(1.5, this.reconnectAttempts));
+            // Rapid retry for seamless deployments/restarts: 600ms on first attempt, then smooth backoff
+            const delay = this.reconnectAttempts === 1 
+                ? 600 
+                : Math.min(6000, 1000 * Math.pow(1.3, this.reconnectAttempts));
             setTimeout(() => {
                 if (!this.isConnected) {
                     this.connect(this.roomId, this.user);

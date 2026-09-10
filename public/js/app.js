@@ -776,9 +776,16 @@ function bindRoomWebSocketEvents(ws, player, roomDetail) {
         player.serverBasePos = data.position || 0;
         player.serverSyncTime = data.server_time || Date.now();
         if (data.current_track) {
-            player.playTrack(data.current_track, data.position || 0);
-            if (data.state === 'paused') {
-                player.pause();
+            const isSameTrack = player.currentTrack && player.currentTrack.youtube_id === data.current_track.youtube_id;
+            if (isSameTrack && (player.isPlaying || player.mode === 'jamming')) {
+                // Audio is ALREADY loaded/playing for this track (e.g. Server restart / reconnect)!
+                // Smoothly sync time without interrupting or reloading the video
+                player.syncJammingState(data.current_track, data.state, data.position, data.server_time);
+            } else {
+                player.playTrack(data.current_track, data.position || 0);
+                if (data.state === 'paused') {
+                    player.pause();
+                }
             }
         } else {
             player.stop();
