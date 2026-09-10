@@ -777,6 +777,15 @@ class JamriPlayer {
         this.emit('solo_queue_updated', this.soloQueue);
     }
 
+    reorderSoloQueue(fromIndex, toIndex) {
+        if (fromIndex < 0 || fromIndex >= this.soloQueue.length) return;
+        if (toIndex < 0 || toIndex >= this.soloQueue.length) return;
+        const [movedItem] = this.soloQueue.splice(fromIndex, 1);
+        this.soloQueue.splice(toIndex, 0, movedItem);
+        this.saveLocal('jamri_solo_queue', this.soloQueue);
+        this.emit('solo_queue_updated', this.soloQueue);
+    }
+
     shuffleSoloQueue() {
         for (let i = this.soloQueue.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));

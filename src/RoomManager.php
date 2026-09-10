@@ -235,6 +235,40 @@ class RoomManager
         return $stmt->execute([':room_id' => $roomId, ':id' => $queueId]);
     }
 
+    public function reorderQueue(string $roomId, array $orderedIds): array
+    {
+        if (empty($orderedIds)) {
+            return $this->getQueue($roomId);
+        }
+
+        $updateStmt = $this->pdo->prepare('UPDATE room_queue SET queue_order = :order WHERE id = :id AND room_id = :room_id');
+        foreach ($orderedIds as $index => $id) {
+            $updateStmt->execute([
+                ':order' => $index + 1,
+                ':id' => (int)$id,
+                ':room_id' => $roomId,
+            ]);
+        }
+
+        return $this->getQueue($roomId);
+    }
+
+    public function getQueueItem(string $roomId, int $queueId): ?array
+    {
+        $stmt = $this->pdo->prepare('SELECT * FROM room_queue WHERE room_id = :room_id AND id = :id LIMIT 1');
+        $stmt->execute([':room_id' => $roomId, ':id' => $queueId]);
+        $row = $stmt->fetch();
+        return $row ?: null;
+    }
+
+    public function getPlaylistItem(string $roomId, int $playlistId): ?array
+    {
+        $stmt = $this->pdo->prepare('SELECT * FROM room_playlist WHERE room_id = :room_id AND id = :id LIMIT 1');
+        $stmt->execute([':room_id' => $roomId, ':id' => $playlistId]);
+        $row = $stmt->fetch();
+        return $row ?: null;
+    }
+
     public function shuffleQueue(string $roomId): array
     {
         $stmt = $this->pdo->prepare('SELECT id FROM room_queue WHERE room_id = :room_id AND is_played = 0 ORDER BY queue_order ASC');

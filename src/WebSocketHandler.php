@@ -308,15 +308,31 @@ class WebSocketHandler implements MessageComponentInterface
                 }
                 break;
 
+            case 'queue_reorder':
+                $orderedIds = $data['ordered_ids'] ?? [];
+                if (is_array($orderedIds) && !empty($orderedIds)) {
+                    $reordered = $this->roomManager->reorderQueue($roomId, $orderedIds);
+                    $this->broadcastToRoom($roomId, [
+                        'type' => 'queue_updated',
+                        'queue' => $reordered,
+                        'triggered_by' => $meta['nickname'],
+                        'action' => 'reorder',
+                    ]);
+                }
+                break;
+
             case 'queue_remove':
                 $queueId = (int)($data['queue_id'] ?? 0);
                 if ($queueId > 0) {
+                    $item = $this->roomManager->getQueueItem($roomId, $queueId);
                     $this->roomManager->removeTrackFromQueue($roomId, $queueId);
                     $queue = $this->roomManager->getQueue($roomId);
                     $this->broadcastToRoom($roomId, [
                         'type' => 'queue_updated',
                         'queue' => $queue,
+                        'removed_track_title' => $item['title'] ?? '',
                         'triggered_by' => $meta['nickname'],
+                        'action' => 'remove',
                     ]);
                 }
                 break;
@@ -327,6 +343,7 @@ class WebSocketHandler implements MessageComponentInterface
                     'type' => 'queue_updated',
                     'queue' => $shuffled,
                     'triggered_by' => $meta['nickname'],
+                    'action' => 'shuffle',
                 ]);
                 break;
 
@@ -356,12 +373,15 @@ class WebSocketHandler implements MessageComponentInterface
             case 'playlist_remove':
                 $playlistId = (int)($data['playlist_id'] ?? 0);
                 if ($playlistId > 0) {
+                    $item = $this->roomManager->getPlaylistItem($roomId, $playlistId);
                     $this->roomManager->removeTrackFromPlaylist($roomId, $playlistId);
                     $playlist = $this->roomManager->getPlaylist($roomId);
                     $this->broadcastToRoom($roomId, [
                         'type' => 'playlist_updated',
                         'playlist' => $playlist,
+                        'removed_track_title' => $item['title'] ?? '',
                         'triggered_by' => $meta['nickname'],
+                        'action' => 'remove',
                     ]);
                 }
                 break;
@@ -655,13 +675,22 @@ class WebSocketHandler implements MessageComponentInterface
             return [];
         }
 
+        $hostDeviceId = '';
+        $roomSummary = $this->roomManager->getRoomSummary($roomId);
+        if ($roomSummary) {
+            $hostDeviceId = (string)($roomSummary['host_device_id'] ?? '');
+        }
+
         $users = [];
         foreach ($this->rooms[$roomId]['clients'] as $resId => $conn) {
             if (isset($this->clientMeta[$resId])) {
                 $meta = $this->clientMeta[$resId];
-                $users[$meta['device_id']] = [
+                $devId = (string)$meta['device_id'];
+                $users[$devId] = [
                     'nickname' => $meta['nickname'],
                     'emoji' => $meta['emoji'],
+                    'device_id' => $devId,
+                    'is_host' => ($devId !== '' && $devId === $hostDeviceId),
                 ];
             }
         }

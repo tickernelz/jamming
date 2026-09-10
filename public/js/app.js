@@ -731,7 +731,7 @@ function bindRoomWebSocketEvents(ws, player, roomDetail) {
             player.emit('shuffle_change', player.isShuffled);
         }
         if (data.online_users && window.JAMRI_APP.currentChat) {
-            window.JAMRI_APP.currentChat.updateOnlineCount(data.online_users.length);
+            window.JAMRI_APP.currentChat.setOnlineUsers(data.online_users);
         }
         player.serverPlaybackState = data.state || 'stopped';
         player.serverBasePos = data.position || 0;
@@ -755,18 +755,28 @@ function bindRoomWebSocketEvents(ws, player, roomDetail) {
     ws.on('loop_changed', (data) => {
         if (data.loop_mode) {
             player.setLoopMode(data.loop_mode);
+            if (data.triggered_by && window.JAMRI_APP.currentChat) {
+                const modeLabel = data.loop_mode === 'one' ? 'Ulangi 1 Lagu 🔂' : (data.loop_mode === 'all' ? 'Ulangi Semua 🔁' : 'Matikan Ulangi ➡️');
+                window.JAMRI_APP.currentChat.appendActivityNotice(`mengubah mode putar menjadi ${modeLabel}`, '🔁', data.triggered_by);
+            }
         }
     });
 
     ws.on('user_joined', (data) => {
         if (data.online_users && window.JAMRI_APP.currentChat) {
-            window.JAMRI_APP.currentChat.updateOnlineCount(data.online_users.length);
+            window.JAMRI_APP.currentChat.setOnlineUsers(data.online_users);
+        }
+        if (data.user && window.JAMRI_APP.currentChat) {
+            window.JAMRI_APP.currentChat.appendActivityNotice('bergabung ke room 👋', '👋', data.user.nickname);
         }
     });
 
     ws.on('user_left', (data) => {
         if (data.online_users && window.JAMRI_APP.currentChat) {
-            window.JAMRI_APP.currentChat.updateOnlineCount(data.online_users.length);
+            window.JAMRI_APP.currentChat.setOnlineUsers(data.online_users);
+        }
+        if (data.user && window.JAMRI_APP.currentChat) {
+            window.JAMRI_APP.currentChat.appendActivityNotice('keluar dari room 🚪', '🚪', data.user.nickname);
         }
     });
 
@@ -779,21 +789,29 @@ function bindRoomWebSocketEvents(ws, player, roomDetail) {
     ws.on('play', (data) => {
         if (player.isPreviewing) return;
         player.syncJammingState(data.track || null, 'playing', data.position, data.server_time);
+        if (data.triggered_by && window.JAMRI_APP.currentChat) {
+            window.JAMRI_APP.currentChat.appendActivityNotice('memutar musik ▶️', '▶️', data.triggered_by);
+        }
     });
 
     ws.on('pause', (data) => {
         if (player.isPreviewing) return;
         player.syncJammingState(data.track || null, 'paused', data.position, data.server_time);
+        if (data.triggered_by && window.JAMRI_APP.currentChat) {
+            window.JAMRI_APP.currentChat.appendActivityNotice('menjeda musik ⏸️', '⏸️', data.triggered_by);
+        }
     });
 
     ws.on('seek', (data) => {
         if (player.isPreviewing) return;
         player.syncJammingState(data.track || null, data.state, data.position, data.server_time);
+        if (data.triggered_by && window.JAMRI_APP.currentChat) {
+            window.JAMRI_APP.currentChat.appendActivityNotice('menggeser timeline musik ⏩', '⏩', data.triggered_by);
+        }
     });
 
     ws.on('track_change', (data) => {
         if (player.isPreviewing) {
-            // Update reference, but do not interrupt preview
             player.currentTrack = data.track;
             return;
         }
@@ -802,6 +820,10 @@ function bindRoomWebSocketEvents(ws, player, roomDetail) {
             player.serverBasePos = data.position || 0;
             player.serverSyncTime = data.server_time || Date.now();
             player.playTrack(data.track, data.position || 0);
+
+            if (data.triggered_by && window.JAMRI_APP.currentChat) {
+                window.JAMRI_APP.currentChat.appendActivityNotice(`memutar "${data.track.title}" 🎵`, '🎵', data.triggered_by);
+            }
         }
     });
 
@@ -815,11 +837,37 @@ function bindRoomWebSocketEvents(ws, player, roomDetail) {
             player.isShuffled = !!data.is_shuffled;
             player.emit('shuffle_change', player.isShuffled);
         }
+        if (data.triggered_by && window.JAMRI_APP.currentChat) {
+            if (data.action === 'reorder') {
+                window.JAMRI_APP.currentChat.appendActivityNotice('mengubah urutan antrean lagu 🔀', '🔀', data.triggered_by);
+            } else if (data.action === 'shuffle') {
+                window.JAMRI_APP.currentChat.appendActivityNotice('mengacak antrean lagu 🎲', '🎲', data.triggered_by);
+            } else if (data.action === 'remove') {
+                const title = data.removed_track_title ? `"${data.removed_track_title}"` : 'sebuah lagu';
+                window.JAMRI_APP.currentChat.appendActivityNotice(`menghapus ${title} dari antrean 🗑️`, '🗑️', data.triggered_by);
+            } else if (data.added_track) {
+                window.JAMRI_APP.currentChat.appendActivityNotice(`menambahkan "${data.added_track.title}" ke antrean ➕`, '➕', data.triggered_by);
+            }
+        }
     });
 
     ws.on('playlist_updated', (data) => {
         if (data.playlist) {
             renderRoomPlaylist(data.playlist);
+        }
+        if (data.triggered_by && window.JAMRI_APP.currentChat) {
+            if (data.action === 'remove') {
+                const title = data.removed_track_title ? `"${data.removed_track_title}"` : 'sebuah lagu';
+                window.JAMRI_APP.currentChat.appendActivityNotice(`menghapus ${title} dari Bank Musik 🗑️`, '🗑️', data.triggered_by);
+            } else if (data.added_track) {
+                window.JAMRI_APP.currentChat.appendActivityNotice(`menambahkan "${data.added_track.title}" ke Bank Musik 💾`, '💾', data.triggered_by);
+            }
+        }
+    });
+
+    ws.on('soundboard_play', (data) => {
+        if (data.triggered_by && window.JAMRI_APP.currentChat) {
+            window.JAMRI_APP.currentChat.appendActivityNotice(`membunyikan soundboard ${data.title} ${data.emoji || ''}`, data.emoji || '🔊', data.triggered_by);
         }
     });
 
@@ -846,7 +894,19 @@ function renderRoomQueue(queue) {
     queue.forEach((track, idx) => {
         const item = document.createElement('div');
         item.className = 'track-item-card';
+        item.setAttribute('draggable', 'true');
+        item.setAttribute('data-index', idx.toString());
         item.innerHTML = `
+            <div class="drag-handle-grip" title="Tahan dan geser untuk memindahkan urutan antrean">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                    <circle cx="9" cy="6" r="1.5"></circle>
+                    <circle cx="15" cy="6" r="1.5"></circle>
+                    <circle cx="9" cy="12" r="1.5"></circle>
+                    <circle cx="15" cy="12" r="1.5"></circle>
+                    <circle cx="9" cy="18" r="1.5"></circle>
+                    <circle cx="15" cy="18" r="1.5"></circle>
+                </svg>
+            </div>
             <span style="font-family:var(--font-mono); font-size:11px; color:var(--text-muted); width:18px;">${idx + 1}</span>
             <div class="track-thumb-box" style="cursor:pointer;" title="Klik untuk putar">
                 <img src="${track.thumbnail_url || track.thumbnail}" alt="" class="track-thumb-img" />
@@ -870,6 +930,83 @@ function renderRoomQueue(queue) {
                 </button>
             </div>
         `;
+
+        // Drag & Drop Desktop Events
+        item.addEventListener('dragstart', (e) => {
+            list._draggedIdx = idx;
+            item.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', idx.toString());
+        });
+
+        item.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            item.classList.add('drag-over');
+        });
+
+        item.addEventListener('dragleave', () => {
+            item.classList.remove('drag-over');
+        });
+
+        item.addEventListener('dragend', () => {
+            item.classList.remove('dragging');
+            list.querySelectorAll('.track-item-card').forEach(c => c.classList.remove('drag-over'));
+        });
+
+        item.addEventListener('drop', (e) => {
+            e.preventDefault();
+            item.classList.remove('drag-over');
+            const fromIdx = list._draggedIdx;
+            const toIdx = idx;
+            if (fromIdx !== undefined && fromIdx !== null && fromIdx !== toIdx) {
+                const newQueue = [...queue];
+                const [moved] = newQueue.splice(fromIdx, 1);
+                newQueue.splice(toIdx, 0, moved);
+                renderRoomQueue(newQueue);
+                window.JAMRI_APP.wsClient.sendQueueReorder(newQueue.map(t => t.id));
+            }
+            list._draggedIdx = null;
+        });
+
+        // Mobile Touch Drag Support
+        const grip = item.querySelector('.drag-handle-grip');
+        if (grip) {
+            grip.addEventListener('touchstart', (e) => {
+                list._touchFromIdx = idx;
+                item.classList.add('dragging');
+            }, { passive: true });
+
+            grip.addEventListener('touchmove', (e) => {
+                const touch = e.touches[0];
+                const elem = document.elementFromPoint(touch.clientX, touch.clientY);
+                const card = elem ? elem.closest('.track-item-card') : null;
+                list.querySelectorAll('.track-item-card').forEach(c => c.classList.remove('drag-over'));
+                if (card && card !== item) {
+                    card.classList.add('drag-over');
+                    list._touchTargetCard = card;
+                }
+            }, { passive: true });
+
+            grip.addEventListener('touchend', () => {
+                item.classList.remove('dragging');
+                const targetCard = list._touchTargetCard;
+                if (targetCard) {
+                    targetCard.classList.remove('drag-over');
+                    const toIdx = parseInt(targetCard.getAttribute('data-index'), 10);
+                    const fromIdx = list._touchFromIdx;
+                    if (!isNaN(toIdx) && fromIdx !== undefined && fromIdx !== toIdx) {
+                        const newQueue = [...queue];
+                        const [moved] = newQueue.splice(fromIdx, 1);
+                        newQueue.splice(toIdx, 0, moved);
+                        renderRoomQueue(newQueue);
+                        window.JAMRI_APP.wsClient.sendQueueReorder(newQueue.map(t => t.id));
+                    }
+                }
+                list._touchTargetCard = null;
+                list._touchFromIdx = null;
+            });
+        }
 
         const playTrackFn = () => {
             window.JAMRI_APP.wsClient.sendSetTrack(track);
@@ -1135,7 +1272,19 @@ function renderSoloQueueList() {
     queue.forEach((track, idx) => {
         const item = document.createElement('div');
         item.className = 'track-item-card';
+        item.setAttribute('draggable', 'true');
+        item.setAttribute('data-index', idx.toString());
         item.innerHTML = `
+            <div class="drag-handle-grip" title="Tahan dan geser untuk memindahkan urutan antrean">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                    <circle cx="9" cy="6" r="1.5"></circle>
+                    <circle cx="15" cy="6" r="1.5"></circle>
+                    <circle cx="9" cy="12" r="1.5"></circle>
+                    <circle cx="15" cy="12" r="1.5"></circle>
+                    <circle cx="9" cy="18" r="1.5"></circle>
+                    <circle cx="15" cy="18" r="1.5"></circle>
+                </svg>
+            </div>
             <span style="font-family:var(--font-mono); font-size:11px; color:var(--text-muted); width:18px;">${idx + 1}</span>
             <div class="track-thumb-box" style="cursor:pointer;" title="Klik untuk putar">
                 <img src="${track.thumbnail}" alt="" class="track-thumb-img" />
@@ -1159,6 +1308,75 @@ function renderSoloQueueList() {
                 </button>
             </div>
         `;
+
+        // Drag & Drop Desktop Events
+        item.addEventListener('dragstart', (e) => {
+            list._draggedIdx = idx;
+            item.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', idx.toString());
+        });
+
+        item.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            item.classList.add('drag-over');
+        });
+
+        item.addEventListener('dragleave', () => {
+            item.classList.remove('drag-over');
+        });
+
+        item.addEventListener('dragend', () => {
+            item.classList.remove('dragging');
+            list.querySelectorAll('.track-item-card').forEach(c => c.classList.remove('drag-over'));
+        });
+
+        item.addEventListener('drop', (e) => {
+            e.preventDefault();
+            item.classList.remove('drag-over');
+            const fromIdx = list._draggedIdx;
+            const toIdx = idx;
+            if (fromIdx !== undefined && fromIdx !== null && fromIdx !== toIdx) {
+                player.reorderSoloQueue(fromIdx, toIdx);
+            }
+            list._draggedIdx = null;
+        });
+
+        // Mobile Touch Drag Support
+        const grip = item.querySelector('.drag-handle-grip');
+        if (grip) {
+            grip.addEventListener('touchstart', (e) => {
+                list._touchFromIdx = idx;
+                item.classList.add('dragging');
+            }, { passive: true });
+
+            grip.addEventListener('touchmove', (e) => {
+                const touch = e.touches[0];
+                const elem = document.elementFromPoint(touch.clientX, touch.clientY);
+                const card = elem ? elem.closest('.track-item-card') : null;
+                list.querySelectorAll('.track-item-card').forEach(c => c.classList.remove('drag-over'));
+                if (card && card !== item) {
+                    card.classList.add('drag-over');
+                    list._touchTargetCard = card;
+                }
+            }, { passive: true });
+
+            grip.addEventListener('touchend', () => {
+                item.classList.remove('dragging');
+                const targetCard = list._touchTargetCard;
+                if (targetCard) {
+                    targetCard.classList.remove('drag-over');
+                    const toIdx = parseInt(targetCard.getAttribute('data-index'), 10);
+                    const fromIdx = list._touchFromIdx;
+                    if (!isNaN(toIdx) && fromIdx !== undefined && fromIdx !== toIdx) {
+                        player.reorderSoloQueue(fromIdx, toIdx);
+                    }
+                }
+                list._touchTargetCard = null;
+                list._touchFromIdx = null;
+            });
+        }
 
         const playSoloTrackFn = () => {
             player.playTrack(track, 0);

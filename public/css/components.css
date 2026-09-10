@@ -1686,3 +1686,191 @@
     50% { transform: scale(1.5); opacity: 0.5; }
 }
 
+/* --- QUEUE DRAG & DROP REORDERING --- */
+.drag-handle-grip {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 4px;
+    margin-right: 2px;
+    cursor: grab;
+    touch-action: none;
+    color: var(--text-muted);
+    opacity: 0.5;
+    border-radius: var(--radius-sm);
+    transition: opacity 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.drag-handle-grip:hover {
+    opacity: 1;
+    color: var(--primary);
+    background-color: var(--bg-surface-elevated);
+}
+
+.drag-handle-grip:active {
+    cursor: grabbing;
+    opacity: 1;
+    color: var(--primary);
+}
+
+.track-item-card.dragging {
+    opacity: 0.4;
+    background: var(--bg-surface-elevated) !important;
+    border: 1px dashed var(--primary) !important;
+    transform: scale(0.98);
+}
+
+.track-item-card.drag-over {
+    border-top: 2px solid var(--primary) !important;
+    background: rgba(239, 68, 68, 0.08) !important;
+    box-shadow: 0 -4px 12px rgba(239, 68, 68, 0.2);
+}
+
+/* --- CHAT ONLINE BADGE & POPUP --- */
+.badge-online-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(16, 185, 129, 0.15);
+    border: 1px solid rgba(16, 185, 129, 0.35);
+    color: #34d399;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.badge-online-btn:hover {
+    background: rgba(16, 185, 129, 0.28);
+    border-color: #34d399;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(16, 185, 129, 0.25);
+}
+
+.online-users-modal-box {
+    max-width: 360px;
+    width: 90%;
+    border-radius: var(--radius-lg);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6);
+    overflow: hidden;
+    animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.online-users-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 380px;
+    overflow-y: auto;
+    padding-right: 2px;
+}
+
+.online-user-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    background: var(--bg-surface-elevated);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.online-user-row:hover {
+    background: var(--bg-surface-hover);
+    border-color: var(--border-color);
+}
+
+.online-user-row.is-me {
+    border-color: rgba(99, 102, 241, 0.4);
+    background: rgba(99, 102, 241, 0.08);
+}
+
+.online-user-avatar {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: var(--bg-surface);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    border: 1px solid var(--border-subtle);
+    flex-shrink: 0;
+}
+
+.online-user-info {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+    overflow: hidden;
+}
+
+.online-user-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-main);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.user-role-badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    flex-shrink: 0;
+}
+
+.user-role-badge.host {
+    background: rgba(245, 158, 11, 0.2);
+    color: #fbbf24;
+    border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.user-role-badge.me {
+    background: rgba(99, 102, 241, 0.2);
+    color: #818cf8;
+    border: 1px solid rgba(99, 102, 241, 0.4);
+}
+
+/* --- CHAT ACTIVITY NOTICES (BLAME LOGS) --- */
+.chat-activity-notice {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 5px 12px;
+    margin: 6px auto;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 20px;
+    font-size: 11px;
+    color: var(--text-muted);
+    max-width: 92%;
+    text-align: center;
+    line-height: 1.4;
+    animation: fadeIn 0.2s ease-out;
+}
+
+.chat-activity-notice .activity-icon {
+    font-size: 13px;
+    flex-shrink: 0;
+}
+
+.chat-activity-notice .activity-user {
+    color: var(--text-main);
+    font-weight: 600;
+}
+
+

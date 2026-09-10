@@ -128,6 +128,10 @@ class JamriWebSocket {
         this.send('queue_shuffle');
     }
 
+    sendQueueReorder(orderedIds) {
+        this.send('queue_reorder', { ordered_ids: orderedIds });
+    }
+
     // Playlist (Bank Musik) events
     sendPlaylistAdd(track) {
         this.send('playlist_add', { track });

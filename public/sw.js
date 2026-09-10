@@ -1,6 +1,6 @@
 // sw.js - Jamri Service Worker for Offline PWA Capabilities
 
-const CACHE_NAME = 'jamri-shell-v7';
+const CACHE_NAME = 'jamri-shell-v8';
 const SHELL_ASSETS = [
     '../index.php',
     './css/main.css',

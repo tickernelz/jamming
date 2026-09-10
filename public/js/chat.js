@@ -13,6 +13,7 @@ class JamriChat {
         this.hasMore = true;
         this.isLoading = false;
 
+        this.onlineUsers = [];
         this.renderShell();
         this.setupEvents();
     }
@@ -22,7 +23,10 @@ class JamriChat {
             <div class="chat-wrapper">
                 <div class="chat-header">
                     <span class="chat-title">Live Chat</span>
-                    <span id="chat-online-badge" class="badge">0 online</span>
+                    <button type="button" id="chat-online-badge" class="badge badge-online-btn" title="Klik untuk melihat siapa saja yang online di room">
+                        <span class="online-indicator-dot"></span>
+                        <span id="chat-online-text">0 online</span>
+                    </button>
                 </div>
                 <div class="chat-messages-container" id="chat-messages-box">
                     <div id="chat-load-more-container" class="load-more-box" style="display:none;">
@@ -48,6 +52,7 @@ class JamriChat {
         this.inputForm = this.container.querySelector('#chat-input-form');
         this.inputField = this.container.querySelector('#chat-text-input');
         this.messagesBox = this.container.querySelector('#chat-messages-box');
+        this.onlineBtn = this.container.querySelector('#chat-online-badge');
     }
 
     setupEvents() {
@@ -63,6 +68,12 @@ class JamriChat {
         this.btnLoadMore.addEventListener('click', () => {
             this.loadOlderMessages();
         });
+
+        if (this.onlineBtn) {
+            this.onlineBtn.addEventListener('click', () => {
+                this.showOnlineUsersModal();
+            });
+        }
     }
 
     initMessages(initialList) {
@@ -171,11 +182,95 @@ class JamriChat {
         }
     }
 
-    updateOnlineCount(count) {
-        const badge = this.container.querySelector('#chat-online-badge');
-        if (badge) {
-            badge.textContent = `${count} online`;
+    setOnlineUsers(users) {
+        this.onlineUsers = Array.isArray(users) ? users : [];
+        this.updateOnlineCount(this.onlineUsers.length);
+
+        // If modal is currently open, refresh list
+        const modal = document.getElementById('modal-room-online-users');
+        if (modal && modal.style.display === 'flex') {
+            this.renderOnlineUsersList(modal);
         }
+    }
+
+    updateOnlineCount(count) {
+        const text = this.container.querySelector('#chat-online-text');
+        if (text) {
+            text.textContent = `${count} online`;
+        }
+    }
+
+    showOnlineUsersModal() {
+        let modal = document.getElementById('modal-room-online-users');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'modal-room-online-users';
+            modal.className = 'jamri-modal-backdrop';
+            modal.innerHTML = `
+                <div class="jamri-modal-box online-users-modal-box">
+                    <div class="jamri-modal-header">
+                        <h3 id="online-users-modal-title">Peserta Online</h3>
+                        <button type="button" class="btn btn-ghost btn-icon btn-sm btn-close-modal">✕</button>
+                    </div>
+                    <div class="jamri-modal-body" style="padding:10px 16px 16px;">
+                        <div id="online-users-list-container" class="online-users-list"></div>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+
+            modal.querySelectorAll('.btn-close-modal').forEach(btn => {
+                btn.addEventListener('click', () => { modal.style.display = 'none'; });
+            });
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) modal.style.display = 'none';
+            });
+        }
+
+        this.renderOnlineUsersList(modal);
+        modal.style.display = 'flex';
+    }
+
+    renderOnlineUsersList(modal) {
+        const title = modal.querySelector('#online-users-modal-title');
+        if (title) title.textContent = `Peserta Online (${this.onlineUsers.length})`;
+
+        const container = modal.querySelector('#online-users-list-container');
+        if (!container) return;
+
+        if (this.onlineUsers.length === 0) {
+            container.innerHTML = '<div style="padding:16px; text-align:center; color:var(--text-muted);">Tidak ada peserta lain.</div>';
+            return;
+        }
+
+        const myNickname = window.JAMRI_USER ? window.JAMRI_USER.nickname : '';
+        container.innerHTML = this.onlineUsers.map(user => {
+            const isMe = user.nickname === myNickname;
+            return `
+                <div class="online-user-row ${isMe ? 'is-me' : ''}">
+                    <div class="online-user-avatar">${user.emoji || '🎧'}</div>
+                    <div class="online-user-info">
+                        <span class="online-user-name">${this.escape(user.nickname)}</span>
+                        ${isMe ? '<span class="user-role-badge me">Anda</span>' : ''}
+                        ${user.is_host ? '<span class="user-role-badge host">👑 Host</span>' : ''}
+                    </div>
+                    <span class="online-indicator-dot" title="Online"></span>
+                </div>
+            `;
+        }).join('');
+    }
+
+    appendActivityNotice(actionText, icon = 'ℹ️', triggeredBy = '') {
+        const el = document.createElement('div');
+        el.className = 'chat-activity-notice';
+        el.innerHTML = `
+            <span class="activity-icon">${icon}</span>
+            <span class="activity-text">
+                <strong class="activity-user">${this.escape(triggeredBy)}</strong> ${this.escape(actionText)}
+            </span>
+        `;
+        this.messagesList.appendChild(el);
+        this.scrollToBottom();
     }
 
     scrollToBottom() {
