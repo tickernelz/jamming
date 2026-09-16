@@ -658,8 +658,8 @@ function renderRoomShell(roomDetail) {
                 <div id="room-queue-tab-panel" class="tab-panel">
                     <div class="track-list-box" id="room-queue-list"></div>
                 </div>
-                <div id="room-lyrics-tab-panel" class="tab-panel" style="display:none; height:100%;">
-                    <div id="room-embedded-lyrics-container" style="height:100%;"></div>
+                <div id="room-lyrics-tab-panel" class="tab-panel" style="display:none; height:100%; flex-direction:column; overflow:hidden;">
+                    <div id="room-embedded-lyrics-container" style="height:100%; flex:1; min-height:0; display:flex; flex-direction:column; overflow:hidden;"></div>
                 </div>
                 <div id="room-playlist-tab-panel" class="tab-panel" style="display:none;">
                     <div class="track-list-box" id="room-playlist-list"></div>
@@ -758,7 +758,7 @@ function renderRoomShell(roomDetail) {
             btn.classList.add('active');
             const target = btn.dataset.tab;
             container.querySelector('#room-queue-tab-panel').style.display = target === 'room-queue' ? 'block' : 'none';
-            container.querySelector('#room-lyrics-tab-panel').style.display = target === 'room-lyrics' ? 'block' : 'none';
+            container.querySelector('#room-lyrics-tab-panel').style.display = target === 'room-lyrics' ? 'flex' : 'none';
             container.querySelector('#room-playlist-tab-panel').style.display = target === 'room-playlist' ? 'block' : 'none';
             container.querySelector('#room-soundboard-tab-panel').style.display = target === 'room-soundboard' ? 'block' : 'none';
             container.querySelector('#room-games-tab-panel').style.display = target === 'room-games' ? 'block' : 'none';

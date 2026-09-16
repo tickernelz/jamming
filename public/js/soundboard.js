@@ -557,31 +557,76 @@ class JamriSoundboard {
         if (btnEmptyUpload) btnEmptyUpload.addEventListener('click', () => this.showAddSoundModal());
     }
 
+    closeAddSoundModal(modal) {
+        if (!modal) modal = document.getElementById('modal-upload-soundboard');
+        if (modal) {
+            modal.classList.remove('active');
+            modal.style.display = 'none';
+            document.body.style.overflow = '';
+            if (modal._previewAudio) {
+                modal._previewAudio.pause();
+                modal._previewAudio.currentTime = 0;
+                modal._previewAudio = null;
+            }
+            const btnPreview = modal.querySelector('#btn-preview-audio');
+            if (btnPreview) {
+                btnPreview.innerHTML = `
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                        <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                    </svg>
+                    <span>Tes Suara</span>
+                `;
+            }
+        }
+    }
+
     showAddSoundModal() {
         let modal = document.getElementById('modal-upload-soundboard');
         if (!modal) {
             modal = document.createElement('div');
             modal.id = 'modal-upload-soundboard';
-            modal.className = 'jamri-modal-backdrop';
+            modal.className = 'modal-backdrop';
+            modal.style.cssText = 'display:none; position:fixed; inset:0; z-index:10000; background:rgba(0,0,0,0.65); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); align-items:center; justify-content:center; padding:16px;';
             modal.innerHTML = `
-                <div class="jamri-modal-box" style="background:var(--bg-surface); border:1px solid var(--border-color); color:var(--text-primary); border-radius:var(--radius-md);">
-                    <div class="jamri-modal-header" style="border-bottom:1px solid var(--border-subtle); padding:16px 20px;">
-                        <h3 style="margin:0; font-size:16px; font-weight:700; color:var(--text-primary);">Tambah Soundboard Pribadi</h3>
-                        <button type="button" class="btn btn-ghost btn-icon btn-sm btn-close-modal" style="margin-left:auto;">
+                <div class="modal-card" style="max-width:460px; width:100%; border-radius:var(--radius-lg); background:var(--bg-surface); border:1px solid var(--border-color); box-shadow:var(--shadow-lg); overflow:hidden; color:var(--text-primary);">
+                    <!-- Header -->
+                    <div style="display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid var(--border-subtle); background:var(--bg-surface-elevated);">
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <div style="width:32px; height:32px; border-radius:var(--radius-sm); background:rgba(var(--primary-rgb),0.12); display:flex; align-items:center; justify-content:center; color:var(--primary);">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                                </svg>
+                            </div>
+                            <div>
+                                <h3 style="margin:0; font-size:15px; font-weight:700; color:var(--text-primary);">Tambah Soundboard Pribadi</h3>
+                                <p style="margin:0; font-size:11px; color:var(--text-muted);">Tersimpan aman di browser lokal Anda</p>
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-ghost btn-icon btn-sm btn-close-modal" title="Tutup (Esc)">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <line x1="18" y1="6" x2="6" y2="18"></line>
                                 <line x1="6" y1="6" x2="18" y2="18"></line>
                             </svg>
                         </button>
                     </div>
-                    <div class="jamri-modal-body" style="padding:18px 20px;">
-                        <p style="font-size:12px; color:var(--text-secondary); line-height:1.5; margin-bottom:14px; background:var(--bg-surface-elevated); padding:10px 12px; border-radius:var(--radius-sm); border:1px solid var(--border-subtle);">
-                            Audio disimpan <strong>100% di browser lokal Anda (IndexedDB)</strong> dan di-stream secara instan saat dibunyikan. Bebas risiko malware dan tanpa penyimpanan di server! Maksimal <strong>15 detik</strong>.
-                        </p>
+
+                    <!-- Body -->
+                    <div style="padding:16px 18px; max-height:calc(85vh - 120px); overflow-y:auto;">
+                        <div style="display:flex; gap:10px; padding:10px 12px; border-radius:var(--radius-sm); background:rgba(59,130,246,0.08); border:1px solid rgba(59,130,246,0.25); margin-bottom:14px; font-size:12px; color:var(--text-secondary); line-height:1.45;">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--primary); flex-shrink:0; margin-top:2px;">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <line x1="12" y1="16" x2="12" y2="12"></line>
+                                <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                            </svg>
+                            <div>
+                                Audio disimpan <strong>100% lokal di browser Anda (IndexedDB)</strong> dan di-stream secara instan saat dibunyikan. Maksimal <strong>15 detik</strong>.
+                            </div>
+                        </div>
 
                         <div class="form-group" style="margin-bottom:14px;">
                             <label style="display:block; font-size:12px; font-weight:600; margin-bottom:6px; color:var(--text-primary);">Nama Soundboard</label>
-                            <input type="text" id="input-sb-title" class="form-control" placeholder="Contoh: Ketawa Jahat / Huh?!" maxlength="30" style="width:100%; background:var(--bg-surface-elevated); border:1px solid var(--border-color); color:var(--text-primary); padding:8px 12px; border-radius:var(--radius-sm); font-size:13px; outline:none;" />
+                            <input type="text" id="input-sb-title" class="form-control" placeholder="Contoh: Ketawa Jahat / Huh?! / Vine Boom" maxlength="30" style="width:100%; background:var(--bg-surface-elevated); border:1px solid var(--border-color); color:var(--text-primary); padding:8px 12px; border-radius:var(--radius-sm); font-size:13px; outline:none;" />
                         </div>
 
                         <div class="form-group" style="margin-bottom:14px;">
@@ -599,17 +644,64 @@ class JamriSoundboard {
                                 <span class="emoji-pill">🦆</span>
                                 <span class="emoji-pill">🎸</span>
                                 <span class="emoji-pill">💣</span>
+                                <span class="emoji-pill">🎺</span>
+                                <span class="emoji-pill">👏</span>
+                                <span class="emoji-pill">👻</span>
                             </div>
                             <input type="hidden" id="input-sb-emoji" value="🔊" />
                         </div>
 
-                        <div class="form-group" style="margin-bottom:14px;">
-                            <label style="display:block; font-size:12px; font-weight:600; margin-bottom:6px; color:var(--text-primary);">File Audio (.mp3, .wav, .ogg, .m4a)</label>
-                            <input type="file" id="input-sb-file" class="form-control" accept="audio/*" style="width:100%; font-size:12px;" />
-                            <div id="sb-file-status" class="file-status-info" style="display:none; font-size:12px; margin-top:6px;"></div>
+                        <div class="form-group" style="margin-bottom:8px;">
+                            <label style="display:block; font-size:12px; font-weight:600; margin-bottom:6px; color:var(--text-primary);">File Audio</label>
+                            
+                            <div id="sb-dropzone" class="soundboard-dropzone">
+                                <input type="file" id="input-sb-file" accept="audio/*" style="display:none;" />
+                                <div class="soundboard-dropzone-icon">
+                                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                        <path d="M9 18V5l12-2v13"></path>
+                                        <circle cx="6" cy="18" r="3"></circle>
+                                        <circle cx="18" cy="16" r="3"></circle>
+                                    </svg>
+                                </div>
+                                <div class="soundboard-dropzone-title">Klik atau seret file audio ke sini</div>
+                                <div class="soundboard-dropzone-subtitle">Mendukung MP3, WAV, OGG, M4A (Maksimal 15 detik)</div>
+                            </div>
+
+                            <!-- Selected file preview card -->
+                            <div id="sb-file-card" class="soundboard-file-preview-card" style="display:none;">
+                                <div style="display:flex; align-items:center; gap:8px; min-width:0;">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--primary); flex-shrink:0;">
+                                        <path d="M9 18V5l12-2v13"></path>
+                                        <circle cx="6" cy="18" r="3"></circle>
+                                        <circle cx="18" cy="16" r="3"></circle>
+                                    </svg>
+                                    <div style="min-width:0;">
+                                        <div id="sb-file-name" style="font-size:12px; font-weight:600; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+                                        <div id="sb-file-meta" style="font-size:11px; color:var(--text-secondary);"></div>
+                                    </div>
+                                </div>
+                                <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
+                                    <button type="button" id="btn-preview-audio" class="btn btn-ghost btn-xs" title="Putar Preview">
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                                            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                                        </svg>
+                                        <span>Tes Suara</span>
+                                    </button>
+                                    <button type="button" id="btn-remove-file" class="btn btn-ghost btn-icon btn-xs" title="Hapus file" style="color:var(--danger);">
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div id="sb-file-status" class="file-status-info" style="display:none; margin-top:8px;"></div>
                         </div>
                     </div>
-                    <div class="jamri-modal-footer" style="border-top:1px solid var(--border-subtle); padding:14px 20px; display:flex; justify-content:flex-end; gap:8px;">
+
+                    <!-- Footer -->
+                    <div style="padding:12px 18px; border-top:1px solid var(--border-subtle); display:flex; justify-content:flex-end; gap:8px; background:var(--bg-surface-elevated);">
                         <button type="button" class="btn btn-outline btn-sm btn-close-modal">Batal</button>
                         <button type="button" id="btn-submit-soundboard" class="btn btn-primary btn-sm">Simpan ke Perangkat</button>
                     </div>
@@ -619,7 +711,10 @@ class JamriSoundboard {
 
             // Close events
             modal.querySelectorAll('.btn-close-modal').forEach(b => {
-                b.addEventListener('click', () => { modal.style.display = 'none'; });
+                b.addEventListener('click', () => this.closeAddSoundModal(modal));
+            });
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) this.closeAddSoundModal(modal);
             });
 
             // Emoji selector
@@ -631,54 +726,166 @@ class JamriSoundboard {
                 });
             });
 
-            // File selection & duration pre-validation
+            // File selection & dropzone handling
+            const dropzone = modal.querySelector('#sb-dropzone');
             const fileInput = modal.querySelector('#input-sb-file');
+            const fileCard = modal.querySelector('#sb-file-card');
+            const fileNameEl = modal.querySelector('#sb-file-name');
+            const fileMetaEl = modal.querySelector('#sb-file-meta');
             const statusDiv = modal.querySelector('#sb-file-status');
             const titleInput = modal.querySelector('#input-sb-title');
+            const btnRemoveFile = modal.querySelector('#btn-remove-file');
+            const btnPreview = modal.querySelector('#btn-preview-audio');
 
-            fileInput.addEventListener('change', () => {
-                const file = fileInput.files[0];
-                if (!file) {
-                    statusDiv.style.display = 'none';
-                    return;
-                }
+            const handleFile = (file) => {
+                if (!file) return;
 
                 if (!titleInput.value) {
                     const cleanName = file.name.replace(/\.[^/.]+$/, "").substring(0, 25);
                     titleInput.value = cleanName;
                 }
 
+                modal._selectedFile = file;
+
+                // Format file size
+                const sizeKB = (file.size / 1024).toFixed(1);
+                const sizeStr = file.size > 1024 * 1024 ? `${(file.size / (1024 * 1024)).toFixed(2)} MB` : `${sizeKB} KB`;
+                fileNameEl.textContent = file.name;
+                fileMetaEl.textContent = `${sizeStr} • Memeriksa durasi...`;
+
+                dropzone.style.display = 'none';
+                fileCard.style.display = 'flex';
+
                 statusDiv.style.display = 'block';
-                statusDiv.style.color = 'var(--text-muted)';
+                statusDiv.className = 'file-status-info info';
                 statusDiv.innerHTML = 'Memeriksa durasi audio...';
 
-                const tempAudio = new Audio();
+                if (modal._previewAudio) {
+                    modal._previewAudio.pause();
+                    modal._previewAudio = null;
+                }
+
                 const objectUrl = URL.createObjectURL(file);
+                const tempAudio = new Audio();
                 tempAudio.src = objectUrl;
 
                 tempAudio.onloadedmetadata = () => {
                     const dur = tempAudio.duration;
-                    URL.revokeObjectURL(objectUrl);
                     modal._detectedDuration = dur;
+                    fileMetaEl.textContent = `${sizeStr} • ${dur.toFixed(1)} detik`;
 
                     if (dur > 15.5) {
-                        statusDiv.style.color = 'var(--danger, #ef4444)';
-                        statusDiv.innerHTML = `Durasi terlalu panjang: <strong>${dur.toFixed(1)}s</strong> (Maksimal 15 detik!)`;
+                        statusDiv.className = 'file-status-info error';
+                        statusDiv.innerHTML = `Durasi file <strong>${dur.toFixed(1)}s</strong> melebihi batas maksimal 15 detik! Harap gunakan audio yang lebih pendek.`;
                         modal.querySelector('#btn-submit-soundboard').disabled = true;
                     } else {
-                        statusDiv.style.color = 'var(--success, #10b981)';
-                        statusDiv.innerHTML = `Durasi valid: <strong>${dur.toFixed(1)}s</strong>`;
+                        statusDiv.className = 'file-status-info success';
+                        statusDiv.innerHTML = `Durasi valid: <strong>${dur.toFixed(1)} detik</strong> • Siap disimpan`;
                         modal.querySelector('#btn-submit-soundboard').disabled = false;
                     }
                 };
 
                 tempAudio.onerror = () => {
-                    URL.revokeObjectURL(objectUrl);
-                    statusDiv.style.color = 'var(--text-secondary)';
-                    statusDiv.innerHTML = 'Durasi tidak dapat diverifikasi otomatis. Pastikan <= 15s.';
+                    statusDiv.className = 'file-status-info warning';
+                    statusDiv.innerHTML = 'Durasi tidak dapat diverifikasi otomatis. Pastikan durasi <= 15 detik.';
                     modal._detectedDuration = 5.0;
+                    fileMetaEl.textContent = sizeStr;
                     modal.querySelector('#btn-submit-soundboard').disabled = false;
                 };
+
+                modal._previewAudioObj = {
+                    file: file,
+                    url: objectUrl
+                };
+            };
+
+            // Dropzone click
+            dropzone.addEventListener('click', () => fileInput.click());
+
+            // Drag events
+            ['dragenter', 'dragover'].forEach(evt => {
+                dropzone.addEventListener(evt, (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    dropzone.classList.add('dragover');
+                });
+            });
+
+            ['dragleave', 'drop'].forEach(evt => {
+                dropzone.addEventListener(evt, (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    dropzone.classList.remove('dragover');
+                });
+            });
+
+            dropzone.addEventListener('drop', (e) => {
+                const dt = e.dataTransfer;
+                if (dt && dt.files && dt.files[0]) {
+                    handleFile(dt.files[0]);
+                }
+            });
+
+            fileInput.addEventListener('change', () => {
+                if (fileInput.files && fileInput.files[0]) {
+                    handleFile(fileInput.files[0]);
+                }
+            });
+
+            btnRemoveFile.addEventListener('click', () => {
+                if (modal._previewAudio) {
+                    modal._previewAudio.pause();
+                    modal._previewAudio = null;
+                }
+                modal._selectedFile = null;
+                modal._detectedDuration = 0;
+                fileInput.value = '';
+                dropzone.style.display = 'block';
+                fileCard.style.display = 'none';
+                statusDiv.style.display = 'none';
+                btnPreview.innerHTML = `
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                        <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                    </svg>
+                    <span>Tes Suara</span>
+                `;
+            });
+
+            // Preview Playback
+            btnPreview.addEventListener('click', () => {
+                if (!modal._previewAudioObj || !modal._previewAudioObj.url) return;
+
+                if (modal._previewAudio && !modal._previewAudio.paused) {
+                    modal._previewAudio.pause();
+                    modal._previewAudio.currentTime = 0;
+                    btnPreview.innerHTML = `
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                        </svg>
+                        <span>Tes Suara</span>
+                    `;
+                } else {
+                    if (!modal._previewAudio) {
+                        modal._previewAudio = new Audio(modal._previewAudioObj.url);
+                        modal._previewAudio.volume = this.volume;
+                        modal._previewAudio.onended = () => {
+                            btnPreview.innerHTML = `
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                                    <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                                </svg>
+                                <span>Tes Suara</span>
+                            `;
+                        };
+                    }
+                    modal._previewAudio.play().catch(e => console.warn('[Soundboard] Preview error:', e));
+                    btnPreview.innerHTML = `
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                            <rect x="6" y="4" width="4" height="16"></rect>
+                            <rect x="14" y="4" width="4" height="16"></rect>
+                        </svg>
+                        <span>Hentikan</span>
+                    `;
+                }
             });
 
             modal.querySelector('#btn-submit-soundboard').addEventListener('click', () => {
@@ -686,20 +893,34 @@ class JamriSoundboard {
             });
         }
 
-        // Reset form
+        const onEsc = (e) => {
+            if (e.key === 'Escape' && modal.classList.contains('active')) {
+                this.closeAddSoundModal(modal);
+                window.removeEventListener('keydown', onEsc);
+            }
+        };
+        window.addEventListener('keydown', onEsc);
+
+        // Reset form state
         modal.querySelector('#input-sb-title').value = '';
         modal.querySelector('#input-sb-file').value = '';
+        modal.querySelector('#sb-dropzone').style.display = 'block';
+        modal.querySelector('#sb-file-card').style.display = 'none';
         modal.querySelector('#sb-file-status').style.display = 'none';
+        modal._selectedFile = null;
         modal._detectedDuration = 0;
         modal.querySelector('#btn-submit-soundboard').disabled = false;
+        modal.querySelector('#btn-submit-soundboard').textContent = 'Simpan ke Perangkat';
+
+        modal.classList.add('active');
         modal.style.display = 'flex';
+        document.body.style.overflow = 'hidden';
     }
 
     async handleSaveSoundboard(modal) {
         const title = modal.querySelector('#input-sb-title').value.trim();
         const emoji = modal.querySelector('#input-sb-emoji').value.trim() || '🔊';
-        const fileInput = modal.querySelector('#input-sb-file');
-        const file = fileInput.files[0];
+        const file = modal._selectedFile;
         const duration = modal._detectedDuration || 0;
 
         if (!title) {
@@ -740,7 +961,7 @@ class JamriSoundboard {
             await JamriSoundboardDB.save(soundItem);
             await this.loadCustomSounds();
 
-            modal.style.display = 'none';
+            this.closeAddSoundModal(modal);
             if (window.showToast) {
                 window.showToast('Soundboard berhasil disimpan ke browser perangkat Anda!', 'success');
             }

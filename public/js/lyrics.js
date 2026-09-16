@@ -185,9 +185,11 @@ class JamriLyricsManager {
                     if (nextEl) {
                         nextEl.classList.add('active-line');
                         if (!this.isUserScrolling || forceScroll) {
-                            nextEl.scrollIntoView({
-                                behavior: 'smooth',
-                                block: 'center'
+                            const relTop = nextEl.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop;
+                            const targetScrollTop = relTop - (container.clientHeight / 2) + (nextEl.clientHeight / 2);
+                            container.scrollTo({
+                                top: Math.max(0, targetScrollTop),
+                                behavior: 'smooth'
                             });
                         }
                     }
@@ -233,22 +235,48 @@ class JamriLyricsManager {
 
         container.innerHTML = `
             <div class="embedded-lyrics-box">
-                <!-- Header -->
+                <!-- Header (Sticky, 2 Structured Rows) -->
                 <div class="embedded-lyrics-header">
-                    <div style="display:flex; align-items:center; gap:10px; min-width:0;">
-                        <img src="${this.escape(thumb)}" alt="Cover" style="width:36px; height:36px; border-radius:var(--radius-sm); object-fit:cover; flex-shrink:0; border:1px solid var(--border-subtle);" />
-                        <div style="min-width:0;">
-                            <div style="font-size:13px; font-weight:700; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${this.escape(title)}">
-                                ${this.escape(title)}
+                    <!-- Row 1: Track Info, Sync Badge, & Actions -->
+                    <div class="lyrics-header-main-row">
+                        <div class="lyrics-track-info">
+                            <img src="${this.escape(thumb)}" alt="Cover" class="lyrics-track-thumb" />
+                            <div class="lyrics-track-meta">
+                                <div class="lyrics-track-title" title="${this.escape(title)}">${this.escape(title)}</div>
+                                <div class="lyrics-track-artist">${this.escape(artist)}</div>
                             </div>
-                            <div style="font-size:11px; color:var(--text-secondary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-                                ${this.escape(artist)}
-                            </div>
+                            ${isSynced ? `
+                                <span class="lyrics-sync-badge synced" title="Lirik disinkronkan secara otomatis secara realtime">
+                                    <span class="sync-dot"></span>
+                                    <span>Sinkron Real-Time</span>
+                                </span>
+                            ` : (isPlain ? `
+                                <span class="lyrics-sync-badge plain" title="Lirik teks biasa tanpa sinkronisasi waktu">
+                                    <span>Teks Polos</span>
+                                </span>
+                            ` : '')}
+                        </div>
+
+                        <div class="lyrics-header-actions">
+                            <button type="button" class="btn btn-ghost btn-icon btn-sm btn-embedded-search-toggle" title="Cari Lirik Manual">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="11" cy="11" r="8"></circle>
+                                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                                </svg>
+                            </button>
+                            <button type="button" class="btn btn-ghost btn-icon btn-sm btn-embedded-fullscreen" title="Buka Layar Penuh (L)">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="15 3 21 3 21 9"></polyline>
+                                    <polyline points="9 21 3 21 3 15"></polyline>
+                                    <line x1="21" y1="3" x2="14" y2="10"></line>
+                                    <line x1="3" y1="21" x2="10" y2="14"></line>
+                                </svg>
+                            </button>
                         </div>
                     </div>
 
-                    <div style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
-                        <!-- Dedicated Karaoke PTT Button -->
+                    <!-- Row 2: Dedicated Karaoke Voice & Hearing Controls (Full-width, Touch-friendly) -->
+                    <div class="lyrics-header-controls-row">
                         <button type="button" class="btn-karaoke-ptt" title="Tahan tombol ini atau tombol [V] di keyboard untuk bernyanyi karaoke bareng">
                             <span class="ptt-icon">
                                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -262,37 +290,12 @@ class JamriLyricsManager {
                             <span class="ptt-waves"><span></span><span></span><span></span></span>
                         </button>
 
-                        <button type="button" class="btn btn-outline btn-xs btn-hear-karaoke" title="Dengarkan atau bisukan suara karaoke dari peserta lain">
+                        <button type="button" class="btn btn-outline btn-sm btn-hear-karaoke" title="Dengarkan atau bisukan suara karaoke dari peserta lain">
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M3 18v-6a9 9 0 0 1 18 0v6"></path>
                                 <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"></path>
                             </svg>
                             <span class="hear-karaoke-label">Karaoke Lain: Terdengar</span>
-                        </button>
-
-                        ${isSynced ? `
-                            <span style="font-size:10px; font-weight:700; padding:2px 8px; border-radius:12px; background:var(--success-light); color:var(--success); border:1px solid rgba(22,163,74,0.3);">
-                                Sinkron Real-Time
-                            </span>
-                        ` : (isPlain ? `
-                            <span style="font-size:10px; font-weight:700; padding:2px 8px; border-radius:12px; background:var(--primary-light); color:var(--primary); border:1px solid rgba(37,99,235,0.3);">
-                                Teks Polos
-                            </span>
-                        ` : '')}
-
-                        <button type="button" class="btn btn-ghost btn-icon btn-sm btn-embedded-search-toggle" title="Cari Lirik Manual">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <circle cx="11" cy="11" r="8"></circle>
-                                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-                            </svg>
-                        </button>
-                        <button type="button" class="btn btn-ghost btn-icon btn-sm btn-embedded-fullscreen" title="Buka Layar Penuh (L)">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <polyline points="15 3 21 3 21 9"></polyline>
-                                <polyline points="9 21 3 21 3 15"></polyline>
-                                <line x1="21" y1="3" x2="14" y2="10"></line>
-                                <line x1="3" y1="21" x2="10" y2="14"></line>
-                            </svg>
                         </button>
                     </div>
                 </div>
@@ -486,30 +489,46 @@ class JamriLyricsManager {
                 overflow: hidden;
                 position: relative;
             ">
-                <!-- Header -->
-                <div class="lyrics-header" style="
-                    padding: 18px 22px;
-                    border-bottom: 1px solid var(--border-subtle);
-                    display: flex;
-                    align-items: center;
-                    justify-content: space-between;
-                    background: var(--bg-surface-elevated);
-                    gap: 14px;
-                ">
-                    <div style="display:flex; align-items:center; gap:12px; min-width:0;">
-                        <img src="${this.escape(thumb)}" alt="Cover" style="width:42px; height:42px; border-radius:var(--radius-sm); object-fit:cover; flex-shrink:0; border:1px solid var(--border-subtle);" />
-                        <div style="min-width:0;">
-                            <div style="font-size:15px; font-weight:700; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${this.escape(title)}">
-                                ${this.escape(title)}
+                <!-- Header (Sticky, 2 Structured Rows) -->
+                <div class="lyrics-header">
+                    <!-- Row 1: Track Info, Sync Badge, & Actions -->
+                    <div class="lyrics-header-main-row">
+                        <div class="lyrics-track-info">
+                            <img src="${this.escape(thumb)}" alt="Cover" class="lyrics-track-thumb" />
+                            <div class="lyrics-track-meta">
+                                <div class="lyrics-track-title" title="${this.escape(title)}">${this.escape(title)}</div>
+                                <div class="lyrics-track-artist">${this.escape(artist)}</div>
                             </div>
-                            <div style="font-size:12px; color:var(--text-secondary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-                                ${this.escape(artist)}
-                            </div>
+                            ${isSynced ? `
+                                <span class="lyrics-sync-badge synced" title="Lirik disinkronkan secara otomatis secara realtime">
+                                    <span class="sync-dot"></span>
+                                    <span>Sinkron Real-Time</span>
+                                </span>
+                            ` : (isPlain ? `
+                                <span class="lyrics-sync-badge plain" title="Lirik teks biasa tanpa sinkronisasi waktu">
+                                    <span>Teks Polos</span>
+                                </span>
+                            ` : '')}
+                        </div>
+
+                        <div class="lyrics-header-actions">
+                            <button type="button" id="btn-lyrics-search-toggle" class="btn btn-ghost btn-icon btn-sm" title="Cari Lirik Manual">
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="11" cy="11" r="8"></circle>
+                                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                                </svg>
+                            </button>
+                            <button type="button" id="btn-close-lyrics" class="btn btn-ghost btn-icon btn-sm" title="Tutup (Esc)">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                                </svg>
+                            </button>
                         </div>
                     </div>
 
-                    <div style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
-                        <!-- Dedicated Karaoke PTT Button -->
+                    <!-- Row 2: Dedicated Karaoke Voice & Hearing Controls (Full-width, Touch-friendly) -->
+                    <div class="lyrics-header-controls-row">
                         <button type="button" class="btn-karaoke-ptt" title="Tahan tombol ini atau tombol [V] di keyboard untuk bernyanyi karaoke bareng">
                             <span class="ptt-icon">
                                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -523,37 +542,12 @@ class JamriLyricsManager {
                             <span class="ptt-waves"><span></span><span></span><span></span></span>
                         </button>
 
-                        <button type="button" class="btn btn-outline btn-xs btn-hear-karaoke" title="Dengarkan atau bisukan suara karaoke dari peserta lain">
+                        <button type="button" class="btn btn-outline btn-sm btn-hear-karaoke" title="Dengarkan atau bisukan suara karaoke dari peserta lain">
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M3 18v-6a9 9 0 0 1 18 0v6"></path>
                                 <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"></path>
                             </svg>
                             <span class="hear-karaoke-label">Karaoke Lain: Terdengar</span>
-                        </button>
-
-                        ${isSynced ? `
-                            <span style="display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:700; padding:3px 8px; border-radius:12px; background:var(--success-light); color:var(--success); border:1px solid rgba(22,163,74,0.3);">
-                                <span style="width:6px; height:6px; border-radius:50%; background:var(--success);"></span>
-                                Sinkron Real-Time
-                            </span>
-                        ` : (isPlain ? `
-                            <span style="font-size:11px; font-weight:700; padding:3px 8px; border-radius:12px; background:var(--primary-light); color:var(--primary); border:1px solid rgba(37,99,235,0.3);">
-                                Teks Polos
-                            </span>
-                        ` : '')}
-
-                        <button type="button" id="btn-lyrics-search-toggle" class="btn btn-ghost btn-icon btn-sm" title="Cari Lirik Berdasarkan Kata Kunci">
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <circle cx="11" cy="11" r="8"></circle>
-                                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-                            </svg>
-                        </button>
-
-                        <button type="button" id="btn-close-lyrics" class="btn btn-ghost btn-icon btn-sm" title="Tutup (Esc)">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <line x1="18" y1="6" x2="6" y2="18"></line>
-                                <line x1="6" y1="6" x2="18" y2="18"></line>
-                            </svg>
                         </button>
                     </div>
                 </div>
