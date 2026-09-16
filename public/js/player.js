@@ -872,7 +872,6 @@ class JamriPlayer {
         this.serverSyncTime = serverTime || Date.now();
 
         if (this.isPreviewing) {
-            // Pengguna sedang preview musik di modal pencarian, jangan timpa pemutarannya
             return;
         }
 
@@ -892,36 +891,28 @@ class JamriPlayer {
         }
 
         // 2. Sinkronisasi posisi timeline & playback state
-        // Hitung target position berdasarkan clock server
         const delay = (Date.now() - (serverTime || Date.now())) / 1000;
         const targetPos = (serverPos || 0) + (serverState === 'playing' ? Math.max(0, delay) : 0);
 
-        // PENTING: Jika tab sedang di background (document.hidden), JANGAN PERNAH panggil _internalSeek!
-        // Pemanggilan seekTo saat tab tersembunyi menyebabkan Chrome men-stall dan mem-pause pemutaran YouTube!
-        if (document.hidden) {
-            // Tetap handle play/pause
+        // PENTING: Jika tab di background DAN ini bukan seek eksplisit (hanya periodic pong):
+        // - Handle play/pause saja, skip _internalSeek agar YT tidak stall dari polling rutin
+        // - Tapi untuk seek EKSPLISIT dari user lain, tetap apply seketika agar tetap sinkron!
+        if (document.hidden && !isExplicitSeek) {
             if (serverState === 'playing' && !this.isPlaying) {
                 this.resume();
             } else if (serverState === 'paused' && this.isPlaying) {
                 this.pause();
             }
-            // Jika ini seek eksplisit dari user lain, simpan posisinya untuk diapply saat tab aktif
-            if (isExplicitSeek && serverPos !== undefined) {
-                const explicitPos = serverState === 'paused' ? (serverPos || 0) : targetPos;
-                this.pendingSeekPos = explicitPos;
-                console.log('[JAMRI] Background seek received, pending apply on tab focus:', explicitPos);
-            }
             return;
         }
 
-        // Tab aktif — bersihkan pending seek jika ada
+        // Tab aktif atau explicit seek — bersihkan pending seek
         this.pendingSeekPos = null;
 
         if (serverState === 'playing') {
             const cur = this.getCurrentTime();
-            // Hanya posisikan ulang audio lokal jika deviasi nyata (> 4.5 detik) agar tidak memicu re-buffering
-            // HANYA panggil _internalSeek() agar TIDAK PERNAH memantulkan paket 'seek' ke server!
-            if (Math.abs(cur - targetPos) > 4.5) {
+            // Untuk explicit seek: selalu apply. Untuk pong rutin: hanya jika deviasi > 4.5 detik
+            if (isExplicitSeek || Math.abs(cur - targetPos) > 4.5) {
                 this._internalSeek(targetPos);
             }
             if (!this.isPlaying) {
