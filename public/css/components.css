@@ -1079,10 +1079,10 @@
     }
 
     body.in-room .main-content {
-        padding-top: 10px !important;
-        padding-bottom: 10px !important;
-        height: calc(100vh - 54px - var(--player-dock-height)) !important;
-        max-height: calc(100vh - 54px - var(--player-dock-height)) !important;
+        padding-top: 8px !important;
+        padding-bottom: 16px !important;
+        height: calc(100vh - 58px - var(--player-dock-height) - 16px) !important;
+        max-height: calc(100vh - 58px - var(--player-dock-height) - 16px) !important;
         box-sizing: border-box !important;
         overflow: hidden !important;
         display: flex !important;
@@ -1142,6 +1142,7 @@
         padding-right: 0 !important;
         height: 100% !important;
         min-height: 0 !important;
+        box-sizing: border-box !important;
     }
 
     body.in-room #room-embedded-lyrics-container {
@@ -1151,6 +1152,7 @@
         display: flex !important;
         flex-direction: column !important;
         overflow: hidden !important;
+        box-sizing: border-box !important;
     }
 
     body.in-room .room-right-col {
@@ -2700,12 +2702,13 @@
     display: flex !important;
     flex-direction: column !important;
     height: 100% !important;
-    min-height: 480px;
+    min-height: 0 !important;
     max-height: 100% !important;
     overflow: hidden !important;
     position: relative;
     box-shadow: var(--shadow-sm);
     flex: 1 !important;
+    box-sizing: border-box !important;
 }
 
 .embedded-lyrics-header,
@@ -2860,6 +2863,32 @@
     font-size: 11px;
     color: var(--text-muted);
     flex-shrink: 0 !important;
+}
+
+@media (max-width: 768px) {
+    body.in-room #room-lyrics-tab-panel {
+        height: auto !important;
+        max-height: none !important;
+        overflow: visible !important;
+        padding-right: 0 !important;
+        flex: none !important;
+    }
+
+    body.in-room #room-embedded-lyrics-container {
+        height: auto !important;
+        max-height: none !important;
+        display: block !important;
+        flex: none !important;
+        overflow: visible !important;
+    }
+
+    .embedded-lyrics-box {
+        height: 380px !important;
+        max-height: 380px !important;
+        min-height: 0 !important;
+        flex: none !important;
+        margin-bottom: 16px !important;
+    }
 }
 
 @media (max-width: 540px) {

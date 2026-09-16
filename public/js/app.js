@@ -658,8 +658,8 @@ function renderRoomShell(roomDetail) {
                 <div id="room-queue-tab-panel" class="tab-panel">
                     <div class="track-list-box" id="room-queue-list"></div>
                 </div>
-                <div id="room-lyrics-tab-panel" class="tab-panel" style="display:none; height:100%; flex-direction:column; overflow:hidden;">
-                    <div id="room-embedded-lyrics-container" style="height:100%; flex:1; min-height:0; display:flex; flex-direction:column; overflow:hidden;"></div>
+                <div id="room-lyrics-tab-panel" class="tab-panel" style="display:none;">
+                    <div id="room-embedded-lyrics-container"></div>
                 </div>
                 <div id="room-playlist-tab-panel" class="tab-panel" style="display:none;">
                     <div class="track-list-box" id="room-playlist-list"></div>
