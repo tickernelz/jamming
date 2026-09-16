@@ -29,6 +29,9 @@ class JamriPlayer {
         this.isShuffled = false;
         this.originalSoloQueue = null;
 
+        // Pending seek position to apply when tab becomes visible after being hidden
+        this.pendingSeekPos = null;
+
         // Silent HTML5 audio loop to anchor Android/iOS background media service & lock screen controls
         this.silentAudio = new Audio('data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA');
         this.silentAudio.loop = true;
@@ -53,6 +56,22 @@ class JamriPlayer {
     setMode(mode, wsClient = null) {
         this.mode = mode;
         this.ws = wsClient;
+
+        // Apply pending seek when tab becomes visible again (seek was received while tab was hidden)
+        if (!this._visibilitySeekBound) {
+            this._visibilitySeekBound = true;
+            document.addEventListener('visibilitychange', () => {
+                if (!document.hidden && this.pendingSeekPos !== null) {
+                    const pendingPos = this.pendingSeekPos;
+                    this.pendingSeekPos = null;
+                    console.log('[JAMRI] Applying pending seek from background:', pendingPos);
+                    // Small delay to ensure browser YT player is unthrottled
+                    setTimeout(() => {
+                        this._internalSeek(pendingPos);
+                    }, 200);
+                }
+            });
+        }
     }
 
     initYouTubeBridge() {
@@ -846,7 +865,8 @@ class JamriPlayer {
     }
 
     // --- JAMMING SYNC LOGIC ---
-    syncJammingState(serverTrack, serverState, serverPos, serverTime) {
+    // isExplicitSeek: true = seek dari aksi user lain (seek/play/pause WS event), false = periodic pong
+    syncJammingState(serverTrack, serverState, serverPos, serverTime, isExplicitSeek = false) {
         this.serverPlaybackState = serverState;
         this.serverBasePos = serverPos || 0;
         this.serverSyncTime = serverTime || Date.now();
@@ -871,7 +891,7 @@ class JamriPlayer {
             return;
         }
 
-        // 2. Sinkronisasi posisi timeline & playback state (ISOLASI LOKAL PENUH)
+        // 2. Sinkronisasi posisi timeline & playback state
         // Hitung target position berdasarkan clock server
         const delay = (Date.now() - (serverTime || Date.now())) / 1000;
         const targetPos = (serverPos || 0) + (serverState === 'playing' ? Math.max(0, delay) : 0);
@@ -879,17 +899,27 @@ class JamriPlayer {
         // PENTING: Jika tab sedang di background (document.hidden), JANGAN PERNAH panggil _internalSeek!
         // Pemanggilan seekTo saat tab tersembunyi menyebabkan Chrome men-stall dan mem-pause pemutaran YouTube!
         if (document.hidden) {
+            // Tetap handle play/pause
             if (serverState === 'playing' && !this.isPlaying) {
                 this.resume();
             } else if (serverState === 'paused' && this.isPlaying) {
                 this.pause();
             }
+            // Jika ini seek eksplisit dari user lain, simpan posisinya untuk diapply saat tab aktif
+            if (isExplicitSeek && serverPos !== undefined) {
+                const explicitPos = serverState === 'paused' ? (serverPos || 0) : targetPos;
+                this.pendingSeekPos = explicitPos;
+                console.log('[JAMRI] Background seek received, pending apply on tab focus:', explicitPos);
+            }
             return;
         }
 
+        // Tab aktif — bersihkan pending seek jika ada
+        this.pendingSeekPos = null;
+
         if (serverState === 'playing') {
             const cur = this.getCurrentTime();
-            // Hanya posisikan ulang audio lokal jika deviasi nyata (> 4.5 detik) agar tidak memicu re-buffering saat server restart/deploy
+            // Hanya posisikan ulang audio lokal jika deviasi nyata (> 4.5 detik) agar tidak memicu re-buffering
             // HANYA panggil _internalSeek() agar TIDAK PERNAH memantulkan paket 'seek' ke server!
             if (Math.abs(cur - targetPos) > 4.5) {
                 this._internalSeek(targetPos);

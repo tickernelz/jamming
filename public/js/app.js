@@ -890,7 +890,7 @@ function bindRoomWebSocketEvents(ws, player, roomDetail) {
 
     ws.on('play', (data) => {
         if (player.isPreviewing) return;
-        player.syncJammingState(data.track || null, 'playing', data.position, data.server_time);
+        player.syncJammingState(data.track || null, 'playing', data.position, data.server_time, true);
         if (data.triggered_by && window.JAMRI_APP.currentChat) {
             window.JAMRI_APP.currentChat.appendActivityNotice('memutar musik', '', data.triggered_by);
         }
@@ -898,7 +898,7 @@ function bindRoomWebSocketEvents(ws, player, roomDetail) {
 
     ws.on('pause', (data) => {
         if (player.isPreviewing) return;
-        player.syncJammingState(data.track || null, 'paused', data.position, data.server_time);
+        player.syncJammingState(data.track || null, 'paused', data.position, data.server_time, true);
         if (data.triggered_by && window.JAMRI_APP.currentChat) {
             window.JAMRI_APP.currentChat.appendActivityNotice('menjeda musik', '', data.triggered_by);
         }
@@ -906,7 +906,7 @@ function bindRoomWebSocketEvents(ws, player, roomDetail) {
 
     ws.on('seek', (data) => {
         if (player.isPreviewing) return;
-        player.syncJammingState(data.track || null, data.state, data.position, data.server_time);
+        player.syncJammingState(data.track || null, data.state, data.position, data.server_time, true);
         if (data.triggered_by && window.JAMRI_APP.currentChat) {
             window.JAMRI_APP.currentChat.appendActivityNotice('menggeser linimasa musik', '', data.triggered_by);
         }
