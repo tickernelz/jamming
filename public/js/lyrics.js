@@ -386,24 +386,16 @@ class JamriLyricsManager {
                 <!-- Active Karaoke Singers Bar -->
                 <div class="karaoke-active-singers-bar" style="display:none; margin:8px 16px 0 16px;"></div>
 
-                <!-- Search Bar (Collapsible) -->
-                <div class="embedded-lyrics-search-bar" style="display:none; padding:10px 16px; background:var(--bg-surface-elevated); border-bottom:1px solid var(--border-subtle);">
-                    <form class="embedded-lyrics-search-form" style="display:flex; gap:8px;">
-                        <input type="text" class="embedded-lyrics-search-input" placeholder="Masukkan judul lagu / artis..." style="flex:1; background:var(--bg-surface); border:1px solid var(--border-color); border-radius:var(--radius-sm); padding:6px 12px; color:var(--text-primary); font-size:12px; outline:none;" />
-                        <button type="submit" class="btn btn-primary btn-sm">Cari</button>
-                    </form>
-                </div>
+                <!-- Search Panel with Candidate Selector (Collapsible) -->
+                ${this.getSearchPanelHtml(title !== 'Tidak Ada Lagu' ? `${title} ${artist}`.trim() : '')}
 
                 <!-- Scrollable Karaoke Lyrics -->
                 <div class="embedded-lyrics-scroll">
                     ${this.renderLyricsBody(isSynced, isPlain, notFound)}
                 </div>
 
-                <!-- Footer (Compact & Non-overflowing) -->
-                <div class="embedded-lyrics-footer">
-                    <span>Klik lirik untuk melompat (seek)</span>
-                    <span>Sumber: <a href="https://lrclib.net" target="_blank" rel="noopener" style="color:var(--primary); text-decoration:none; font-weight:600;">LRCLIB</a></span>
-                </div>
+                <!-- Footer with Bottom-Right Floating PiP Button -->
+                ${this.getFooterHtml(false)}
             </div>
         `;
 
@@ -412,10 +404,7 @@ class JamriLyricsManager {
 
     bindEmbeddedEvents(container) {
         this.bindPiPDropdown(container);
-        const searchToggle = container.querySelector('.btn-embedded-search-toggle');
-        const searchBar = container.querySelector('.embedded-lyrics-search-bar');
-        const searchForm = container.querySelector('.embedded-lyrics-search-form');
-        const searchInput = container.querySelector('.embedded-lyrics-search-input');
+        this.bindSearchEvents(container);
         const btnFullscreen = container.querySelector('.btn-embedded-fullscreen');
         const btnKaraokePtt = container.querySelector('.btn-karaoke-ptt');
 
@@ -437,24 +426,6 @@ class JamriLyricsManager {
 
         if (btnFullscreen) {
             btnFullscreen.addEventListener('click', () => this.openModal());
-        }
-
-        if (searchToggle && searchBar) {
-            searchToggle.addEventListener('click', () => {
-                const isHidden = searchBar.style.display === 'none';
-                searchBar.style.display = isHidden ? 'block' : 'none';
-                if (isHidden && searchInput) searchInput.focus();
-            });
-        }
-
-        if (searchForm && searchInput) {
-            searchForm.addEventListener('submit', (e) => {
-                e.preventDefault();
-                const q = searchInput.value.trim();
-                if (q) {
-                    this.fetchAndRenderLyrics(this.currentTrack, q);
-                }
-            });
         }
 
         const scrollBox = container.querySelector('.embedded-lyrics-scroll');
@@ -640,13 +611,8 @@ class JamriLyricsManager {
                 <!-- Active Karaoke Singers Bar -->
                 <div class="karaoke-active-singers-bar" style="display:none; margin:8px 22px 0 22px;"></div>
 
-                <!-- Search Bar -->
-                <div id="lyrics-search-bar" style="display:none; padding:12px 20px; background:var(--bg-surface-elevated); border-bottom:1px solid var(--border-subtle);">
-                    <form id="lyrics-search-form" style="display:flex; gap:8px;">
-                        <input type="text" id="lyrics-search-input" placeholder="Masukkan judul lagu / artis (cth: Queen Bohemian Rhapsody)..." style="flex:1; background:var(--bg-surface); border:1px solid var(--border-color); border-radius:var(--radius-sm); padding:7px 12px; color:var(--text-primary); font-size:13px; outline:none;" />
-                        <button type="submit" class="btn btn-primary btn-sm">Cari</button>
-                    </form>
-                </div>
+                <!-- Search Panel with Candidate Selector (Collapsible) -->
+                ${this.getSearchPanelHtml(title !== 'Tidak Ada Lagu' ? `${title} ${artist}`.trim() : '')}
 
                 <!-- Lyrics Content Area -->
                 <div id="jamri-lyrics-scroll-box" style="
@@ -660,13 +626,8 @@ class JamriLyricsManager {
                     ${this.renderLyricsBody(isSynced, isPlain, notFound)}
                 </div>
 
-                <!-- Footer -->
-                <div style="padding:12px 22px; border-top:1px solid var(--border-subtle); display:flex; align-items:center; justify-content:space-between; font-size:11px; color:var(--text-muted); background:var(--bg-surface-elevated);">
-                    <div>Klik baris lirik mana saja untuk melompat (seek) ke menit lagu tersebut.</div>
-                    <div style="display:flex; align-items:center; gap:4px;">
-                        Basis Data: <a href="https://lrclib.net" target="_blank" rel="noopener" style="color:var(--primary); text-decoration:none; font-weight:600;">LRCLIB Open-Source</a>
-                    </div>
-                </div>
+                <!-- Footer with Bottom-Right Floating PiP Button -->
+                ${this.getFooterHtml(true)}
             </div>
         `;
 
@@ -720,12 +681,20 @@ class JamriLyricsManager {
                 <div style="font-size:13px; max-width:360px; line-height:1.5; color:var(--text-secondary);">
                     ${this.escape(this.lyricsData ? this.lyricsData.message : 'Lirik untuk lagu ini tidak ditemukan otomatis.')}
                 </div>
+                <button type="button" class="btn btn-primary btn-sm btn-trigger-search" style="margin-top:6px; display:inline-flex; align-items:center; gap:6px;">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    </svg>
+                    <span>Cari & Pilih Lirik di LRCLIB</span>
+                </button>
             </div>
         `;
     }
 
     bindModalEvents() {
         this.bindPiPDropdown(this.modalEl);
+        this.bindSearchEvents(this.modalEl);
         const btnClose = this.modalEl.querySelector('#btn-close-lyrics');
         if (btnClose) {
             btnClose.addEventListener('click', () => this.closeModal());
@@ -746,29 +715,6 @@ class JamriLyricsManager {
             if (window.JAMRI_APP && window.JAMRI_APP.voicePTT) {
                 window.JAMRI_APP.voicePTT.updateKaraokeMuteUI();
             }
-        }
-
-        const searchToggle = this.modalEl.querySelector('#btn-lyrics-search-toggle');
-        const searchBar = this.modalEl.querySelector('#lyrics-search-bar');
-        const searchForm = this.modalEl.querySelector('#lyrics-search-form');
-        const searchInput = this.modalEl.querySelector('#lyrics-search-input');
-
-        if (searchToggle && searchBar) {
-            searchToggle.addEventListener('click', () => {
-                const isHidden = searchBar.style.display === 'none';
-                searchBar.style.display = isHidden ? 'block' : 'none';
-                if (isHidden && searchInput) searchInput.focus();
-            });
-        }
-
-        if (searchForm && searchInput) {
-            searchForm.addEventListener('submit', (e) => {
-                e.preventDefault();
-                const q = searchInput.value.trim();
-                if (q) {
-                    this.fetchAndRenderLyrics(this.currentTrack, q);
-                }
-            });
         }
 
         const container = document.getElementById('jamri-lyrics-scroll-box');
@@ -846,24 +792,224 @@ class JamriLyricsManager {
         `;
     }
 
-    bindPiPDropdown(container) {
-        const pipBtn = container.querySelector('.btn-lyrics-pip');
-        const pipMenu = container.querySelector('.lyrics-pip-menu');
-        if (!pipBtn || !pipMenu) return;
+    getFooterHtml(isModal = false) {
+        return `
+            <div class="embedded-lyrics-footer">
+                <span>Klik lirik untuk melompat (seek)</span>
+                <div class="embedded-lyrics-footer-right">
+                    <span>Sumber: <a href="https://lrclib.net" target="_blank" rel="noopener" style="color:var(--primary); text-decoration:none; font-weight:600;">LRCLIB</a></span>
+                    <div class="lyrics-pip-dropdown-wrapper lyrics-pip-footer-wrapper">
+                        <button type="button" class="btn-lyrics-pip-footer btn-lyrics-pip" title="Buka Floating Picture-in-Picture (PiP Desktop)">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="2" y="3" width="20" height="14" rx="2"></rect>
+                                <rect x="11" y="9" width="9" height="7" rx="1" fill="currentColor"></rect>
+                            </svg>
+                            <span>Floating PiP</span>
+                        </button>
+                        <div class="lyrics-pip-menu lyrics-pip-menu-up" style="display:none;">
+                            <button type="button" class="pip-menu-item" data-pip-mode="full">
+                                <span class="pip-menu-badge">Lengkap</span>
+                                <div class="pip-menu-text">
+                                    <strong>Lirik + Navigasi Musik</strong>
+                                    <small>Judul, seek, play/pause & lirik</small>
+                                </div>
+                            </button>
+                            <button type="button" class="pip-menu-item" data-pip-mode="lyrics">
+                                <span class="pip-menu-badge">Lirik Saja</span>
+                                <div class="pip-menu-text">
+                                    <strong>Teks Lirik Minimalis</strong>
+                                    <small>Fokus lirik auto-scroll</small>
+                                </div>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
 
-        pipBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const isShowing = pipMenu.style.display === 'flex';
-            document.querySelectorAll('.lyrics-pip-menu').forEach(m => m.style.display = 'none');
-            pipMenu.style.display = isShowing ? 'none' : 'flex';
+    getSearchPanelHtml(defaultQuery = '') {
+        return `
+            <div class="embedded-lyrics-search-panel" style="display:none;">
+                <form class="embedded-lyrics-search-form">
+                    <div class="lyrics-search-input-wrapper">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                        </svg>
+                        <input type="text" class="embedded-lyrics-search-input" placeholder="Ketik judul lagu atau nama artis di LRCLIB..." value="${this.escape(defaultQuery)}" />
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-sm">Cari</button>
+                    <button type="button" class="btn btn-ghost btn-sm btn-close-search" title="Tutup Pencarian">✕</button>
+                </form>
+                <div class="lyrics-search-results-box" style="display:none;">
+                    <div class="lyrics-search-status"></div>
+                    <div class="lyrics-search-results-list"></div>
+                </div>
+            </div>
+        `;
+    }
+
+    bindSearchEvents(container) {
+        const searchToggle = container.querySelector('.btn-embedded-search-toggle') || container.querySelector('#btn-lyrics-search-toggle');
+        const searchPanel = container.querySelector('.embedded-lyrics-search-panel');
+        const searchForm = container.querySelector('.embedded-lyrics-search-form');
+        const searchInput = container.querySelector('.embedded-lyrics-search-input');
+        const btnCloseSearch = container.querySelector('.btn-close-search');
+        const triggerBtns = container.querySelectorAll('.btn-trigger-search');
+
+        const openSearch = (autoSubmit = false) => {
+            if (!searchPanel) return;
+            searchPanel.style.display = 'flex';
+            if (searchInput) {
+                if (!searchInput.value.trim() && this.currentTrack) {
+                    const t = this.currentTrack;
+                    searchInput.value = `${t.title || ''} ${t.channel || t.artist || ''}`.trim();
+                }
+                searchInput.focus();
+                if (autoSubmit && searchInput.value.trim()) {
+                    this.executeLyricsSearch(container, searchInput.value.trim());
+                }
+            }
+        };
+
+        if (searchToggle && searchPanel) {
+            searchToggle.addEventListener('click', () => {
+                if (searchPanel.style.display === 'none') {
+                    openSearch();
+                } else {
+                    searchPanel.style.display = 'none';
+                }
+            });
+        }
+
+        if (btnCloseSearch && searchPanel) {
+            btnCloseSearch.addEventListener('click', () => {
+                searchPanel.style.display = 'none';
+            });
+        }
+
+        triggerBtns.forEach(btn => {
+            btn.addEventListener('click', () => openSearch(true));
         });
 
-        pipMenu.querySelectorAll('.pip-menu-item').forEach(item => {
-            item.addEventListener('click', (e) => {
+        if (searchForm && searchInput) {
+            searchForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const q = searchInput.value.trim();
+                if (q) {
+                    this.executeLyricsSearch(container, q);
+                }
+            });
+        }
+    }
+
+    async executeLyricsSearch(container, query) {
+        const resultsBox = container.querySelector('.lyrics-search-results-box');
+        const statusEl = container.querySelector('.lyrics-search-status');
+        const listEl = container.querySelector('.lyrics-search-results-list');
+        if (!resultsBox || !statusEl || !listEl) return;
+
+        resultsBox.style.display = 'block';
+        statusEl.innerHTML = `<span style="display:inline-flex; align-items:center; gap:6px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation:spin 1s linear infinite;"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Mencari lirik untuk "${this.escape(query)}"...</span>`;
+        listEl.innerHTML = '';
+
+        try {
+            const res = await fetch(`api/lyrics.php?action=search&q=${encodeURIComponent(query)}`);
+            const data = await res.json();
+
+            if (!data.success || !data.results || data.results.length === 0) {
+                statusEl.textContent = `Tidak ada hasil lirik untuk "${query}". Coba sederhanakan judul atau nama artis.`;
+                return;
+            }
+
+            statusEl.innerHTML = `Ditemukan <strong>${data.results.length}</strong> pilihan. Klik lagu yang sesuai untuk diterapkan:`;
+            listEl.innerHTML = data.results.map(item => `
+                <div class="lyrics-result-item" data-id="${item.id}" title="Klik untuk menerapkan lirik ini">
+                    <div class="lyrics-result-info">
+                        <div class="lyrics-result-title">${this.escape(item.track_name)}</div>
+                        <div class="lyrics-result-artist">${this.escape(item.artist_name)} ${item.album_name ? `• ${this.escape(item.album_name)}` : ''}</div>
+                    </div>
+                    <div class="lyrics-result-badges">
+                        ${item.synced ? `<span class="badge-synced">🟢 Sinkron (${this.formatTime(item.duration)})</span>` : (item.plain ? `<span class="badge-plain">🔵 Teks Polos</span>` : (item.instrumental ? `<span class="badge-plain">⚪ Instrumental</span>` : ''))}
+                        <button type="button" class="btn btn-primary btn-xs" style="pointer-events:none;">Pilih</button>
+                    </div>
+                </div>
+            `).join('');
+
+            listEl.querySelectorAll('.lyrics-result-item').forEach(itemEl => {
+                itemEl.addEventListener('click', async () => {
+                    const id = parseInt(itemEl.dataset.id, 10);
+                    itemEl.style.opacity = '0.5';
+                    await this.loadLyricById(id);
+                    const searchPanel = container.querySelector('.embedded-lyrics-search-panel');
+                    if (searchPanel) searchPanel.style.display = 'none';
+                });
+            });
+        } catch (err) {
+            console.error('[Lyrics Search] Error:', err);
+            statusEl.textContent = 'Gagal melakukan pencarian lirik ke server.';
+        }
+    }
+
+    async loadLyricById(id) {
+        if (!id) return;
+        this.isLoading = true;
+        this.renderAllViews();
+
+        try {
+            const res = await fetch(`api/lyrics.php?action=get&id=${id}`);
+            const data = await res.json();
+            this.isLoading = false;
+
+            if (data.found) {
+                this.lyricsData = data;
+                if (data.synced && data.synced_lyrics) {
+                    this.parsedLines = this.parseLrc(data.synced_lyrics);
+                } else {
+                    this.parsedLines = [];
+                }
+                this.activeLineIdx = -1;
+                this.renderAllViews();
+
+                if (this.player) {
+                    const cur = this.player.currentTime || 0;
+                    this.highlightActiveLine(cur, true);
+                }
+
+                if (window.JAMRI_APP && window.JAMRI_APP.showToast) {
+                    window.JAMRI_APP.showToast(`Lirik "${data.track_name}" berhasil diterapkan!`, 'success');
+                }
+            } else {
+                alert(data.message || 'Gagal memuat lirik untuk ID tersebut.');
+            }
+        } catch (err) {
+            console.error('[Lyrics] loadLyricById error:', err);
+            this.isLoading = false;
+            this.renderAllViews();
+        }
+    }
+
+    bindPiPDropdown(container) {
+        container.querySelectorAll('.lyrics-pip-dropdown-wrapper').forEach(wrapper => {
+            const pipBtn = wrapper.querySelector('.btn-lyrics-pip');
+            const pipMenu = wrapper.querySelector('.lyrics-pip-menu');
+            if (!pipBtn || !pipMenu) return;
+
+            pipBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                pipMenu.style.display = 'none';
-                const mode = item.dataset.pipMode || 'full';
-                this.openPiP(mode);
+                const isShowing = pipMenu.style.display === 'flex';
+                document.querySelectorAll('.lyrics-pip-menu').forEach(m => m.style.display = 'none');
+                pipMenu.style.display = isShowing ? 'none' : 'flex';
+            });
+
+            pipMenu.querySelectorAll('.pip-menu-item').forEach(item => {
+                item.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    pipMenu.style.display = 'none';
+                    const mode = item.dataset.pipMode || 'full';
+                    this.openPiP(mode);
+                });
             });
         });
     }

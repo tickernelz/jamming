@@ -2724,13 +2724,13 @@
     gap: 8px;
     position: sticky !important;
     top: 0 !important;
-    z-index: 20 !important;
+    z-index: 35 !important;
     flex-shrink: 0 !important;
     width: 100% !important;
     max-width: 100% !important;
     min-width: 0 !important;
     box-sizing: border-box !important;
-    overflow: hidden !important;
+    overflow: visible !important;
 }
 
 /* Header Sub-rows: Row 1 (Track Info & Actions) */
@@ -2743,6 +2743,8 @@
     max-width: 100% !important;
     min-width: 0 !important;
     box-sizing: border-box !important;
+    overflow: visible !important;
+    position: relative;
 }
 
 .lyrics-track-info {
@@ -2858,13 +2860,31 @@
     background: var(--bg-surface-elevated);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
-    box-shadow: var(--shadow-lg);
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.4);
     padding: 6px;
-    z-index: 100;
+    z-index: 9999 !important;
     display: flex;
     flex-direction: column;
     gap: 4px;
     animation: pipMenuFadeIn 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.lyrics-pip-menu.lyrics-pip-menu-up {
+    top: auto !important;
+    bottom: calc(100% + 6px) !important;
+    right: 0 !important;
+    animation: pipMenuFadeInUp 0.16s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+@keyframes pipMenuFadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(4px) scale(0.97);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
 }
 
 @keyframes pipMenuFadeIn {
@@ -2995,15 +3015,180 @@
     max-width: 100% !important;
     min-width: 0 !important;
     box-sizing: border-box !important;
-    overflow: hidden !important;
+    overflow: visible !important;
+    position: relative;
+    z-index: 25;
     flex-wrap: wrap;
-    gap: 4px 8px;
+    gap: 6px 12px;
+}
+
+.embedded-lyrics-footer-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    position: relative;
+    overflow: visible;
+}
+
+.btn-lyrics-pip-footer {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 9px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--primary);
+    border: 1px solid var(--primary);
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.btn-lyrics-pip-footer:hover {
+    background: var(--primary);
+    color: #ffffff;
 }
 
 .embedded-lyrics-footer span {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+/* Embedded Lyrics Search Panel & Results */
+.embedded-lyrics-search-panel {
+    background: var(--bg-surface-elevated);
+    border-bottom: 1px solid var(--border-color);
+    padding: 10px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 280px;
+    overflow-y: auto;
+    z-index: 25;
+}
+
+.embedded-lyrics-search-form {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.lyrics-search-input-wrapper {
+    position: relative;
+    flex: 1;
+    display: flex;
+    align-items: center;
+}
+
+.lyrics-search-input-wrapper svg {
+    position: absolute;
+    left: 10px;
+    color: var(--text-muted);
+    pointer-events: none;
+}
+
+.embedded-lyrics-search-input {
+    width: 100%;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    padding: 7px 12px 7px 32px;
+    color: var(--text-primary);
+    font-size: 12px;
+    outline: none;
+    transition: border-color 0.15s;
+    box-sizing: border-box;
+}
+
+.embedded-lyrics-search-input:focus {
+    border-color: var(--primary);
+}
+
+.lyrics-search-status {
+    font-size: 11px;
+    color: var(--text-muted);
+    padding: 4px 2px;
+}
+
+.lyrics-search-results-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 180px;
+    overflow-y: auto;
+}
+
+.lyrics-result-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 12px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    transition: all 0.15s;
+    cursor: pointer;
+}
+
+.lyrics-result-item:hover {
+    background: var(--bg-surface-hover);
+    border-color: var(--primary);
+}
+
+.lyrics-result-info {
+    min-width: 0;
+    flex: 1;
+    text-align: left;
+}
+
+.lyrics-result-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.lyrics-result-artist {
+    font-size: 11px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 1px;
+}
+
+.lyrics-result-badges {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.badge-synced {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--success);
+    background: var(--success-light);
+    border: 1px solid rgba(22, 163, 74, 0.3);
+    padding: 2px 6px;
+    border-radius: 10px;
+    white-space: nowrap;
+}
+
+.badge-plain {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--primary);
+    background: var(--primary-light);
+    border: 1px solid rgba(37, 99, 235, 0.3);
+    padding: 2px 6px;
+    border-radius: 10px;
+    white-space: nowrap;
 }
 
 @media (max-width: 768px) {

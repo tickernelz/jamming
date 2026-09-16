@@ -9,6 +9,112 @@ $artist = trim($_GET['artist'] ?? '');
 $duration = isset($_GET['duration']) ? (int)$_GET['duration'] : 0;
 $query = trim($_GET['q'] ?? '');
 
+$action = trim($_GET['action'] ?? '');
+$lyricId = isset($_GET['id']) ? (int)$_GET['id'] : 0;
+
+// Direct get by LRCLIB ID
+if ($action === 'get' || $lyricId > 0) {
+    if ($lyricId <= 0) {
+        echo json_encode(['success' => false, 'error' => 'Parameter id tidak valid.']);
+        exit;
+    }
+
+    $cacheKey = 'lrclib_id_' . $lyricId;
+    $cacheDir = __DIR__ . '/../data/lyrics_cache';
+    if (!is_dir($cacheDir)) {
+        @mkdir($cacheDir, 0777, true);
+    }
+    $cacheFile = $cacheDir . '/' . $cacheKey . '.json';
+    if (file_exists($cacheFile) && (time() - filemtime($cacheFile) < 86400 * 30)) {
+        $cached = @file_get_contents($cacheFile);
+        if ($cached) {
+            echo $cached;
+            exit;
+        }
+    }
+
+    $opts = [
+        'http' => [
+            'method' => 'GET',
+            'header' => "User-Agent: JamriMusic/1.0 (https://github.com/jamri)\r\nAccept: application/json\r\n",
+            'timeout' => 5.0,
+            'ignore_errors' => true
+        ]
+    ];
+    $context = stream_context_create($opts);
+    $raw = @file_get_contents('https://lrclib.net/api/get/' . $lyricId, false, $context);
+    $item = $raw ? json_decode($raw, true) : null;
+
+    if (is_array($item) && (!empty($item['syncedLyrics']) || !empty($item['plainLyrics']))) {
+        $out = [
+            'success' => true,
+            'found' => true,
+            'id' => $item['id'] ?? $lyricId,
+            'track_name' => $item['trackName'] ?? ($item['name'] ?? ''),
+            'artist_name' => $item['artistName'] ?? '',
+            'album_name' => $item['albumName'] ?? '',
+            'duration' => $item['duration'] ?? 0,
+            'synced' => !empty($item['syncedLyrics']),
+            'synced_lyrics' => $item['syncedLyrics'] ?? null,
+            'plain_lyrics' => $item['plainLyrics'] ?? '',
+            'instrumental' => !empty($item['instrumental'])
+        ];
+        $jsonOut = json_encode($out, JSON_UNESCAPED_UNICODE);
+        @file_put_contents($cacheFile, $jsonOut);
+        echo $jsonOut;
+        exit;
+    }
+
+    echo json_encode(['success' => false, 'found' => false, 'message' => 'Lirik tidak ditemukan di LRCLIB untuk ID tersebut.']);
+    exit;
+}
+
+// Search endpoint returning list of choices
+if ($action === 'search') {
+    $searchQuery = $query !== '' ? $query : ($artist !== '' ? "{$artist} {$title}" : $title);
+    if ($searchQuery === '') {
+        echo json_encode(['success' => false, 'error' => 'Kata kunci pencarian kosong.']);
+        exit;
+    }
+
+    $opts = [
+        'http' => [
+            'method' => 'GET',
+            'header' => "User-Agent: JamriMusic/1.0 (https://github.com/jamri)\r\nAccept: application/json\r\n",
+            'timeout' => 5.0,
+            'ignore_errors' => true
+        ]
+    ];
+    $context = stream_context_create($opts);
+    $searchUrl = 'https://lrclib.net/api/search?' . http_build_query(['q' => $searchQuery]);
+    $raw = @file_get_contents($searchUrl, false, $context);
+    $items = $raw ? json_decode($raw, true) : [];
+
+    $results = [];
+    if (is_array($items)) {
+        foreach (array_slice($items, 0, 20) as $item) {
+            $results[] = [
+                'id' => $item['id'] ?? 0,
+                'track_name' => $item['trackName'] ?? ($item['name'] ?? ''),
+                'artist_name' => $item['artistName'] ?? '',
+                'album_name' => $item['albumName'] ?? '',
+                'duration' => $item['duration'] ?? 0,
+                'synced' => !empty($item['syncedLyrics']),
+                'plain' => !empty($item['plainLyrics']),
+                'instrumental' => !empty($item['instrumental'])
+            ];
+        }
+    }
+
+    echo json_encode([
+        'success' => true,
+        'action' => 'search',
+        'query' => $searchQuery,
+        'results' => $results
+    ], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
 if ($title === '' && $query === '') {
     echo json_encode([
         'success' => false,
