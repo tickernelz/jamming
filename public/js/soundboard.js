@@ -1,9 +1,63 @@
 /**
  * soundboard.js
  * Discord-like Soundboard Engine for Jamri Jamming Rooms
- * Supports built-in synthesized/audio sound effects + custom user uploads (max 15s)
+ * 100% Client-Side Storage (IndexedDB) & Real-Time Audio Streaming (Zero Server Storage Attack Surface)
+ * Supports built-in synthesized/audio sound effects + custom local sounds (max 15s)
  * Synchronized across all users in the room in real-time
  */
+
+class JamriSoundboardDB {
+    static DB_NAME = 'jamri_soundboard_db';
+    static STORE_NAME = 'custom_soundboards';
+    static DB_VERSION = 1;
+
+    static async open() {
+        return new Promise((resolve, reject) => {
+            const req = indexedDB.open(this.DB_NAME, this.DB_VERSION);
+            req.onupgradeneeded = (e) => {
+                const db = e.target.result;
+                if (!db.objectStoreNames.contains(this.STORE_NAME)) {
+                    db.createObjectStore(this.STORE_NAME, { keyPath: 'id' });
+                }
+            };
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    static async getAll() {
+        const db = await this.open();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(this.STORE_NAME, 'readonly');
+            const store = tx.objectStore(this.STORE_NAME);
+            const req = store.getAll();
+            req.onsuccess = () => resolve(req.result || []);
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    static async save(soundItem) {
+        const db = await this.open();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(this.STORE_NAME, 'readwrite');
+            const store = tx.objectStore(this.STORE_NAME);
+            store.put(soundItem);
+            tx.oncomplete = () => resolve(soundItem);
+            tx.onerror = () => reject(tx.error);
+        });
+    }
+
+    static async delete(id) {
+        const db = await this.open();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(this.STORE_NAME, 'readwrite');
+            const store = tx.objectStore(this.STORE_NAME);
+            store.delete(id);
+            tx.oncomplete = () => resolve(true);
+            tx.onerror = () => reject(tx.error);
+        });
+    }
+}
 
 class JamriSoundboard {
     constructor() {
@@ -15,7 +69,7 @@ class JamriSoundboard {
         this.volume = parseFloat(localStorage.getItem('jamri_soundboard_vol') || '0.9');
         this.activeAudioElements = [];
 
-        // Built-in high quality sound effects
+        // Built-in sound effects (synthesized locally via WebAudio)
         this.builtInSounds = [
             { id: 'airhorn', title: 'Airhorn', emoji: '📢', duration: 1.6, type: 'builtin' },
             { id: 'vine_boom', title: 'Vine Boom', emoji: '💥', duration: 1.8, type: 'builtin' },
@@ -61,7 +115,6 @@ class JamriSoundboard {
 
     detach() {
         this.roomId = null;
-        this.customSounds = [];
         this.stopAll();
     }
 
@@ -81,16 +134,11 @@ class JamriSoundboard {
     }
 
     async loadCustomSounds() {
-        if (!this.roomId) return;
         try {
-            const res = await fetch(`api/soundboard.php?room_id=${encodeURIComponent(this.roomId)}`);
-            const data = await res.json();
-            if (data.success && Array.isArray(data.soundboards)) {
-                this.customSounds = data.soundboards;
-                this.renderSoundboardGrid();
-            }
+            this.customSounds = await JamriSoundboardDB.getAll();
+            this.renderSoundboardGrid();
         } catch (err) {
-            console.warn('[Soundboard] Failed to load custom sounds:', err);
+            console.warn('[Soundboard] Failed to load custom sounds from IndexedDB:', err);
         }
     }
 
@@ -100,41 +148,21 @@ class JamriSoundboard {
         this.ws.on('soundboard_play', (data) => {
             this.handleIncomingSound(data);
         });
-
-        this.ws.on('soundboard_added', (data) => {
-            if (data.soundboard) {
-                // Check if already in list
-                const exists = this.customSounds.some(s => s.id === data.soundboard.id);
-                if (!exists) {
-                    this.customSounds.push(data.soundboard);
-                    this.renderSoundboardGrid();
-                    if (window.showToast && data.triggered_by !== this.user.nickname) {
-                        window.showToast(`${data.triggered_by} menambahkan soundboard: ${data.soundboard.title} ${data.soundboard.emoji}`, 'info');
-                    }
-                }
-            }
-        });
-
-        this.ws.on('soundboard_deleted', (data) => {
-            if (data.soundboard_id) {
-                this.customSounds = this.customSounds.filter(s => s.id !== data.soundboard_id);
-                this.renderSoundboardGrid();
-            }
-        });
     }
 
     triggerSound(sound) {
         if (!this.roomId || !this.ws) return;
 
-        // Broadcast to all room members via WebSocket
+        // Discord-style real-time audio broadcast
         this.ws.sendSoundboardPlay({
             id: sound.id,
             title: sound.title,
-            emoji: sound.emoji,
-            file_url: sound.file_url || ''
+            emoji: sound.emoji || '🔊',
+            audio: sound.audioData || '', // Client-side streamed audio
+            file_url: ''
         });
 
-        // Show click ripple / visual feedback on clicked card
+        // Click feedback animation
         const card = document.querySelector(`.soundboard-card[data-id="${sound.id}"]`);
         if (card) {
             card.classList.add('playing');
@@ -145,10 +173,14 @@ class JamriSoundboard {
     handleIncomingSound(data) {
         this.ensureAudioContext();
 
-        // 1. Play the audio locally
-        if (data.file_url) {
-            this.playAudioFile(data.file_url);
+        // 1. Play the audio
+        if (data.audio) {
+            // Real-time streamed audio from triggerer's IndexedDB
+            this.playAudioData(data.audio);
+        } else if (data.file_url) {
+            this.playAudioData(data.file_url);
         } else {
+            // Built-in synthesized sound
             this.playBuiltIn(data.sound_id || data.title);
         }
 
@@ -162,9 +194,9 @@ class JamriSoundboard {
         }
     }
 
-    playAudioFile(url) {
+    playAudioData(audioSrc) {
         try {
-            const audio = new Audio(url);
+            const audio = new Audio(audioSrc);
             audio.volume = this.volume;
             this.activeAudioElements.push(audio);
 
@@ -180,7 +212,7 @@ class JamriSoundboard {
                 playPromise.catch(e => console.warn('[Soundboard] Play error:', e));
             }
         } catch (err) {
-            console.warn('[Soundboard] Failed to play custom audio:', err);
+            console.warn('[Soundboard] Failed to play audio:', err);
         }
     }
 
@@ -195,8 +227,7 @@ class JamriSoundboard {
 
         switch (soundId) {
             case 'airhorn': {
-                // Iconic reggae airhorn 3-frequency burst
-                const freqs = [466.16, 523.25, 622.25]; // Bb4, C5, Eb5
+                const freqs = [466.16, 523.25, 622.25];
                 const bursts = [0, 0.18, 0.36, 0.60];
                 bursts.forEach(t => {
                     freqs.forEach(f => {
@@ -216,7 +247,6 @@ class JamriSoundboard {
             }
 
             case 'vine_boom': {
-                // Pitch drop sub-bass + noise hit
                 const osc = ctx.createOscillator();
                 const gain = ctx.createGain();
                 osc.type = 'sine';
@@ -231,7 +261,6 @@ class JamriSoundboard {
                 osc.start(now);
                 osc.stop(now + 1.3);
 
-                // Distortion transient
                 const bufferSize = ctx.sampleRate * 0.1;
                 const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
                 const output = noiseBuffer.getChannelData(0);
@@ -250,7 +279,6 @@ class JamriSoundboard {
             }
 
             case 'bruh': {
-                // Low vocalized pitch drop
                 const osc = ctx.createOscillator();
                 const gain = ctx.createGain();
                 const filter = ctx.createBiquadFilter();
@@ -274,7 +302,6 @@ class JamriSoundboard {
             }
 
             case 'applause': {
-                // Filtered noise bursts simulating applause
                 const duration = 2.5;
                 const bufferSize = ctx.sampleRate * duration;
                 const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
@@ -304,116 +331,95 @@ class JamriSoundboard {
             }
 
             case 'rimshot': {
-                // Ba-Dum-Tss
-                // Hit 1
-                const hit1 = ctx.createOscillator();
-                const g1 = ctx.createGain();
-                hit1.frequency.setValueAtTime(140, now);
-                hit1.frequency.exponentialRampToValueAtTime(60, now + 0.1);
-                g1.gain.setValueAtTime(0.5, now);
-                g1.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
-                hit1.connect(g1);
-                g1.connect(masterVol);
-                hit1.start(now);
-                hit1.stop(now + 0.12);
+                // High snare click + rim knock
+                const osc = ctx.createOscillator();
+                const oscGain = ctx.createGain();
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(300, now);
+                osc.frequency.exponentialRampToValueAtTime(120, now + 0.08);
+                oscGain.gain.setValueAtTime(0.6, now);
+                oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+                osc.connect(oscGain);
+                oscGain.connect(masterVol);
+                osc.start(now);
+                osc.stop(now + 0.12);
 
-                // Hit 2
-                const hit2 = ctx.createOscillator();
-                const g2 = ctx.createGain();
-                hit2.frequency.setValueAtTime(120, now + 0.18);
-                hit2.frequency.exponentialRampToValueAtTime(50, now + 0.3);
-                g2.gain.setValueAtTime(0.5, now + 0.18);
-                g2.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
-                hit2.connect(g2);
-                g2.connect(masterVol);
-                hit2.start(now + 0.18);
-                hit2.stop(now + 0.32);
-
-                // Cymbal crash (Tss)
-                const cDuration = 0.8;
-                const cSize = ctx.sampleRate * cDuration;
-                const cBuf = ctx.createBuffer(1, cSize, ctx.sampleRate);
-                const cData = cBuf.getChannelData(0);
-                for (let i = 0; i < cSize; i++) {
-                    cData[i] = Math.random() * 2 - 1;
-                }
-                const cNoise = ctx.createBufferSource();
-                cNoise.buffer = cBuf;
-                const cFilter = ctx.createBiquadFilter();
-                cFilter.type = 'highpass';
-                cFilter.frequency.setValueAtTime(6000, now + 0.38);
-                const cGain = ctx.createGain();
-                cGain.gain.setValueAtTime(0.4, now + 0.38);
-                cGain.gain.exponentialRampToValueAtTime(0.001, now + 0.38 + cDuration);
-                cNoise.connect(cFilter);
-                cFilter.connect(cGain);
-                cGain.connect(masterVol);
-                cNoise.start(now + 0.38);
+                const cymbalOsc = ctx.createOscillator();
+                const cymbalGain = ctx.createGain();
+                cymbalOsc.type = 'square';
+                cymbalOsc.frequency.setValueAtTime(8000, now + 0.12);
+                cymbalGain.gain.setValueAtTime(0.3, now + 0.12);
+                cymbalGain.gain.exponentialRampToValueAtTime(0.001, now + 0.9);
+                cymbalOsc.connect(cymbalGain);
+                cymbalGain.connect(masterVol);
+                cymbalOsc.start(now + 0.12);
+                cymbalOsc.stop(now + 1.0);
                 break;
             }
 
             case 'sad_trombone': {
-                // Sad trombone notes: D4 -> C#4 -> C4 -> B3 (with vibrato)
-                const notes = [
-                    { f: 293.66, t: 0, d: 0.35 },
-                    { f: 277.18, t: 0.38, d: 0.35 },
-                    { f: 261.63, t: 0.76, d: 0.35 },
-                    { f: 246.94, t: 1.14, d: 1.0, slide: 210 }
-                ];
-                notes.forEach(n => {
+                const notes = [293.66, 277.18, 261.63, 246.94]; // D4, C#4, C4, B3
+                const noteDuration = 0.45;
+                notes.forEach((freq, idx) => {
+                    const t = now + idx * noteDuration;
                     const osc = ctx.createOscillator();
                     const gain = ctx.createGain();
                     osc.type = 'sawtooth';
-                    osc.frequency.setValueAtTime(n.f, now + n.t);
-                    if (n.slide) {
-                        osc.frequency.linearRampToValueAtTime(n.slide, now + n.t + n.d);
+
+                    if (idx === notes.length - 1) {
+                        osc.frequency.setValueAtTime(freq, t);
+                        osc.frequency.linearRampToValueAtTime(freq - 30, t + 1.0);
+                        gain.gain.setValueAtTime(0.35, t);
+                        gain.gain.exponentialRampToValueAtTime(0.001, t + 1.2);
+                        osc.start(t);
+                        osc.stop(t + 1.3);
+                    } else {
+                        osc.frequency.setValueAtTime(freq, t);
+                        gain.gain.setValueAtTime(0.3, t);
+                        gain.gain.exponentialRampToValueAtTime(0.001, t + noteDuration * 0.9);
+                        osc.start(t);
+                        osc.stop(t + noteDuration);
                     }
-                    gain.gain.setValueAtTime(0.2, now + n.t);
-                    gain.gain.exponentialRampToValueAtTime(0.001, now + n.t + n.d);
+
                     osc.connect(gain);
                     gain.connect(masterVol);
-                    osc.start(now + n.t);
-                    osc.stop(now + n.t + n.d + 0.05);
                 });
                 break;
             }
 
             case 'level_up': {
-                // Retro 8-bit victory arpeggio
-                const notes = [261.63, 329.63, 392.00, 523.25, 659.25, 783.99, 1046.50];
-                notes.forEach((f, idx) => {
+                const arpeggio = [523.25, 659.25, 783.99, 1046.50]; // C5, E5, G5, C6
+                arpeggio.forEach((f, idx) => {
+                    const t = now + idx * 0.08;
                     const osc = ctx.createOscillator();
                     const gain = ctx.createGain();
-                    osc.type = 'square';
-                    const t = now + idx * 0.08;
+                    osc.type = 'sine';
                     osc.frequency.setValueAtTime(f, t);
-                    gain.gain.setValueAtTime(0.15, t);
-                    gain.gain.exponentialRampToValueAtTime(0.001, t + (idx === notes.length - 1 ? 0.4 : 0.1));
+                    gain.gain.setValueAtTime(0.3, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
                     osc.connect(gain);
                     gain.connect(masterVol);
                     osc.start(t);
-                    osc.stop(t + 0.45);
+                    osc.stop(t + 0.5);
                 });
                 break;
             }
 
             case 'alarm': {
-                // Siren alarm sound
-                const osc = ctx.createOscillator();
-                const gain = ctx.createGain();
-                osc.type = 'sawtooth';
                 for (let i = 0; i < 4; i++) {
-                    const t = now + i * 0.5;
-                    osc.frequency.setValueAtTime(500, t);
-                    osc.frequency.linearRampToValueAtTime(950, t + 0.25);
-                    osc.frequency.linearRampToValueAtTime(500, t + 0.5);
+                    const t = now + i * 0.35;
+                    const osc = ctx.createOscillator();
+                    const gain = ctx.createGain();
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(900, t);
+                    osc.frequency.linearRampToValueAtTime(600, t + 0.25);
+                    gain.gain.setValueAtTime(0.2, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+                    osc.connect(gain);
+                    gain.connect(masterVol);
+                    osc.start(t);
+                    osc.stop(t + 0.32);
                 }
-                gain.gain.setValueAtTime(0.25, now);
-                gain.gain.exponentialRampToValueAtTime(0.001, now + 2.1);
-                osc.connect(gain);
-                gain.connect(masterVol);
-                osc.start(now);
-                osc.stop(now + 2.2);
                 break;
             }
 
@@ -430,30 +436,22 @@ class JamriSoundboard {
         el.className = 'soundboard-floating-bubble';
         el.innerHTML = `
             <span class="bubble-emoji">${data.emoji || '🔊'}</span>
-            <div class="bubble-info">
-                <div class="bubble-title">${escapeHtml(data.title || 'Sound')}</div>
-                <div class="bubble-sender">${escapeHtml(data.triggered_by || 'Seseorang')}</div>
-            </div>
+            <span class="bubble-title">${escapeHtml(data.title || 'Sound')}</span>
+            <span class="bubble-author">${escapeHtml(data.triggered_by || 'Member')}</span>
         `;
 
-        // Random horizontal offset near center
-        const randomX = (Math.random() - 0.5) * 160;
-        el.style.transform = `translateX(${randomX}px)`;
-
+        const posX = Math.floor(Math.random() * 60) + 20; // 20% to 80%
+        el.style.left = `${posX}%`;
         container.appendChild(el);
 
         setTimeout(() => {
             if (el.parentNode) el.parentNode.removeChild(el);
-        }, 2500);
+        }, 3200);
     }
 
     renderSoundboardGrid() {
         const grid = document.getElementById('soundboard-grid');
         if (!grid) return;
-
-        const isHostOrUploader = (sound) => {
-            return this.user && (sound.added_by_nickname === this.user.nickname);
-        };
 
         let html = '';
 
@@ -475,25 +473,26 @@ class JamriSoundboard {
         });
         html += `</div>`;
 
-        // 2. Custom Section
+        // 2. Custom Section (Stored locally in IndexedDB)
         html += `<div class="soundboard-section-title" style="margin-top:20px;">
-            <span>Suara Kustom Room</span>
+            <span>Soundboard Saya (Tersimpan di Perangkat Ini)</span>
             <span class="badge-count">${this.customSounds.length}</span>
             <button type="button" id="btn-open-upload-sound" class="btn btn-primary btn-xs" style="margin-left:auto;">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <line x1="12" y1="5" x2="12" y2="19"></line>
                     <line x1="5" y1="12" x2="19" y2="12"></line>
                 </svg>
-                <span>Upload Sound</span>
+                <span>Tambah Audio</span>
             </button>
         </div>`;
 
         if (this.customSounds.length === 0) {
             html += `
                 <div class="soundboard-empty-state">
-                    <p>Belum ada soundboard kustom di room ini.</p>
+                    <p>Belum ada soundboard pribadi di browser Anda.</p>
+                    <p style="font-size:11px; color:var(--text-muted); margin-bottom:12px;">Audio disimpan 100% di perangkat Anda (IndexedDB) dan di-stream secara instan saat dibunyikan. Nol penyimpanan di server.</p>
                     <button type="button" class="btn btn-outline btn-sm" id="btn-empty-upload-sound">
-                        + Tambah MP3 Kustom (Maks. 15 Detik)
+                        + Tambah Audio Kustom (Maks. 15 Detik)
                     </button>
                 </div>
             `;
@@ -501,20 +500,18 @@ class JamriSoundboard {
             html += `<div class="soundboard-cards-grid">`;
             this.customSounds.forEach(sound => {
                 html += `
-                    <div class="soundboard-card custom-sound" data-id="${sound.id}" title="Klik untuk bunyikan ${escapeHtml(sound.title)}">
+                    <div class="soundboard-card custom-sound" data-id="${sound.id}" title="Klik untuk bunyikan ${escapeHtml(sound.title)} ke seluruh room">
                         <button type="button" class="soundboard-play-area" data-id="${sound.id}">
                             <span class="sound-emoji">${sound.emoji || '🔊'}</span>
                             <span class="sound-name">${escapeHtml(sound.title)}</span>
-                            <span class="sound-uploader">Oleh ${escapeHtml(sound.added_by_nickname || 'Anon')} • ${Math.round(sound.duration_seconds || 0)}s</span>
+                            <span class="sound-uploader">Lokal • ${Math.round(sound.duration || 0)}s</span>
                         </button>
-                        ${isHostOrUploader(sound) ? `
-                            <button type="button" class="btn-delete-sound" data-id="${sound.id}" title="Hapus soundboard ini">
-                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polyline points="3 6 5 6 21 6"></polyline>
-                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                                </svg>
-                            </button>
-                        ` : ''}
+                        <button type="button" class="btn-delete-sound" data-id="${sound.id}" title="Hapus soundboard ini dari perangkat Anda">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="3 6 5 6 21 6"></polyline>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                            </svg>
+                        </button>
                     </div>
                 `;
             });
@@ -523,7 +520,7 @@ class JamriSoundboard {
 
         grid.innerHTML = html;
 
-        // Attach card click handlers
+        // Attach card click handlers for built-in sounds
         grid.querySelectorAll('.soundboard-card:not(.custom-sound)').forEach(btn => {
             btn.addEventListener('click', () => {
                 const id = btn.getAttribute('data-id');
@@ -532,10 +529,11 @@ class JamriSoundboard {
             });
         });
 
+        // Attach card click handlers for custom sounds
         grid.querySelectorAll('.soundboard-play-area').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                const id = parseInt(btn.getAttribute('data-id'), 10);
+                const id = btn.getAttribute('data-id');
                 const sound = this.customSounds.find(s => s.id === id);
                 if (sound) this.triggerSound(sound);
             });
@@ -545,44 +543,49 @@ class JamriSoundboard {
         grid.querySelectorAll('.btn-delete-sound').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                const id = parseInt(btn.getAttribute('data-id'), 10);
-                if (confirm('Hapus soundboard ini dari room?')) {
+                const id = btn.getAttribute('data-id');
+                if (confirm('Hapus soundboard ini dari perangkat Anda?')) {
                     this.deleteSound(id);
                 }
             });
         });
 
-        // Upload triggers
+        // Upload modal triggers
         const btnUpload = grid.querySelector('#btn-open-upload-sound');
-        if (btnUpload) btnUpload.addEventListener('click', () => this.showUploadModal());
+        if (btnUpload) btnUpload.addEventListener('click', () => this.showAddSoundModal());
         const btnEmptyUpload = grid.querySelector('#btn-empty-upload-sound');
-        if (btnEmptyUpload) btnEmptyUpload.addEventListener('click', () => this.showUploadModal());
+        if (btnEmptyUpload) btnEmptyUpload.addEventListener('click', () => this.showAddSoundModal());
     }
 
-    showUploadModal() {
+    showAddSoundModal() {
         let modal = document.getElementById('modal-upload-soundboard');
         if (!modal) {
             modal = document.createElement('div');
             modal.id = 'modal-upload-soundboard';
             modal.className = 'jamri-modal-backdrop';
             modal.innerHTML = `
-                <div class="jamri-modal-box">
-                    <div class="jamri-modal-header">
-                        <h3>Tambah Custom Soundboard</h3>
-                        <button type="button" class="btn btn-ghost btn-icon btn-sm btn-close-modal">✕</button>
+                <div class="jamri-modal-box" style="background:var(--bg-surface); border:1px solid var(--border-color); color:var(--text-primary); border-radius:var(--radius-md);">
+                    <div class="jamri-modal-header" style="border-bottom:1px solid var(--border-subtle); padding:16px 20px;">
+                        <h3 style="margin:0; font-size:16px; font-weight:700; color:var(--text-primary);">Tambah Soundboard Pribadi</h3>
+                        <button type="button" class="btn btn-ghost btn-icon btn-sm btn-close-modal" style="margin-left:auto;">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="18" y1="6" x2="6" y2="18"></line>
+                                <line x1="6" y1="6" x2="18" y2="18"></line>
+                            </svg>
+                        </button>
                     </div>
-                    <div class="jamri-modal-body">
-                        <p style="font-size:13px; color:var(--text-muted); margin-bottom:14px;">
-                            Unggah file audio (MP3 / WAV / OGG) maksimal <strong>15 detik</strong>. Soundboard akan dapat dibunyikan oleh seluruh peserta di room ini!
+                    <div class="jamri-modal-body" style="padding:18px 20px;">
+                        <p style="font-size:12px; color:var(--text-secondary); line-height:1.5; margin-bottom:14px; background:var(--bg-surface-elevated); padding:10px 12px; border-radius:var(--radius-sm); border:1px solid var(--border-subtle);">
+                            Audio disimpan <strong>100% di browser lokal Anda (IndexedDB)</strong> dan di-stream secara instan saat dibunyikan. Bebas risiko malware dan tanpa penyimpanan di server! Maksimal <strong>15 detik</strong>.
                         </p>
 
-                        <div class="form-group">
-                            <label>Nama Soundboard</label>
-                            <input type="text" id="input-sb-title" class="form-control" placeholder="Contoh: Ketawa Jahat / Huh?!" maxlength="30" />
+                        <div class="form-group" style="margin-bottom:14px;">
+                            <label style="display:block; font-size:12px; font-weight:600; margin-bottom:6px; color:var(--text-primary);">Nama Soundboard</label>
+                            <input type="text" id="input-sb-title" class="form-control" placeholder="Contoh: Ketawa Jahat / Huh?!" maxlength="30" style="width:100%; background:var(--bg-surface-elevated); border:1px solid var(--border-color); color:var(--text-primary); padding:8px 12px; border-radius:var(--radius-sm); font-size:13px; outline:none;" />
                         </div>
 
-                        <div class="form-group">
-                            <label>Pilih Ikon Emoji</label>
+                        <div class="form-group" style="margin-bottom:14px;">
+                            <label style="display:block; font-size:12px; font-weight:600; margin-bottom:6px; color:var(--text-primary);">Pilih Ikon Emoji</label>
                             <div class="emoji-quick-picker" id="sb-emoji-picker">
                                 <span class="emoji-pill active">🔊</span>
                                 <span class="emoji-pill">🤣</span>
@@ -600,15 +603,15 @@ class JamriSoundboard {
                             <input type="hidden" id="input-sb-emoji" value="🔊" />
                         </div>
 
-                        <div class="form-group">
-                            <label>File Audio (.mp3, .wav, .ogg, .m4a)</label>
-                            <input type="file" id="input-sb-file" class="form-control" accept="audio/*" />
-                            <div id="sb-file-status" class="file-status-info" style="display:none;"></div>
+                        <div class="form-group" style="margin-bottom:14px;">
+                            <label style="display:block; font-size:12px; font-weight:600; margin-bottom:6px; color:var(--text-primary);">File Audio (.mp3, .wav, .ogg, .m4a)</label>
+                            <input type="file" id="input-sb-file" class="form-control" accept="audio/*" style="width:100%; font-size:12px;" />
+                            <div id="sb-file-status" class="file-status-info" style="display:none; font-size:12px; margin-top:6px;"></div>
                         </div>
                     </div>
-                    <div class="jamri-modal-footer">
+                    <div class="jamri-modal-footer" style="border-top:1px solid var(--border-subtle); padding:14px 20px; display:flex; justify-content:flex-end; gap:8px;">
                         <button type="button" class="btn btn-outline btn-sm btn-close-modal">Batal</button>
-                        <button type="button" id="btn-submit-soundboard" class="btn btn-primary btn-sm">Unggah ke Room</button>
+                        <button type="button" id="btn-submit-soundboard" class="btn btn-primary btn-sm">Simpan ke Perangkat</button>
                     </div>
                 </div>
             `;
@@ -640,47 +643,46 @@ class JamriSoundboard {
                     return;
                 }
 
-                // Autofill title if empty
                 if (!titleInput.value) {
                     const cleanName = file.name.replace(/\.[^/.]+$/, "").substring(0, 25);
                     titleInput.value = cleanName;
                 }
 
                 statusDiv.style.display = 'block';
-                statusDiv.innerHTML = '<span class="spinner-small"></span> Memeriksa durasi file audio...';
-                statusDiv.className = 'file-status-info info';
+                statusDiv.style.color = 'var(--text-muted)';
+                statusDiv.innerHTML = 'Memeriksa durasi audio...';
 
-                // Check duration using temporary Audio element
-                const url = URL.createObjectURL(file);
                 const tempAudio = new Audio();
-                tempAudio.preload = 'metadata';
-                tempAudio.src = url;
+                const objectUrl = URL.createObjectURL(file);
+                tempAudio.src = objectUrl;
 
                 tempAudio.onloadedmetadata = () => {
-                    URL.revokeObjectURL(url);
                     const dur = tempAudio.duration;
+                    URL.revokeObjectURL(objectUrl);
                     modal._detectedDuration = dur;
 
                     if (dur > 15.5) {
-                        statusDiv.className = 'file-status-info error';
-                        statusDiv.innerHTML = `⚠️ Durasi audio <strong>${Math.round(dur)} detik</strong> melebihi batas maksimal 15 detik! Silakan potong audio Anda terlebih dahulu.`;
+                        statusDiv.style.color = 'var(--danger, #ef4444)';
+                        statusDiv.innerHTML = `Durasi terlalu panjang: <strong>${dur.toFixed(1)}s</strong> (Maksimal 15 detik!)`;
+                        modal.querySelector('#btn-submit-soundboard').disabled = true;
                     } else {
-                        statusDiv.className = 'file-status-info success';
-                        statusDiv.innerHTML = `✅ Durasi audio: <strong>${Math.round(dur * 10) / 10} detik</strong> (Valid). Siap diunggah!`;
+                        statusDiv.style.color = 'var(--success, #10b981)';
+                        statusDiv.innerHTML = `Durasi valid: <strong>${dur.toFixed(1)}s</strong>`;
+                        modal.querySelector('#btn-submit-soundboard').disabled = false;
                     }
                 };
 
                 tempAudio.onerror = () => {
-                    URL.revokeObjectURL(url);
-                    statusDiv.className = 'file-status-info warning';
-                    statusDiv.innerHTML = '⚠️ Tidak dapat membaca durasi audio secara otomatis, pastikan durasi di bawah 15 detik.';
-                    modal._detectedDuration = 0;
+                    URL.revokeObjectURL(objectUrl);
+                    statusDiv.style.color = 'var(--text-secondary)';
+                    statusDiv.innerHTML = 'Durasi tidak dapat diverifikasi otomatis. Pastikan <= 15s.';
+                    modal._detectedDuration = 5.0;
+                    modal.querySelector('#btn-submit-soundboard').disabled = false;
                 };
             });
 
-            // Submit handler
             modal.querySelector('#btn-submit-soundboard').addEventListener('click', () => {
-                this.handleUploadSubmit(modal);
+                this.handleSaveSoundboard(modal);
             });
         }
 
@@ -689,10 +691,11 @@ class JamriSoundboard {
         modal.querySelector('#input-sb-file').value = '';
         modal.querySelector('#sb-file-status').style.display = 'none';
         modal._detectedDuration = 0;
+        modal.querySelector('#btn-submit-soundboard').disabled = false;
         modal.style.display = 'flex';
     }
 
-    async handleUploadSubmit(modal) {
+    async handleSaveSoundboard(modal) {
         const title = modal.querySelector('#input-sb-title').value.trim();
         const emoji = modal.querySelector('#input-sb-emoji').value.trim() || '🔊';
         const fileInput = modal.querySelector('#input-sb-file');
@@ -719,79 +722,59 @@ class JamriSoundboard {
 
         const btnSubmit = modal.querySelector('#btn-submit-soundboard');
         btnSubmit.disabled = true;
-        btnSubmit.textContent = 'Mengunggah...';
-
-        const formData = new FormData();
-        formData.append('room_id', this.roomId);
-        formData.append('title', title);
-        formData.append('emoji', emoji);
-        formData.append('duration', duration.toString());
-        formData.append('nickname', this.user.nickname);
-        formData.append('file', file);
+        btnSubmit.textContent = 'Menyimpan...';
 
         try {
-            const res = await fetch('api/soundboard.php', {
-                method: 'POST',
-                body: formData
-            });
-            const data = await res.json();
+            // Read file as base64 Data URL (stored 100% locally in IndexedDB)
+            const base64Data = await this.fileToBase64(file);
 
-            if (data.success && data.soundboard) {
-                // Add to local custom sounds
-                this.customSounds.push(data.soundboard);
-                this.renderSoundboardGrid();
+            const soundItem = {
+                id: 'cust_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+                title: title,
+                emoji: emoji,
+                duration: duration || 3.0,
+                audioData: base64Data,
+                createdAt: Date.now()
+            };
 
-                // Broadcast to room via WebSocket
-                if (this.ws) {
-                    this.ws.sendSoundboardAdd(data.soundboard);
-                }
+            await JamriSoundboardDB.save(soundItem);
+            await this.loadCustomSounds();
 
-                modal.style.display = 'none';
-                if (window.showToast) {
-                    window.showToast('Soundboard berhasil diunggah dan dibagikan ke room!', 'success');
-                }
-            } else {
-                if (window.showToast) window.showToast(data.error || 'Gagal mengunggah file soundboard', 'error');
-                else alert(data.error || 'Gagal mengunggah file soundboard');
+            modal.style.display = 'none';
+            if (window.showToast) {
+                window.showToast('Soundboard berhasil disimpan ke browser perangkat Anda!', 'success');
             }
         } catch (err) {
-            console.error('[Soundboard] Upload error:', err);
-            if (window.showToast) window.showToast('Terjadi kesalahan saat mengunggah file.', 'error');
-            else alert('Terjadi kesalahan saat mengunggah file.');
+            console.error('[Soundboard] Save error:', err);
+            if (window.showToast) window.showToast('Gagal menyimpan file soundboard ke IndexedDB.', 'error');
+            else alert('Gagal menyimpan file soundboard.');
         } finally {
             btnSubmit.disabled = false;
-            btnSubmit.textContent = 'Unggah ke Room';
+            btnSubmit.textContent = 'Simpan ke Perangkat';
         }
     }
 
     async deleteSound(soundboardId) {
         try {
-            const formData = new FormData();
-            formData.append('action', 'delete');
-            formData.append('room_id', this.roomId);
-            formData.append('id', soundboardId.toString());
-
-            const res = await fetch('api/soundboard.php', {
-                method: 'POST',
-                body: formData
-            });
-            const data = await res.json();
-
-            if (data.success) {
-                this.customSounds = this.customSounds.filter(s => s.id !== soundboardId);
-                this.renderSoundboardGrid();
-
-                if (this.ws) {
-                    this.ws.sendSoundboardDelete(soundboardId);
-                }
-                if (window.showToast) {
-                    window.showToast('Soundboard dihapus.', 'info');
-                }
+            await JamriSoundboardDB.delete(soundboardId);
+            await this.loadCustomSounds();
+            if (window.showToast) {
+                window.showToast('Soundboard dihapus dari perangkat Anda.', 'info');
             }
         } catch (err) {
             console.error('[Soundboard] Delete error:', err);
         }
     }
+
+    fileToBase64(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+        });
+    }
 }
 
 window.JamriSoundboard = JamriSoundboard;
+window.JamriSoundboardDB = JamriSoundboardDB;

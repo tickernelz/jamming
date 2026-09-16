@@ -436,37 +436,29 @@ class WebSocketHandler implements MessageComponentInterface
                 break;
 
             case 'soundboard_play':
+                $title = (string)($data['title'] ?? 'Soundboard');
+                $emoji = (string)($data['emoji'] ?? '🔊');
+                $soundId = (string)($data['sound_id'] ?? $data['id'] ?? '');
+                $audioData = (string)($data['audio'] ?? ''); // client-side streamed audio
+                $fileUrl = (string)($data['file_url'] ?? '');
+
+                // Record activity in chat with repeat counter
+                $this->recordActivity($roomId, 'soundboard_play', [
+                    'sound_title' => $title,
+                    'sound_emoji' => $emoji,
+                    'user' => $meta['nickname'],
+                ]);
+
                 $this->broadcastToRoom($roomId, [
                     'type' => 'soundboard_play',
-                    'sound_id' => $data['sound_id'] ?? '',
-                    'title' => $data['title'] ?? 'Soundboard',
-                    'emoji' => $data['emoji'] ?? '🔊',
-                    'file_url' => $data['file_url'] ?? '',
+                    'sound_id' => $soundId,
+                    'title' => $title,
+                    'emoji' => $emoji,
+                    'audio' => $audioData,
+                    'file_url' => $fileUrl,
                     'triggered_by' => $meta['nickname'],
                     'sender_emoji' => $meta['emoji'],
                 ]);
-                break;
-
-            case 'soundboard_add':
-                $soundboard = $data['soundboard'] ?? null;
-                if ($soundboard) {
-                    $this->broadcastToRoom($roomId, [
-                        'type' => 'soundboard_added',
-                        'soundboard' => $soundboard,
-                        'triggered_by' => $meta['nickname'],
-                    ]);
-                }
-                break;
-
-            case 'soundboard_delete':
-                $soundboardId = (int)($data['soundboard_id'] ?? 0);
-                if ($soundboardId > 0) {
-                    $this->broadcastToRoom($roomId, [
-                        'type' => 'soundboard_deleted',
-                        'soundboard_id' => $soundboardId,
-                        'triggered_by' => $meta['nickname'],
-                    ]);
-                }
                 break;
 
             case 'voice_chunk':

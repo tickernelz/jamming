@@ -155,16 +155,9 @@ class JamriWebSocket {
             sound_id: sound.id || sound.sound_id || '',
             title: sound.title || 'Soundboard',
             emoji: sound.emoji || '🔊',
+            audio: sound.audio || '',
             file_url: sound.file_url || ''
         });
-    }
-
-    sendSoundboardAdd(soundboard) {
-        this.send('soundboard_add', { soundboard });
-    }
-
-    sendSoundboardDelete(soundboardId) {
-        this.send('soundboard_delete', { soundboard_id: soundboardId });
     }
 
     // Push to Talk (Voice: General vs Karaoke)

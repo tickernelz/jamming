@@ -36,3 +36,8 @@ desktop.ini
 .idea/
 .vscode/
 *.sublime-workspace
+
+# Local tunnel helpers (ngrok development only)
+/bin/tunnel_gateway.js
+/start_tunnel.bat
+
