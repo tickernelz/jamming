@@ -563,29 +563,6 @@ function renderRoomShell(roomDetail) {
             </div>
             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
                 <div id="room-ptt-slot"></div>
-                <button type="button" id="btn-room-header-lyrics" class="btn btn-outline btn-sm" title="Tampilkan Lirik Karaoke di Layar Depan">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M9 18V5l12-2v13"></path>
-                        <circle cx="6" cy="18" r="3"></circle>
-                        <circle cx="18" cy="16" r="3"></circle>
-                    </svg>
-                    <span>Lirik Karaoke</span>
-                </button>
-                <button type="button" id="btn-toggle-hear-karaoke" class="btn btn-outline btn-sm btn-hear-karaoke" title="Dengarkan atau bisukan suara karaoke dari peserta lain">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M3 18v-6a9 9 0 0 1 18 0v6"></path>
-                        <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"></path>
-                    </svg>
-                    <span class="hear-karaoke-label">Karaoke Lain: Terdengar</span>
-                </button>
-                <button type="button" id="btn-room-minigames" class="btn btn-outline btn-sm" title="Mainkan Mini Game Realtime">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect>
-                        <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"></circle>
-                        <circle cx="15.5" cy="15.5" r="1.5" fill="currentColor"></circle>
-                    </svg>
-                    <span>Mini Game</span>
-                </button>
                 <button type="button" id="btn-room-search" class="btn btn-primary btn-sm">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="11" cy="11" r="8"></circle>
@@ -721,32 +698,6 @@ function renderRoomShell(roomDetail) {
             btnShuffleRoom.classList.toggle('btn-primary', isShuffled);
             btnShuffleRoom.classList.toggle('btn-ghost', !isShuffled);
             btnShuffleRoom.title = isShuffled ? 'Acak Antrean: AKTIF' : 'Acak Antrean: NON-AKTIF';
-        });
-    }
-
-    // Quick Header buttons
-    const btnHeaderLyrics = container.querySelector('#btn-room-header-lyrics');
-    if (btnHeaderLyrics) {
-        btnHeaderLyrics.addEventListener('click', () => {
-            const lyricsTabBtn = container.querySelector('[data-tab="room-lyrics"]');
-            if (lyricsTabBtn) lyricsTabBtn.click();
-        });
-    }
-
-    const btnMiniGames = container.querySelector('#btn-room-minigames');
-    if (btnMiniGames) {
-        btnMiniGames.addEventListener('click', () => {
-            const gamesTabBtn = container.querySelector('[data-tab="room-games"]');
-            if (gamesTabBtn) gamesTabBtn.click();
-        });
-    }
-
-    const btnHearKaraoke = container.querySelector('#btn-toggle-hear-karaoke');
-    if (btnHearKaraoke) {
-        btnHearKaraoke.addEventListener('click', () => {
-            if (window.JAMRI_APP.voicePTT) {
-                window.JAMRI_APP.voicePTT.toggleKaraokeMuted();
-            }
         });
     }
 

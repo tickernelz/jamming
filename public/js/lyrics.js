@@ -21,7 +21,13 @@ class JamriLyricsManager {
         this.modalEl = null;
         this.embeddedContainers = new Set();
 
+        // Picture-in-Picture state
+        this.pipWindow = null;
+        this.pipMode = localStorage.getItem('jamri_pip_mode') || 'full'; // 'full' (Lengkap) | 'lyrics' (Lirik Saja)
+        this.pipIsDraggingSeek = false;
+
         this.initKeyListeners();
+        this.initPiPListeners();
     }
 
     attach(player, ws) {
@@ -42,6 +48,36 @@ class JamriLyricsManager {
                 const cur = (data && typeof data === 'object') ? data.currentTime : data;
                 this.onTimeUpdate(cur || 0);
             });
+
+            this.player.on('state_change', () => {
+                this.updatePiPPlaybackState();
+            });
+
+            this.player.on('volume_change', (vol) => {
+                this.updatePiPVolume(vol);
+            });
+        }
+    }
+
+    initPiPListeners() {
+        // Close any active PiP dropdown when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.lyrics-pip-dropdown-wrapper')) {
+                document.querySelectorAll('.lyrics-pip-menu').forEach(m => m.style.display = 'none');
+            }
+        });
+
+        // Mirror Day / Night theme changes to the floating PiP document
+        if (typeof MutationObserver !== 'undefined') {
+            const themeObserver = new MutationObserver(() => {
+                if (this.pipWindow && !this.pipWindow.closed) {
+                    const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+                    try {
+                        this.pipWindow.document.documentElement.setAttribute('data-theme', currentTheme);
+                    } catch (e) {}
+                }
+            });
+            themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
         }
     }
 
@@ -72,6 +108,18 @@ class JamriLyricsManager {
     }
 
     onTimeUpdate(currentTime) {
+        // Sync PiP scrubber and time label if PiP is open in Full mode
+        if (this.pipWindow && !this.pipWindow.closed && this.pipMode === 'full') {
+            const curEl = this.pipWindow.document.getElementById('pip-current-time');
+            if (curEl) curEl.textContent = this.formatTime(currentTime);
+            const slider = this.pipWindow.document.getElementById('pip-seek-slider');
+            if (slider && !this.pipIsDraggingSeek) {
+                const track = this.currentTrack || (this.player && this.player.currentTrack);
+                const dur = track ? (track.duration_seconds || track.duration || 0) : 0;
+                slider.value = dur > 0 ? (currentTime / dur) * 100 : 0;
+            }
+        }
+
         if (this.parsedLines.length === 0) return;
         this.highlightActiveLine(currentTime);
     }
@@ -170,6 +218,11 @@ class JamriLyricsManager {
                 }).filter(Boolean)
             ];
 
+            if (this.pipWindow && !this.pipWindow.closed) {
+                const pipScroll = this.pipWindow.document.querySelector('.pip-lyrics-scroll');
+                if (pipScroll) containers.push(pipScroll);
+            }
+
             containers.forEach(container => {
                 if (!container) return;
 
@@ -208,6 +261,9 @@ class JamriLyricsManager {
             const el = document.getElementById(id);
             if (el) this.renderEmbedded(el);
         });
+        if (this.pipWindow && !this.pipWindow.closed) {
+            this.renderPiPContent();
+        }
     }
 
     registerEmbeddedContainer(containerId) {
@@ -284,6 +340,7 @@ class JamriLyricsManager {
                         </div>
 
                         <div class="lyrics-header-actions">
+                            ${this.getPiPDropdownHtml()}
                             <button type="button" class="btn btn-ghost btn-icon btn-sm btn-embedded-search-toggle" title="Cari Lirik Manual">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <circle cx="11" cy="11" r="8"></circle>
@@ -354,6 +411,7 @@ class JamriLyricsManager {
     }
 
     bindEmbeddedEvents(container) {
+        this.bindPiPDropdown(container);
         const searchToggle = container.querySelector('.btn-embedded-search-toggle');
         const searchBar = container.querySelector('.embedded-lyrics-search-bar');
         const searchForm = container.querySelector('.embedded-lyrics-search-form');
@@ -538,6 +596,7 @@ class JamriLyricsManager {
                         </div>
 
                         <div class="lyrics-header-actions">
+                            ${this.getPiPDropdownHtml()}
                             <button type="button" id="btn-lyrics-search-toggle" class="btn btn-ghost btn-icon btn-sm" title="Cari Lirik Manual">
                                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <circle cx="11" cy="11" r="8"></circle>
@@ -666,6 +725,7 @@ class JamriLyricsManager {
     }
 
     bindModalEvents() {
+        this.bindPiPDropdown(this.modalEl);
         const btnClose = this.modalEl.querySelector('#btn-close-lyrics');
         if (btnClose) {
             btnClose.addEventListener('click', () => this.closeModal());
@@ -746,6 +806,622 @@ class JamriLyricsManager {
         this.scrollDebounceTimer = setTimeout(() => {
             this.isUserScrolling = false;
         }, 3200);
+    }
+
+    formatTime(sec) {
+        if (!sec || isNaN(sec) || sec < 0) return '0:00';
+        const m = Math.floor(sec / 60);
+        const s = Math.floor(sec % 60);
+        return `${m}:${s < 10 ? '0' : ''}${s}`;
+    }
+
+    getPiPDropdownHtml() {
+        const isOpen = !!(this.pipWindow && !this.pipWindow.closed);
+        return `
+            <div class="lyrics-pip-dropdown-wrapper">
+                <button type="button" class="btn btn-ghost btn-icon btn-sm btn-lyrics-pip ${isOpen ? 'btn-primary' : ''}" title="Buka Floating Picture-in-Picture (Desktop)">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="2" y="3" width="20" height="14" rx="2"></rect>
+                        <rect x="11" y="9" width="9" height="7" rx="1" fill="currentColor" opacity="0.35"></rect>
+                        <rect x="11" y="9" width="9" height="7" rx="1"></rect>
+                    </svg>
+                </button>
+                <div class="lyrics-pip-menu" style="display:none;">
+                    <button type="button" class="pip-menu-item" data-pip-mode="full">
+                        <span class="pip-menu-badge">Lengkap</span>
+                        <div class="pip-menu-text">
+                            <strong>Lirik + Navigasi Musik</strong>
+                            <small>Judul, seek, play/pause & lirik</small>
+                        </div>
+                    </button>
+                    <button type="button" class="pip-menu-item" data-pip-mode="lyrics">
+                        <span class="pip-menu-badge">Lirik Saja</span>
+                        <div class="pip-menu-text">
+                            <strong>Teks Lirik Minimalis</strong>
+                            <small>Fokus lirik auto-scroll</small>
+                        </div>
+                    </button>
+                </div>
+            </div>
+        `;
+    }
+
+    bindPiPDropdown(container) {
+        const pipBtn = container.querySelector('.btn-lyrics-pip');
+        const pipMenu = container.querySelector('.lyrics-pip-menu');
+        if (!pipBtn || !pipMenu) return;
+
+        pipBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const isShowing = pipMenu.style.display === 'flex';
+            document.querySelectorAll('.lyrics-pip-menu').forEach(m => m.style.display = 'none');
+            pipMenu.style.display = isShowing ? 'none' : 'flex';
+        });
+
+        pipMenu.querySelectorAll('.pip-menu-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+                e.stopPropagation();
+                pipMenu.style.display = 'none';
+                const mode = item.dataset.pipMode || 'full';
+                this.openPiP(mode);
+            });
+        });
+    }
+
+    async openPiP(mode = 'full') {
+        this.pipMode = mode;
+        try {
+            localStorage.setItem('jamri_pip_mode', mode);
+        } catch (e) {}
+
+        if (this.pipWindow && !this.pipWindow.closed) {
+            this.renderPiPContent();
+            try { this.pipWindow.focus(); } catch (e) {}
+            return;
+        }
+
+        const width = mode === 'full' ? 420 : 360;
+        const height = mode === 'full' ? 560 : 460;
+
+        try {
+            if ('documentPictureInPicture' in window && typeof window.documentPictureInPicture.requestWindow === 'function') {
+                this.pipWindow = await window.documentPictureInPicture.requestWindow({
+                    width: width,
+                    height: height
+                });
+            } else {
+                // Fallback popup window for browsers without Document PiP (e.g. Firefox)
+                const left = Math.max(0, (window.screen.width || 1200) - width - 30);
+                const top = 50;
+                this.pipWindow = window.open('', 'JamriLyricsPiP', `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=no,status=no,toolbar=no,menubar=no`);
+            }
+        } catch (err) {
+            console.error('[Lyrics PiP] Failed to open PiP window:', err);
+            if (window.JAMRI_APP && window.JAMRI_APP.showToast) {
+                window.JAMRI_APP.showToast('Gagal membuka Picture-in-Picture: ' + (err.message || err), 'error');
+            }
+            return;
+        }
+
+        if (!this.pipWindow) {
+            if (window.JAMRI_APP && window.JAMRI_APP.showToast) {
+                window.JAMRI_APP.showToast('Popup Picture-in-Picture diblokir browser. Mohon izinkan pop-up.', 'warning');
+            }
+            return;
+        }
+
+        this.setupPiPStyles(this.pipWindow);
+        this.renderPiPContent();
+
+        const handleClose = () => {
+            this.pipWindow = null;
+            this.updatePiPButtonState();
+        };
+        this.pipWindow.addEventListener('pagehide', handleClose);
+        this.pipWindow.addEventListener('unload', handleClose);
+
+        this.updatePiPButtonState();
+    }
+
+    setupPiPStyles(pipWin) {
+        const doc = pipWin.document;
+        doc.title = 'Jamri Karaoke PiP';
+
+        const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+        doc.documentElement.setAttribute('data-theme', currentTheme);
+
+        document.querySelectorAll('link[rel="stylesheet"]').forEach(link => {
+            const newLink = doc.createElement('link');
+            newLink.rel = 'stylesheet';
+            newLink.href = link.href;
+            doc.head.appendChild(newLink);
+        });
+
+        document.querySelectorAll('style').forEach(style => {
+            const newStyle = doc.createElement('style');
+            newStyle.textContent = style.textContent;
+            doc.head.appendChild(newStyle);
+        });
+
+        const pipStyle = doc.createElement('style');
+        pipStyle.textContent = `
+            html, body {
+                margin: 0;
+                padding: 0;
+                width: 100%;
+                height: 100%;
+                overflow: hidden;
+                background: var(--bg-surface, #0f172a);
+                color: var(--text-primary, #f8fafc);
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                display: flex;
+                flex-direction: column;
+                user-select: none;
+            }
+            * { box-sizing: border-box; }
+            .pip-container {
+                display: flex;
+                flex-direction: column;
+                height: 100%;
+                width: 100%;
+                overflow: hidden;
+            }
+            .pip-top-bar {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 8px 12px;
+                background: var(--bg-surface-elevated, #1e293b);
+                border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+                flex-shrink: 0;
+                gap: 8px;
+            }
+            .pip-brand {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                font-size: 11px;
+                font-weight: 700;
+                color: var(--primary, #3b82f6);
+                letter-spacing: 0.5px;
+            }
+            .pip-mode-badge {
+                font-size: 10px;
+                padding: 3px 8px;
+                border-radius: 12px;
+                background: var(--primary-light, rgba(59,130,246,0.15));
+                color: var(--primary, #3b82f6);
+                cursor: pointer;
+                border: 1px solid rgba(59,130,246,0.3);
+                font-weight: 600;
+                transition: all 0.2s ease;
+            }
+            .pip-mode-badge:hover {
+                background: var(--primary, #3b82f6);
+                color: #ffffff;
+            }
+            .pip-track-card {
+                padding: 8px 12px;
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                background: var(--bg-surface, #0f172a);
+                border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+                flex-shrink: 0;
+            }
+            .pip-track-meta {
+                min-width: 0;
+                flex: 1;
+            }
+            .pip-track-title {
+                font-size: 13px;
+                font-weight: 700;
+                color: var(--text-primary, #f8fafc);
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+            .pip-track-artist {
+                font-size: 11px;
+                color: var(--text-secondary, #94a3b8);
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                margin-top: 1px;
+            }
+            .pip-controls-card {
+                padding: 8px 12px 10px;
+                background: var(--bg-surface-elevated, #1e293b);
+                border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+                flex-shrink: 0;
+            }
+            .pip-progress-row {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                font-size: 10px;
+                color: var(--text-muted, #64748b);
+                font-variant-numeric: tabular-nums;
+            }
+            .pip-slider {
+                flex: 1;
+                height: 4px;
+                border-radius: 2px;
+                accent-color: var(--primary, #3b82f6);
+                cursor: pointer;
+            }
+            .pip-actions-row {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 10px;
+            }
+            .pip-playback-btns {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            .pip-btn {
+                background: transparent;
+                border: none;
+                color: var(--text-primary, #f8fafc);
+                cursor: pointer;
+                padding: 5px;
+                border-radius: 6px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                transition: all 0.15s ease;
+            }
+            .pip-btn:hover {
+                background: var(--bg-surface-hover, rgba(255,255,255,0.08));
+                color: var(--primary, #3b82f6);
+            }
+            .pip-btn-play {
+                background: var(--primary, #3b82f6);
+                color: #ffffff !important;
+                border-radius: 50%;
+                width: 30px;
+                height: 30px;
+                padding: 0;
+            }
+            .pip-btn-play:hover {
+                opacity: 0.9;
+                transform: scale(1.05);
+            }
+            .pip-vol-box {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                color: var(--text-muted, #64748b);
+            }
+            .pip-vol-slider {
+                width: 55px;
+                height: 4px;
+                border-radius: 2px;
+                accent-color: var(--primary, #3b82f6);
+                cursor: pointer;
+            }
+            .pip-lyrics-scroll {
+                flex: 1;
+                overflow-y: auto;
+                overflow-x: hidden;
+                padding: 16px 14px;
+                text-align: center;
+                scroll-behavior: smooth;
+                background: var(--bg-surface, #0f172a);
+            }
+            .pip-lyrics-scroll::-webkit-scrollbar {
+                width: 5px;
+            }
+            .pip-lyrics-scroll::-webkit-scrollbar-thumb {
+                background: var(--border-color, rgba(255,255,255,0.15));
+                border-radius: 3px;
+            }
+            .pip-lyric-line {
+                padding: 6px 10px;
+                font-size: 16px;
+                line-height: 1.5;
+                font-weight: 600;
+                color: var(--text-muted, #64748b);
+                opacity: 0.45;
+                cursor: pointer;
+                border-radius: 6px;
+                margin: 6px 0;
+                transition: all 0.22s ease;
+            }
+            .pip-lyric-line:hover {
+                opacity: 0.85;
+                background: var(--bg-surface-hover, rgba(255,255,255,0.06));
+            }
+            .pip-lyric-line.active-line {
+                color: var(--primary, #3b82f6) !important;
+                opacity: 1 !important;
+                font-weight: 800 !important;
+                transform: scale(1.03);
+                background: var(--primary-light, rgba(59,130,246,0.15));
+            }
+            .pip-empty-state {
+                padding: 40px 16px;
+                color: var(--text-muted, #64748b);
+                font-size: 13px;
+                text-align: center;
+            }
+            @keyframes spin {
+                from { transform: rotate(0deg); }
+                to { transform: rotate(360deg); }
+            }
+        `;
+        doc.head.appendChild(pipStyle);
+    }
+
+    renderPiPContent() {
+        if (!this.pipWindow || this.pipWindow.closed) return;
+
+        const doc = this.pipWindow.document;
+        const track = this.currentTrack || (this.player && this.player.currentTrack);
+        const title = track ? track.title : 'Tidak Ada Lagu';
+        const artist = track ? (track.channel || track.artist || 'Artis Tidak Diketahui') : '';
+        const thumb = track ? (track.thumbnail_url || track.thumbnail || '') : '';
+        const isPlaying = !!(this.player && this.player.isPlaying);
+        const duration = track ? (track.duration_seconds || track.duration || 0) : 0;
+        const currentTime = (this.player && this.player.currentTime) || 0;
+        const volume = (this.player && this.player.volume !== undefined) ? this.player.volume : 0.8;
+        const isSynced = this.lyricsData && this.lyricsData.synced && this.parsedLines.length > 0;
+        const isPlain = this.lyricsData && this.lyricsData.found && !isSynced && !!this.lyricsData.plain_lyrics;
+        const notFound = !this.lyricsData || !this.lyricsData.found;
+
+        let lyricsHtml = '';
+        if (this.isLoading) {
+            lyricsHtml = `
+                <div class="pip-empty-state">
+                    <div style="display:inline-block; animation:spin 1s linear infinite; margin-bottom:8px;">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg>
+                    </div>
+                    <div>Mencari lirik lagu...</div>
+                </div>
+            `;
+        } else if (isSynced) {
+            lyricsHtml = this.parsedLines.map((line, idx) => `
+                <div class="pip-lyric-line ${idx === this.activeLineIdx ? 'active-line' : ''}" data-idx="${idx}" data-time="${line.time}">
+                    ${this.escape(line.text)}
+                </div>
+            `).join('');
+        } else if (isPlain) {
+            lyricsHtml = `
+                <div style="font-size:14px; line-height:1.7; white-space:pre-wrap; opacity:0.8; text-align:center; padding:10px;">
+                    ${this.escape(this.lyricsData.plain_lyrics)}
+                </div>
+            `;
+        } else {
+            lyricsHtml = `
+                <div class="pip-empty-state">
+                    <div style="font-size:24px; margin-bottom:8px;">🎵</div>
+                    <div style="font-weight:600; color:var(--text-primary); margin-bottom:4px;">Lirik Belum Tersedia</div>
+                    <div>${this.escape(this.lyricsData && this.lyricsData.message ? this.lyricsData.message : 'Lirik tidak ditemukan di basis data')}</div>
+                </div>
+            `;
+        }
+
+        if (this.pipMode === 'full') {
+            doc.body.innerHTML = `
+                <div class="pip-container">
+                    <!-- Top Bar -->
+                    <div class="pip-top-bar">
+                        <div class="pip-brand">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+                            <span>JAMRI PiP</span>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:6px;">
+                            ${isSynced ? `<span style="font-size:9px; font-weight:700; background:rgba(34,197,94,0.15); color:#22c55e; border:1px solid rgba(34,197,94,0.3); border-radius:10px; padding:1px 6px;">Sinkron</span>` : ''}
+                            <button type="button" class="pip-mode-badge" id="pip-btn-toggle-mode" title="Klik untuk beralih ke mode lirik minimalis">
+                                📄 Lirik Saja
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Track Info -->
+                    <div class="pip-track-card">
+                        ${this.getCoverHtml(thumb, 38)}
+                        <div class="pip-track-meta">
+                            <div class="pip-track-title" title="${this.escape(title)}">${this.escape(title)}</div>
+                            <div class="pip-track-artist">${this.escape(artist)}</div>
+                        </div>
+                    </div>
+
+                    <!-- Player Navigation & Controls -->
+                    <div class="pip-controls-card">
+                        <div class="pip-progress-row">
+                            <span id="pip-current-time">${this.formatTime(currentTime)}</span>
+                            <input type="range" id="pip-seek-slider" class="pip-slider" min="0" max="100" value="${duration > 0 ? (currentTime / duration) * 100 : 0}" />
+                            <span id="pip-duration">${this.formatTime(duration)}</span>
+                        </div>
+                        <div class="pip-actions-row">
+                            <div class="pip-playback-btns">
+                                <button type="button" class="pip-btn" id="pip-btn-prev" title="Lagu Sebelumnya">
+                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><polygon points="19 20 9 12 19 4 19 20"></polygon><line x1="5" y1="19" x2="5" y2="5" stroke="currentColor" stroke-width="2.5"></line></svg>
+                                </button>
+                                <button type="button" class="pip-btn pip-btn-play" id="pip-btn-play" title="${isPlaying ? 'Jeda' : 'Putar'}">
+                                    ${isPlaying 
+                                        ? `<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"></rect><rect x="14" y="4" width="4" height="16" rx="1"></rect></svg>`
+                                        : `<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"></polygon></svg>`}
+                                </button>
+                                <button type="button" class="pip-btn" id="pip-btn-next" title="Lagu Berikutnya">
+                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2.5"></line></svg>
+                                </button>
+                            </div>
+                            <div class="pip-vol-box" title="Volume Suara">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
+                                <input type="range" id="pip-vol-slider" class="pip-vol-slider" min="0" max="1" step="0.05" value="${volume}" />
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Lyrics Scroll -->
+                    <div class="pip-lyrics-scroll">
+                        ${lyricsHtml}
+                    </div>
+                </div>
+            `;
+        } else {
+            // Minimal Lyrics-only mode
+            doc.body.innerHTML = `
+                <div class="pip-container">
+                    <!-- Compact Top Bar -->
+                    <div class="pip-top-bar">
+                        <div style="min-width:0; flex:1; display:flex; align-items:center; gap:6px;">
+                            <div style="font-size:12px; font-weight:700; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:200px;" title="${this.escape(title)}">
+                                ${this.escape(title)}
+                            </div>
+                            <span style="font-size:10px; color:var(--text-muted); white-space:nowrap;">• ${this.escape(artist)}</span>
+                        </div>
+                        <button type="button" class="pip-mode-badge" id="pip-btn-toggle-mode" title="Klik untuk beralih ke mode lengkap dengan kontrol navigasi">
+                            🎛️ Lengkap
+                        </button>
+                    </div>
+
+                    <!-- Lyrics Scroll Area -->
+                    <div class="pip-lyrics-scroll" style="font-size:18px;">
+                        ${lyricsHtml}
+                    </div>
+                </div>
+            `;
+        }
+
+        this.bindPiPEvents();
+
+        if (this.parsedLines.length > 0 && currentTime > 0) {
+            this.highlightActiveLine(currentTime, true);
+        }
+    }
+
+    bindPiPEvents() {
+        if (!this.pipWindow || this.pipWindow.closed) return;
+        const doc = this.pipWindow.document;
+
+        const btnToggleMode = doc.getElementById('pip-btn-toggle-mode');
+        if (btnToggleMode) {
+            btnToggleMode.addEventListener('click', () => this.togglePiPMode());
+        }
+
+        const checkPerm = () => {
+            if (window.JAMRI_APP && window.JAMRI_APP.currentView === 'room' && window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
+                window.JAMRI_APP.games.notifyPunishedAction('mengontrol pemutaran musik');
+                return false;
+            }
+            return true;
+        };
+
+        const btnPlay = doc.getElementById('pip-btn-play');
+        if (btnPlay) {
+            btnPlay.addEventListener('click', () => {
+                if (!checkPerm()) return;
+                if (this.player) this.player.togglePlay();
+            });
+        }
+
+        const btnPrev = doc.getElementById('pip-btn-prev');
+        if (btnPrev) {
+            btnPrev.addEventListener('click', () => {
+                if (!checkPerm()) return;
+                if (this.player) this.player.prev();
+            });
+        }
+
+        const btnNext = doc.getElementById('pip-btn-next');
+        if (btnNext) {
+            btnNext.addEventListener('click', () => {
+                if (!checkPerm()) return;
+                if (this.player) this.player.next();
+            });
+        }
+
+        const seekSlider = doc.getElementById('pip-seek-slider');
+        const curTimeEl = doc.getElementById('pip-current-time');
+        if (seekSlider) {
+            seekSlider.addEventListener('input', () => {
+                this.pipIsDraggingSeek = true;
+                const track = this.currentTrack || (this.player && this.player.currentTrack);
+                const dur = track ? (track.duration_seconds || track.duration || 0) : 0;
+                const previewSec = (parseFloat(seekSlider.value) / 100) * dur;
+                if (curTimeEl) curTimeEl.textContent = this.formatTime(previewSec);
+            });
+            seekSlider.addEventListener('change', () => {
+                this.pipIsDraggingSeek = false;
+                if (!checkPerm()) return;
+                const track = this.currentTrack || (this.player && this.player.currentTrack);
+                const dur = track ? (track.duration_seconds || track.duration || 0) : 0;
+                const targetSec = (parseFloat(seekSlider.value) / 100) * dur;
+                this.handleSeekClick(targetSec);
+            });
+        }
+
+        const volSlider = doc.getElementById('pip-vol-slider');
+        if (volSlider) {
+            volSlider.addEventListener('input', () => {
+                const vol = parseFloat(volSlider.value);
+                if (this.player) this.player.setVolume(vol);
+            });
+        }
+
+        doc.querySelectorAll('.pip-lyric-line').forEach(line => {
+            line.addEventListener('click', () => {
+                const sec = parseFloat(line.dataset.time);
+                if (!isNaN(sec)) {
+                    this.handleSeekClick(sec);
+                }
+            });
+        });
+    }
+
+    togglePiPMode() {
+        this.pipMode = this.pipMode === 'full' ? 'lyrics' : 'full';
+        try {
+            localStorage.setItem('jamri_pip_mode', this.pipMode);
+        } catch (e) {}
+
+        if (this.pipWindow && !this.pipWindow.closed) {
+            try {
+                if (this.pipMode === 'full') {
+                    this.pipWindow.resizeTo(420, 560);
+                } else {
+                    this.pipWindow.resizeTo(360, 460);
+                }
+            } catch (e) {}
+            this.renderPiPContent();
+        }
+    }
+
+    updatePiPButtonState() {
+        const isOpen = !!(this.pipWindow && !this.pipWindow.closed);
+        document.querySelectorAll('.btn-lyrics-pip').forEach(btn => {
+            btn.classList.toggle('btn-primary', isOpen);
+            btn.classList.toggle('btn-ghost', !isOpen);
+            btn.title = isOpen ? 'Picture-in-Picture Aktif (Klik untuk opsi / fokus)' : 'Buka Floating Picture-in-Picture (Desktop)';
+        });
+    }
+
+    updatePiPPlaybackState() {
+        if (!this.pipWindow || this.pipWindow.closed) return;
+        const playBtn = this.pipWindow.document.getElementById('pip-btn-play');
+        if (playBtn && this.player) {
+            const isPlaying = !!this.player.isPlaying;
+            playBtn.innerHTML = isPlaying
+                ? `<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"></rect><rect x="14" y="4" width="4" height="16" rx="1"></rect></svg>`
+                : `<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"></polygon></svg>`;
+            playBtn.title = isPlaying ? 'Jeda' : 'Putar';
+        }
+    }
+
+    updatePiPVolume(vol) {
+        if (!this.pipWindow || this.pipWindow.closed) return;
+        const volSlider = this.pipWindow.document.getElementById('pip-vol-slider');
+        if (volSlider && !isNaN(vol)) {
+            volSlider.value = vol;
+        }
     }
 
     escape(str) {

@@ -2843,6 +2843,92 @@
     flex-shrink: 0;
 }
 
+/* Lyrics PiP Dropdown Menu */
+.lyrics-pip-dropdown-wrapper {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+}
+
+.lyrics-pip-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    width: 240px;
+    background: var(--bg-surface-elevated);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+    padding: 6px;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    animation: pipMenuFadeIn 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes pipMenuFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-4px) scale(0.97);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+.pip-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-primary);
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.15s ease;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.pip-menu-item:hover {
+    background: var(--bg-surface-hover);
+    border-color: var(--border-subtle);
+}
+
+.pip-menu-badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 4px 7px;
+    border-radius: 6px;
+    background: var(--primary-light);
+    color: var(--primary);
+    white-space: nowrap;
+    border: 1px solid rgba(37, 99, 235, 0.2);
+}
+
+.pip-menu-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    gap: 2px;
+}
+
+.pip-menu-text strong {
+    font-size: 12px;
+    color: var(--text-primary);
+    line-height: 1.2;
+}
+
+.pip-menu-text small {
+    font-size: 10px;
+    color: var(--text-muted);
+    line-height: 1.2;
+}
+
 /* Header Sub-rows: Row 2 (Karaoke Voice & Listen Controls) */
 .lyrics-header-controls-row {
     display: flex;
@@ -2980,6 +3066,10 @@
         line-height: 1.5 !important;
         margin: 8px 0 !important;
         padding: 6px 10px !important;
+    }
+
+    .lyrics-pip-dropdown-wrapper {
+        display: none !important;
     }
 }
 
