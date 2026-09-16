@@ -221,13 +221,39 @@ class JamriLyricsManager {
         }
     }
 
+    getCoverHtml(thumb, size = 36) {
+        if (thumb && thumb.trim() && !thumb.includes('default-thumb.png')) {
+            return `
+                <div class="lyrics-thumb-wrapper" style="width:${size}px; height:${size}px; flex-shrink:0;">
+                    <img src="${this.escape(thumb)}" alt="Cover" class="lyrics-track-thumb" style="width:${size}px; height:${size}px;" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';" />
+                    <div class="lyrics-track-thumb-placeholder" style="display:none; width:${size}px; height:${size}px;">
+                        <svg width="${Math.round(size * 0.45)}" height="${Math.round(size * 0.45)}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M9 18V5l12-2v13"></path>
+                            <circle cx="6" cy="18" r="3"></circle>
+                            <circle cx="18" cy="16" r="3"></circle>
+                        </svg>
+                    </div>
+                </div>
+            `;
+        }
+        return `
+            <div class="lyrics-track-thumb-placeholder" style="width:${size}px; height:${size}px; flex-shrink:0;">
+                <svg width="${Math.round(size * 0.45)}" height="${Math.round(size * 0.45)}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M9 18V5l12-2v13"></path>
+                    <circle cx="6" cy="18" r="3"></circle>
+                    <circle cx="18" cy="16" r="3"></circle>
+                </svg>
+            </div>
+        `;
+    }
+
     renderEmbedded(container) {
         if (!container) return;
 
         const track = this.currentTrack || (this.player && this.player.currentTrack);
         const title = track ? track.title : 'Tidak Ada Lagu';
         const artist = track ? (track.channel || track.artist || 'Artis Tidak Diketahui') : '';
-        const thumb = track ? (track.thumbnail_url || track.thumbnail || 'public/img/default-thumb.png') : 'public/img/default-thumb.png';
+        const thumb = track ? (track.thumbnail_url || track.thumbnail || '') : '';
 
         const isSynced = this.lyricsData && this.lyricsData.synced && this.parsedLines.length > 0;
         const isPlain = this.lyricsData && this.lyricsData.found && !isSynced && !!this.lyricsData.plain_lyrics;
@@ -240,7 +266,7 @@ class JamriLyricsManager {
                     <!-- Row 1: Track Info, Sync Badge, & Actions -->
                     <div class="lyrics-header-main-row">
                         <div class="lyrics-track-info">
-                            <img src="${this.escape(thumb)}" alt="Cover" class="lyrics-track-thumb" />
+                            ${this.getCoverHtml(thumb, 34)}
                             <div class="lyrics-track-meta">
                                 <div class="lyrics-track-title" title="${this.escape(title)}">${this.escape(title)}</div>
                                 <div class="lyrics-track-artist">${this.escape(artist)}</div>
@@ -248,11 +274,11 @@ class JamriLyricsManager {
                             ${isSynced ? `
                                 <span class="lyrics-sync-badge synced" title="Lirik disinkronkan secara otomatis secara realtime">
                                     <span class="sync-dot"></span>
-                                    <span>Sinkron Real-Time</span>
+                                    <span class="sync-text">Sinkron</span>
                                 </span>
                             ` : (isPlain ? `
                                 <span class="lyrics-sync-badge plain" title="Lirik teks biasa tanpa sinkronisasi waktu">
-                                    <span>Teks Polos</span>
+                                    <span class="sync-text">Teks Polos</span>
                                 </span>
                             ` : '')}
                         </div>
@@ -295,7 +321,7 @@ class JamriLyricsManager {
                                 <path d="M3 18v-6a9 9 0 0 1 18 0v6"></path>
                                 <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"></path>
                             </svg>
-                            <span class="hear-karaoke-label">Karaoke Lain: Terdengar</span>
+                            <span class="hear-karaoke-label">Karaoke: Dengar</span>
                         </button>
                     </div>
                 </div>
@@ -316,10 +342,10 @@ class JamriLyricsManager {
                     ${this.renderLyricsBody(isSynced, isPlain, notFound)}
                 </div>
 
-                <!-- Footer -->
+                <!-- Footer (Compact & Non-overflowing) -->
                 <div class="embedded-lyrics-footer">
-                    <span>Klik baris lirik untuk melompat (seek). Tahan <strong>[V]</strong> untuk bernyanyi bareng via PTT.</span>
-                    <span>Basis data: <a href="https://lrclib.net" target="_blank" rel="noopener" style="color:var(--primary); text-decoration:none; font-weight:600;">LRCLIB</a></span>
+                    <span>Klik lirik untuk melompat (seek)</span>
+                    <span>Sumber: <a href="https://lrclib.net" target="_blank" rel="noopener" style="color:var(--primary); text-decoration:none; font-weight:600;">LRCLIB</a></span>
                 </div>
             </div>
         `;
@@ -471,7 +497,7 @@ class JamriLyricsManager {
         const track = this.currentTrack || (this.player && this.player.currentTrack);
         const title = track ? track.title : 'Tidak Ada Lagu';
         const artist = track ? (track.channel || track.artist || 'Artis Tidak Diketahui') : '';
-        const thumb = track ? (track.thumbnail_url || track.thumbnail || 'public/img/default-thumb.png') : 'public/img/default-thumb.png';
+        const thumb = track ? (track.thumbnail_url || track.thumbnail || '') : '';
 
         const isSynced = this.lyricsData && this.lyricsData.synced && this.parsedLines.length > 0;
         const isPlain = this.lyricsData && this.lyricsData.found && !isSynced && !!this.lyricsData.plain_lyrics;
@@ -494,7 +520,7 @@ class JamriLyricsManager {
                     <!-- Row 1: Track Info, Sync Badge, & Actions -->
                     <div class="lyrics-header-main-row">
                         <div class="lyrics-track-info">
-                            <img src="${this.escape(thumb)}" alt="Cover" class="lyrics-track-thumb" />
+                            ${this.getCoverHtml(thumb, 40)}
                             <div class="lyrics-track-meta">
                                 <div class="lyrics-track-title" title="${this.escape(title)}">${this.escape(title)}</div>
                                 <div class="lyrics-track-artist">${this.escape(artist)}</div>
@@ -502,11 +528,11 @@ class JamriLyricsManager {
                             ${isSynced ? `
                                 <span class="lyrics-sync-badge synced" title="Lirik disinkronkan secara otomatis secara realtime">
                                     <span class="sync-dot"></span>
-                                    <span>Sinkron Real-Time</span>
+                                    <span class="sync-text">Sinkron</span>
                                 </span>
                             ` : (isPlain ? `
                                 <span class="lyrics-sync-badge plain" title="Lirik teks biasa tanpa sinkronisasi waktu">
-                                    <span>Teks Polos</span>
+                                    <span class="sync-text">Teks Polos</span>
                                 </span>
                             ` : '')}
                         </div>

@@ -675,7 +675,7 @@ class JamriVoicePTT {
             btn.classList.toggle('btn-danger', isMuted);
             const label = btn.querySelector('.hear-karaoke-label');
             if (label) {
-                label.textContent = isMuted ? 'Karaoke Lain: Dibisukan' : 'Karaoke Lain: Terdengar';
+                label.textContent = isMuted ? 'Karaoke: Bisu' : 'Karaoke: Dengar';
             }
             btn.title = isMuted 
                 ? 'Suara karaoke peserta lain sedang dibisukan di perangkat Anda. Klik untuk mendengarkan.' 
