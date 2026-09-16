@@ -72,6 +72,14 @@ class WebSocketHandler implements MessageComponentInterface
         if (!isset($this->rooms[$roomId])) {
             // Load state from DB
             $roomSummary = $this->roomManager->getRoomSummary($roomId);
+            if (!$roomSummary) {
+                $conn->send(json_encode([
+                    'type' => 'room_not_found',
+                    'message' => 'Room ini sudah kedaluwarsa atau telah dihapus karena tidak ada aktivitas.'
+                ]));
+                $conn->close();
+                return;
+            }
             $queue = $this->roomManager->getQueue($roomId);
             $initialTrack = null;
             if (!empty($roomSummary['current_track_id'])) {
@@ -181,16 +189,17 @@ class WebSocketHandler implements MessageComponentInterface
             }
         }
 
-        switch ($type) {
-            case 'ping':
-                $from->send(json_encode([
-                    'type' => 'pong',
-                    'server_time' => (int)(microtime(true) * 1000),
-                    'position' => $this->getCurrentPosition($roomId),
-                    'state' => $this->rooms[$roomId]['playback_state'] ?? 'stopped',
-                    'track' => $this->rooms[$roomId]['current_track'] ?? null,
-                ]));
-                break;
+        try {
+            switch ($type) {
+                case 'ping':
+                    $from->send(json_encode([
+                        'type' => 'pong',
+                        'server_time' => (int)(microtime(true) * 1000),
+                        'position' => $this->getCurrentPosition($roomId),
+                        'state' => $this->rooms[$roomId]['playback_state'] ?? 'stopped',
+                        'track' => $this->rooms[$roomId]['current_track'] ?? null,
+                    ]));
+                    break;
 
             case 'play':
                 if (empty($this->rooms[$roomId]['current_track'])) {
@@ -497,6 +506,9 @@ class WebSocketHandler implements MessageComponentInterface
                     ]);
                 }
                 break;
+            }
+        } catch (\Throwable $e) {
+            error_log("[WebSocket onMessage Error]: " . $e->getMessage());
         }
     }
 

@@ -10,22 +10,61 @@ class JamriWebSocket {
         this.user = null;
         this.isConnected = false;
         this.reconnectAttempts = 0;
-        this.maxReconnectAttempts = 10;
+        this.reconnectTimeout = null;
         this.listeners = {};
+        this._setupVisibilityListeners();
+    }
+
+    _setupVisibilityListeners() {
+        if (typeof document !== 'undefined' && !this._visibilityBound) {
+            this._visibilityBound = true;
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible' && !this.isConnected && this.roomId && this.user) {
+                    console.log('[Jamri WS] Tab active, reconnecting immediately...');
+                    this.attemptReconnect(true);
+                }
+            });
+            window.addEventListener('online', () => {
+                if (!this.isConnected && this.roomId && this.user) {
+                    console.log('[Jamri WS] Network restored, reconnecting immediately...');
+                    this.attemptReconnect(true);
+                }
+            });
+        }
     }
 
     connect(roomId, user) {
         this.roomId = roomId;
         this.user = user;
 
+        if (this.reconnectTimeout) {
+            clearTimeout(this.reconnectTimeout);
+            this.reconnectTimeout = null;
+        }
+
         const isHttps = window.location.protocol === 'https:';
-        const host = window.location.hostname || 'localhost';
         const protocol = isHttps ? 'wss:' : 'ws:';
-        // Di production (HTTPS) gunakan proxy path /ws tanpa port 8080
-        const endpoint = isHttps ? `${protocol}//${host}/ws` : `${protocol}//${host}:8080/`;
+        let endpoint;
+        if (isHttps) {
+            endpoint = `${protocol}//${window.location.host}/ws`;
+        } else if (window.location.port === '3000') {
+            endpoint = `${protocol}//${window.location.host}/ws`;
+        } else {
+            endpoint = `${protocol}//${window.location.hostname || 'localhost'}:8080/`;
+        }
+
         const url = `${endpoint}?room_id=${encodeURIComponent(roomId)}&device_id=${encodeURIComponent(user.device_id)}&nickname=${encodeURIComponent(user.nickname)}&emoji=${encodeURIComponent(user.emoji)}`;
 
-        this.ws = new WebSocket(url);
+        try {
+            if (this.ws) {
+                try { this.ws.close(); } catch (e) {}
+            }
+            this.ws = new WebSocket(url);
+        } catch (e) {
+            console.error('WS Connection initiation error:', e);
+            this.attemptReconnect();
+            return;
+        }
 
         this.ws.onopen = () => {
             this.isConnected = true;
@@ -61,20 +100,23 @@ class JamriWebSocket {
         };
     }
 
-    attemptReconnect() {
+    attemptReconnect(immediate = false) {
         if (!this.roomId || !this.user) return;
-        if (this.reconnectAttempts < this.maxReconnectAttempts) {
-            this.reconnectAttempts++;
-            // Rapid retry for seamless deployments/restarts: 600ms on first attempt, then smooth backoff
-            const delay = this.reconnectAttempts === 1 
-                ? 600 
-                : Math.min(6000, 1000 * Math.pow(1.3, this.reconnectAttempts));
-            setTimeout(() => {
-                if (!this.isConnected) {
-                    this.connect(this.roomId, this.user);
-                }
-            }, delay);
+        if (this.reconnectTimeout) {
+            clearTimeout(this.reconnectTimeout);
+            this.reconnectTimeout = null;
         }
+
+        this.reconnectAttempts++;
+        const delay = immediate 
+            ? 100 
+            : (this.reconnectAttempts === 1 ? 500 : Math.min(3000, 800 * Math.pow(1.25, Math.min(this.reconnectAttempts, 6))));
+
+        this.reconnectTimeout = setTimeout(() => {
+            if (!this.isConnected && this.roomId && this.user) {
+                this.connect(this.roomId, this.user);
+            }
+        }, delay);
     }
 
     send(type, payload = {}) {
@@ -185,6 +227,10 @@ class JamriWebSocket {
 
     disconnect() {
         this.roomId = null;
+        if (this.reconnectTimeout) {
+            clearTimeout(this.reconnectTimeout);
+            this.reconnectTimeout = null;
+        }
         if (this.pingInterval) {
             clearInterval(this.pingInterval);
             this.pingInterval = null;

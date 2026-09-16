@@ -1821,11 +1821,31 @@
     transition: all 0.2s ease;
 }
 
+.badge-online-btn .online-indicator-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #10b981;
+    box-shadow: 0 0 6px rgba(16, 185, 129, 0.6);
+}
+
 .badge-online-btn:hover {
     background: rgba(16, 185, 129, 0.28);
     border-color: #34d399;
     transform: translateY(-1px);
     box-shadow: 0 2px 8px rgba(16, 185, 129, 0.25);
+}
+
+.badge-online-btn.is-disconnected {
+    background: rgba(245, 158, 11, 0.15);
+    border-color: rgba(245, 158, 11, 0.35);
+    color: #fbbf24;
+}
+
+.badge-online-btn.is-disconnected .online-indicator-dot {
+    background: #f59e0b;
+    box-shadow: 0 0 6px rgba(245, 158, 11, 0.6);
+    animation: pulse 1.2s infinite;
 }
 
 .online-users-modal-box {

@@ -812,6 +812,11 @@ function renderRoomShell(roomDetail) {
 }
 
 function bindRoomWebSocketEvents(ws, player, roomDetail) {
+    ws.on('room_not_found', (data) => {
+        alert(data.message || 'Room ini sudah tidak aktif atau telah dihapus karena tidak ada aktivitas.');
+        leaveRoom();
+    });
+
     ws.on('room_init', (data) => {
         if (data.queue) renderRoomQueue(data.queue);
         if (data.loop_mode) player.setLoopMode(data.loop_mode);

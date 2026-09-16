@@ -23,9 +23,9 @@ class JamriChat {
             <div class="chat-wrapper">
                 <div class="chat-header">
                     <span class="chat-title">Live Chat</span>
-                    <button type="button" id="chat-online-badge" class="badge badge-online-btn" title="Klik untuk melihat siapa saja yang online di room">
+                    <button type="button" id="chat-online-badge" class="badge badge-online-btn is-disconnected" title="Klik untuk melihat siapa saja yang online di room">
                         <span class="online-indicator-dot"></span>
-                        <span id="chat-online-text">0 online</span>
+                        <span id="chat-online-text">Menghubungkan...</span>
                     </button>
                 </div>
                 <div class="chat-messages-container" id="chat-messages-box">
@@ -72,6 +72,20 @@ class JamriChat {
         if (this.onlineBtn) {
             this.onlineBtn.addEventListener('click', () => {
                 this.showOnlineUsersModal();
+            });
+        }
+
+        if (this.ws) {
+            this.ws.on('connection_change', (data) => {
+                if (!this.onlineBtn) return;
+                if (data && data.connected) {
+                    this.onlineBtn.classList.remove('is-disconnected');
+                    this.updateOnlineCount(this.onlineUsers.length || 1);
+                } else {
+                    this.onlineBtn.classList.add('is-disconnected');
+                    const text = this.container.querySelector('#chat-online-text');
+                    if (text) text.textContent = 'Menghubungkan...';
+                }
             });
         }
     }
@@ -184,6 +198,9 @@ class JamriChat {
 
     setOnlineUsers(users) {
         this.onlineUsers = Array.isArray(users) ? users : [];
+        if (this.onlineBtn) {
+            this.onlineBtn.classList.remove('is-disconnected');
+        }
         this.updateOnlineCount(this.onlineUsers.length);
 
         // If modal is currently open, refresh list
