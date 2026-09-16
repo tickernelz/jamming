@@ -442,13 +442,6 @@ class WebSocketHandler implements MessageComponentInterface
                 $audioData = (string)($data['audio'] ?? ''); // client-side streamed audio
                 $fileUrl = (string)($data['file_url'] ?? '');
 
-                // Record activity in chat with repeat counter
-                $this->recordActivity($roomId, 'soundboard_play', [
-                    'sound_title' => $title,
-                    'sound_emoji' => $emoji,
-                    'user' => $meta['nickname'],
-                ]);
-
                 $this->broadcastToRoom($roomId, [
                     'type' => 'soundboard_play',
                     'sound_id' => $soundId,
