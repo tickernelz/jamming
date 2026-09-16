@@ -167,13 +167,13 @@ class JamriWebSocket {
         this.send('soundboard_delete', { soundboard_id: soundboardId });
     }
 
-    // Push to Talk (Voice)
-    sendVoiceChunk(audioBase64, mime = 'audio/webm') {
-        this.send('voice_chunk', { audio: audioBase64, mime });
+    // Push to Talk (Voice: General vs Karaoke)
+    sendVoiceChunk(audioBase64, mime = 'pcm16', sampleRate = 16000, seq = 0, channel = 'general') {
+        this.send('voice_chunk', { audio: audioBase64, mime, sample_rate: sampleRate, seq, channel });
     }
 
-    sendVoiceState(isSpeaking) {
-        this.send('voice_state', { speaking: !!isSpeaking });
+    sendVoiceState(isSpeaking, channel = 'general') {
+        this.send('voice_state', { speaking: !!isSpeaking, channel });
     }
 
     sendGameStart(gameType, penaltyMinutes = 2, options = {}) {

@@ -244,7 +244,7 @@ class JamriSearch {
                 const isCurrentlyJamming = this.player.mode === 'jamming' || !!(window.JAMRI_APP && window.JAMRI_APP.activeRoomId);
 
                 if (isCurrentlyJamming && window.JAMRI_APP && window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
-                    alert('🚫 Anda sedang dihukum kalah game! Tidak bisa memutar lagu.');
+                    window.JAMRI_APP.games.notifyPunishedAction('memutar lagu');
                     return;
                 }
 
@@ -263,7 +263,7 @@ class JamriSearch {
                 const isCurrentlyJamming = this.player.mode === 'jamming' || !!(window.JAMRI_APP && window.JAMRI_APP.activeRoomId);
 
                 if (isCurrentlyJamming && window.JAMRI_APP && window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
-                    alert('🚫 Anda sedang dihukum kalah game! Tidak bisa menambah antrean.');
+                    window.JAMRI_APP.games.notifyPunishedAction('menambah antrean');
                     return;
                 }
 
@@ -298,7 +298,7 @@ class JamriSearch {
                 const isCurrentlyJamming = this.player.mode === 'jamming' || !!(window.JAMRI_APP && window.JAMRI_APP.activeRoomId);
 
                 if (isCurrentlyJamming && window.JAMRI_APP && window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
-                    alert('🚫 Anda sedang dihukum kalah game! Tidak bisa menambah lagu ke Bank Musik.');
+                    window.JAMRI_APP.games.notifyPunishedAction('menambah lagu ke Bank Musik');
                     return;
                 }
 

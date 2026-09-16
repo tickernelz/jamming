@@ -205,16 +205,23 @@ class JamriChat {
         if (!modal) {
             modal = document.createElement('div');
             modal.id = 'modal-room-online-users';
-            modal.className = 'jamri-modal-backdrop';
+            modal.className = 'modal-backdrop';
+            modal.style.cssText = 'display:none; position:fixed; inset:0; z-index:10000; background:rgba(0,0,0,0.65); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); align-items:center; justify-content:center; padding:16px;';
             modal.innerHTML = `
-                <div class="jamri-modal-box online-users-modal-box">
-                    <div class="jamri-modal-header">
-                        <h3 id="online-users-modal-title">Peserta Online</h3>
-                        <button type="button" class="btn btn-ghost btn-icon btn-sm btn-close-modal">✕</button>
+                <div class="modal-card online-users-modal-box" style="max-width:380px; width:100%; border-radius:var(--radius-lg); background:var(--bg-surface); border:1px solid var(--border-color); box-shadow:var(--shadow-lg); overflow:hidden; color:var(--text-primary);">
+                    <div style="display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid var(--border-subtle); background:var(--bg-surface-elevated);">
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--primary);">
+                                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                                <circle cx="9" cy="7" r="4"></circle>
+                                <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                                <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                            </svg>
+                            <span id="online-users-modal-title" style="font-size:14px; font-weight:700; color:var(--text-primary);">Peserta Room</span>
+                        </div>
+                        <button type="button" class="btn btn-ghost btn-icon btn-sm btn-close-modal" style="width:28px; height:28px; border-radius:6px;" title="Tutup">✕</button>
                     </div>
-                    <div class="jamri-modal-body" style="padding:10px 16px 16px;">
-                        <div id="online-users-list-container" class="online-users-list"></div>
-                    </div>
+                    <div style="padding:12px 14px; max-height:360px; overflow-y:auto;" id="online-users-list-container" class="online-users-list"></div>
                 </div>
             `;
             document.body.appendChild(modal);
@@ -227,19 +234,27 @@ class JamriChat {
             });
         }
 
+        const onEsc = (e) => {
+            if (e.key === 'Escape' && modal) {
+                modal.style.display = 'none';
+                window.removeEventListener('keydown', onEsc);
+            }
+        };
+        window.addEventListener('keydown', onEsc);
+
         this.renderOnlineUsersList(modal);
         modal.style.display = 'flex';
     }
 
     renderOnlineUsersList(modal) {
         const title = modal.querySelector('#online-users-modal-title');
-        if (title) title.textContent = `Peserta Online (${this.onlineUsers.length})`;
+        if (title) title.textContent = `Peserta Room (${this.onlineUsers.length})`;
 
         const container = modal.querySelector('#online-users-list-container');
         if (!container) return;
 
         if (this.onlineUsers.length === 0) {
-            container.innerHTML = '<div style="padding:16px; text-align:center; color:var(--text-muted);">Tidak ada peserta lain.</div>';
+            container.innerHTML = '<div style="padding:20px; text-align:center; color:var(--text-muted); font-size:13px;">Belum ada peserta lain di room ini.</div>';
             return;
         }
 
@@ -251,15 +266,17 @@ class JamriChat {
                 (p.nickname === user.nickname || (user.device_id && p.device_id === user.device_id)) && p.until > now
             );
             return `
-                <div class="online-user-row ${isMe ? 'is-me' : ''}">
-                    <div class="online-user-avatar">${user.emoji || '🎧'}</div>
-                    <div class="online-user-info">
-                        <span class="online-user-name">${this.escape(user.nickname)}</span>
-                        ${isMe ? '<span class="user-role-badge me">Anda</span>' : ''}
-                        ${user.is_host ? '<span class="user-role-badge host">👑 Host</span>' : ''}
-                        ${isPunished ? '<span class="user-role-badge punished">🚫 Dihukum</span>' : ''}
+                <div class="online-user-row ${isMe ? 'is-me' : ''}" style="display:flex; align-items:center; justify-content:space-between; padding:8px 12px; margin-bottom:6px; background:var(--bg-surface-elevated); border:1px solid var(--border-subtle); border-radius:var(--radius-sm);">
+                    <div style="display:flex; align-items:center; gap:10px; min-width:0;">
+                        <div class="online-user-avatar" style="width:32px; height:32px; border-radius:50%; background:var(--bg-surface); border:1px solid var(--border-subtle); display:flex; align-items:center; justify-content:center; font-size:16px; flex-shrink:0;">${user.emoji || '🎧'}</div>
+                        <div style="display:flex; align-items:center; gap:6px; min-width:0;">
+                            <span class="online-user-name" style="font-size:13px; font-weight:600; color:var(--text-primary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${this.escape(user.nickname)}</span>
+                            ${isMe ? '<span class="user-role-badge me" style="font-size:10px; padding:2px 6px; border-radius:4px; background:var(--primary-light); color:var(--primary); font-weight:600;">Anda</span>' : ''}
+                            ${user.is_host ? '<span class="user-role-badge host" style="font-size:10px; padding:2px 6px; border-radius:4px; background:rgba(217, 119, 6, 0.15); color:var(--warning); font-weight:600;">Host</span>' : ''}
+                            ${isPunished ? '<span class="user-role-badge punished" style="font-size:10px; padding:2px 6px; border-radius:4px; background:var(--danger-light); color:var(--danger); font-weight:600;">Muted</span>' : ''}
+                        </div>
                     </div>
-                    <span class="online-indicator-dot" title="Online"></span>
+                    <span style="width:8px; height:8px; border-radius:50%; background:var(--success); box-shadow:0 0 6px rgba(22, 163, 74, 0.4); flex-shrink:0;" title="Online"></span>
                 </div>
             `;
         }).join('');
@@ -273,11 +290,37 @@ class JamriChat {
         }
     }
 
-    appendActivityNotice(actionText, icon = 'ℹ️', triggeredBy = '') {
+    appendActivityNotice(actionText, icon = '', triggeredBy = '') {
+        const lastEl = this.messagesList.lastElementChild;
+        if (lastEl && lastEl.classList.contains('chat-activity-notice')) {
+            const prevUser = lastEl.getAttribute('data-triggered-by');
+            const prevAction = lastEl.getAttribute('data-action-text');
+            if (prevUser === triggeredBy && prevAction === actionText) {
+                let count = parseInt(lastEl.getAttribute('data-repeat-count') || '1', 10) + 1;
+                lastEl.setAttribute('data-repeat-count', count);
+                let badge = lastEl.querySelector('.activity-repeat-badge');
+                if (!badge) {
+                    badge = document.createElement('span');
+                    badge.className = 'activity-repeat-badge';
+                    badge.style.cssText = 'display:inline-block; margin-left:6px; font-size:11px; font-weight:700; background:rgba(99,102,241,0.22); color:var(--accent-primary, #818cf8); border:1px solid rgba(99,102,241,0.3); padding:1px 6px; border-radius:10px; vertical-align:middle; transition:transform 0.15s ease;';
+                    const actTextSpan = lastEl.querySelector('.activity-text');
+                    if (actTextSpan) actTextSpan.appendChild(badge);
+                }
+                badge.textContent = `${count}x`;
+                badge.style.transform = 'scale(1.25)';
+                setTimeout(() => { if (badge) badge.style.transform = 'scale(1)'; }, 150);
+                this.scrollToBottom();
+                return;
+            }
+        }
+
         const el = document.createElement('div');
         el.className = 'chat-activity-notice';
+        el.setAttribute('data-triggered-by', triggeredBy || '');
+        el.setAttribute('data-action-text', actionText || '');
+        el.setAttribute('data-repeat-count', '1');
         el.innerHTML = `
-            <span class="activity-icon">${icon}</span>
+            <span class="activity-bullet" style="display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--accent-primary, #6366f1); margin-right:6px; vertical-align:middle; opacity:0.8;"></span>
             <span class="activity-text">
                 <strong class="activity-user">${this.escape(triggeredBy)}</strong> ${this.escape(actionText)}
             </span>

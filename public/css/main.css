@@ -10,12 +10,15 @@
     --bg-surface: #ffffff;
     --bg-surface-elevated: #f1f5f9;
     --bg-surface-hover: #e2e8f0;
+    --bg-card: #ffffff;
     --border-color: #cbd5e1;
     --border-subtle: #e2e8f0;
 
     --text-primary: #0f172a;
     --text-secondary: #475569;
     --text-muted: #94a3b8;
+    --text-main: #0f172a;
+    --text-sub: #475569;
 
     --primary: #2563eb;
     --primary-hover: #1d4ed8;
@@ -50,12 +53,15 @@
     --bg-surface: #161b22;
     --bg-surface-elevated: #21262d;
     --bg-surface-hover: #30363d;
+    --bg-card: #161b22;
     --border-color: #30363d;
     --border-subtle: #21262d;
 
     --text-primary: #e6edf3;
     --text-secondary: #8b949e;
     --text-muted: #6e7681;
+    --text-main: #e6edf3;
+    --text-sub: #8b949e;
 
     --primary: #2f81f7;
     --primary-hover: #388bfd;

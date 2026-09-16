@@ -12,11 +12,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     const player = new JamriPlayer();
     const wsClient = new JamriWebSocket();
     const searchModule = new JamriSearch(player, null);
+    const lyricsManager = new JamriLyricsManager();
+    lyricsManager.attach(player, wsClient);
 
     window.JAMRI_APP = {
         player,
         wsClient,
         searchModule,
+        lyrics: lyricsManager,
         currentView: 'lobby',
         activeRoomId: null,
     };
@@ -560,8 +563,21 @@ function renderRoomShell(roomDetail) {
             </div>
             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
                 <div id="room-ptt-slot"></div>
-                <button type="button" id="btn-room-minigames" class="btn btn-outline btn-sm" title="Mainkan Mini Games Realtime">
-                    <span>Mini Games 🎲</span>
+                <button type="button" id="btn-room-header-lyrics" class="btn btn-outline btn-sm" title="Tampilkan Lirik Karaoke di Layar Depan">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M9 18V5l12-2v13"></path>
+                        <circle cx="6" cy="18" r="3"></circle>
+                        <circle cx="18" cy="16" r="3"></circle>
+                    </svg>
+                    <span>Lirik Karaoke</span>
+                </button>
+                <button type="button" id="btn-room-minigames" class="btn btn-outline btn-sm" title="Mainkan Mini Game Realtime">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect>
+                        <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"></circle>
+                        <circle cx="15.5" cy="15.5" r="1.5" fill="currentColor"></circle>
+                    </svg>
+                    <span>Mini Game</span>
                 </button>
                 <button type="button" id="btn-room-search" class="btn btn-primary btn-sm">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -577,7 +593,7 @@ function renderRoomShell(roomDetail) {
         <div id="room-active-speakers-bar" class="active-speakers-bar" style="display:none;"></div>
 
         <div class="room-main-layout">
-            <!-- Kolom Kiri: Queue, Playlist & Soundboard Tabs -->
+            <!-- Kolom Kiri: Queue, Lyrics, Playlist & Soundboard Tabs -->
             <div class="room-left-col">
                 <div class="tabs-nav-bar">
                     <button type="button" class="tab-nav-item active" data-tab="room-queue">
@@ -591,6 +607,14 @@ function renderRoomShell(roomDetail) {
                         </svg>
                         <span>Antrean (<span id="room-queue-count">0</span>)</span>
                     </button>
+                    <button type="button" class="tab-nav-item" data-tab="room-lyrics">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M9 18V5l12-2v13"></path>
+                            <circle cx="6" cy="18" r="3"></circle>
+                            <circle cx="18" cy="16" r="3"></circle>
+                        </svg>
+                        <span>Lirik Karaoke</span>
+                    </button>
                     <button type="button" class="tab-nav-item" data-tab="room-playlist">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path>
@@ -602,7 +626,7 @@ function renderRoomShell(roomDetail) {
                             <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
                             <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
                         </svg>
-                        <span>Soundboard 🔊</span>
+                        <span>Soundboard</span>
                     </button>
                     <button type="button" class="tab-nav-item" data-tab="room-games">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -610,7 +634,7 @@ function renderRoomShell(roomDetail) {
                             <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"></circle>
                             <circle cx="15.5" cy="15.5" r="1.5" fill="currentColor"></circle>
                         </svg>
-                        <span>Games 🎲</span>
+                        <span>Mini Game</span>
                     </button>
                     <button type="button" id="btn-shuffle-room-queue" class="btn btn-ghost btn-sm" style="margin-left:auto;" title="Acak Antrean">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -627,6 +651,9 @@ function renderRoomShell(roomDetail) {
                 <div id="room-queue-tab-panel" class="tab-panel">
                     <div class="track-list-box" id="room-queue-list"></div>
                 </div>
+                <div id="room-lyrics-tab-panel" class="tab-panel" style="display:none; height:100%;">
+                    <div id="room-embedded-lyrics-container" style="height:100%;"></div>
+                </div>
                 <div id="room-playlist-tab-panel" class="tab-panel" style="display:none;">
                     <div class="track-list-box" id="room-playlist-list"></div>
                 </div>
@@ -642,7 +669,10 @@ function renderRoomShell(roomDetail) {
                                 <input type="range" id="soundboard-volume-slider" min="0" max="1" step="0.05" value="0.9" style="width:70px;" />
                             </div>
                             <button type="button" id="btn-soundboard-stop" class="btn btn-ghost btn-xs" title="Hentikan semua suara soundboard yang sedang berputar di perangkat Anda">
-                                ⏹️ Hentikan Suara
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:middle; margin-right:4px;">
+                                    <rect x="4" y="4" width="16" height="16" rx="2"></rect>
+                                </svg>
+                                <span>Hentikan Suara</span>
                             </button>
                         </div>
                         <div id="soundboard-grid" class="soundboard-grid-wrapper"></div>
@@ -674,7 +704,7 @@ function renderRoomShell(roomDetail) {
     if (btnShuffleRoom) {
         btnShuffleRoom.addEventListener('click', () => {
             if (window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
-                alert('🚫 Anda sedang dihukum kalah game! Tidak bisa mengacak antrean.');
+                window.JAMRI_APP.games.notifyPunishedAction('mengacak antrean');
                 return;
             }
             window.JAMRI_APP.wsClient.sendQueueShuffle();
@@ -687,7 +717,15 @@ function renderRoomShell(roomDetail) {
         });
     }
 
-    // Quick Mini Games button in header
+    // Quick Header buttons
+    const btnHeaderLyrics = container.querySelector('#btn-room-header-lyrics');
+    if (btnHeaderLyrics) {
+        btnHeaderLyrics.addEventListener('click', () => {
+            const lyricsTabBtn = container.querySelector('[data-tab="room-lyrics"]');
+            if (lyricsTabBtn) lyricsTabBtn.click();
+        });
+    }
+
     const btnMiniGames = container.querySelector('#btn-room-minigames');
     if (btnMiniGames) {
         btnMiniGames.addEventListener('click', () => {
@@ -704,12 +742,27 @@ function renderRoomShell(roomDetail) {
             btn.classList.add('active');
             const target = btn.dataset.tab;
             container.querySelector('#room-queue-tab-panel').style.display = target === 'room-queue' ? 'block' : 'none';
+            container.querySelector('#room-lyrics-tab-panel').style.display = target === 'room-lyrics' ? 'block' : 'none';
             container.querySelector('#room-playlist-tab-panel').style.display = target === 'room-playlist' ? 'block' : 'none';
             container.querySelector('#room-soundboard-tab-panel').style.display = target === 'room-soundboard' ? 'block' : 'none';
             container.querySelector('#room-games-tab-panel').style.display = target === 'room-games' ? 'block' : 'none';
 
+            if (target === 'room-lyrics' && window.JAMRI_APP.lyrics) {
+                window.JAMRI_APP.lyrics.registerEmbeddedContainer('room-embedded-lyrics-container');
+            }
             if (target === 'room-games' && window.JAMRI_APP.games) {
                 window.JAMRI_APP.games.renderPanel(container.querySelector('#room-games-tab-panel'));
+            }
+
+            if (window.JAMRI_APP.voicePTT) {
+                if (window.JAMRI_APP.voicePTT.isSpeaking && window.JAMRI_APP.voicePTT.currentChannel === 'karaoke' && target !== 'room-lyrics') {
+                    window.JAMRI_APP.voicePTT.stopSpeaking();
+                }
+                if (target === 'room-lyrics') {
+                    window.JAMRI_APP.voicePTT.updateKaraokeSpeakerIndicator();
+                } else {
+                    window.JAMRI_APP.voicePTT.updateSpeakerIndicator();
+                }
             }
         });
     });
@@ -802,8 +855,8 @@ function bindRoomWebSocketEvents(ws, player, roomDetail) {
         if (data.loop_mode) {
             player.setLoopMode(data.loop_mode);
             if (data.triggered_by && window.JAMRI_APP.currentChat) {
-                const modeLabel = data.loop_mode === 'one' ? 'Ulangi 1 Lagu 🔂' : (data.loop_mode === 'all' ? 'Ulangi Semua 🔁' : 'Matikan Ulangi ➡️');
-                window.JAMRI_APP.currentChat.appendActivityNotice(`mengubah mode putar menjadi ${modeLabel}`, '🔁', data.triggered_by);
+                const modeLabel = data.loop_mode === 'one' ? 'Ulangi 1 Lagu' : (data.loop_mode === 'all' ? 'Ulangi Semua' : 'Nonaktifkan Pengulangan');
+                window.JAMRI_APP.currentChat.appendActivityNotice(`mengubah mode putar menjadi ${modeLabel}`, '', data.triggered_by);
             }
         }
     });
@@ -816,7 +869,7 @@ function bindRoomWebSocketEvents(ws, player, roomDetail) {
             window.JAMRI_APP.games.setPunishments(data.punishments);
         }
         if (data.user && window.JAMRI_APP.currentChat) {
-            window.JAMRI_APP.currentChat.appendActivityNotice('bergabung ke room 👋', '👋', data.user.nickname);
+            window.JAMRI_APP.currentChat.appendActivityNotice('bergabung ke room', '', data.user.nickname);
         }
     });
 
@@ -825,7 +878,7 @@ function bindRoomWebSocketEvents(ws, player, roomDetail) {
             window.JAMRI_APP.games.openGameArena(data);
         }
         if (data.started_by && window.JAMRI_APP.currentChat) {
-            window.JAMRI_APP.currentChat.appendActivityNotice(`memulai permainan ${data.game_name} 🎮`, '🎮', data.started_by);
+            window.JAMRI_APP.currentChat.appendActivityNotice(`memulai permainan ${data.game_name}`, '', data.started_by);
         }
     });
 
@@ -834,7 +887,7 @@ function bindRoomWebSocketEvents(ws, player, roomDetail) {
             window.JAMRI_APP.games.setPunishments(data.punishments || []);
         }
         if (data.cleared_user && window.JAMRI_APP.currentChat) {
-            window.JAMRI_APP.currentChat.appendActivityNotice(`hukuman untuk ${data.cleared_user} telah diampuni oleh ${data.triggered_by || 'Host'} 🕊️`, '🕊️', 'Sistem');
+            window.JAMRI_APP.currentChat.appendActivityNotice(`sanksi untuk ${data.cleared_user} telah diampuni oleh ${data.triggered_by || 'Host'}`, '', 'Sistem');
         }
     });
 
@@ -843,7 +896,7 @@ function bindRoomWebSocketEvents(ws, player, roomDetail) {
             window.JAMRI_APP.currentChat.setOnlineUsers(data.online_users);
         }
         if (data.user && window.JAMRI_APP.currentChat) {
-            window.JAMRI_APP.currentChat.appendActivityNotice('keluar dari room 🚪', '🚪', data.user.nickname);
+            window.JAMRI_APP.currentChat.appendActivityNotice('keluar dari room', '', data.user.nickname);
         }
     });
 
@@ -857,7 +910,7 @@ function bindRoomWebSocketEvents(ws, player, roomDetail) {
         if (player.isPreviewing) return;
         player.syncJammingState(data.track || null, 'playing', data.position, data.server_time);
         if (data.triggered_by && window.JAMRI_APP.currentChat) {
-            window.JAMRI_APP.currentChat.appendActivityNotice('memutar musik ▶️', '▶️', data.triggered_by);
+            window.JAMRI_APP.currentChat.appendActivityNotice('memutar musik', '', data.triggered_by);
         }
     });
 
@@ -865,7 +918,7 @@ function bindRoomWebSocketEvents(ws, player, roomDetail) {
         if (player.isPreviewing) return;
         player.syncJammingState(data.track || null, 'paused', data.position, data.server_time);
         if (data.triggered_by && window.JAMRI_APP.currentChat) {
-            window.JAMRI_APP.currentChat.appendActivityNotice('menjeda musik ⏸️', '⏸️', data.triggered_by);
+            window.JAMRI_APP.currentChat.appendActivityNotice('menjeda musik', '', data.triggered_by);
         }
     });
 
@@ -873,7 +926,7 @@ function bindRoomWebSocketEvents(ws, player, roomDetail) {
         if (player.isPreviewing) return;
         player.syncJammingState(data.track || null, data.state, data.position, data.server_time);
         if (data.triggered_by && window.JAMRI_APP.currentChat) {
-            window.JAMRI_APP.currentChat.appendActivityNotice('menggeser timeline musik ⏩', '⏩', data.triggered_by);
+            window.JAMRI_APP.currentChat.appendActivityNotice('menggeser linimasa musik', '', data.triggered_by);
         }
     });
 
@@ -889,7 +942,7 @@ function bindRoomWebSocketEvents(ws, player, roomDetail) {
             player.playTrack(data.track, data.position || 0);
 
             if (data.triggered_by && window.JAMRI_APP.currentChat) {
-                window.JAMRI_APP.currentChat.appendActivityNotice(`memutar "${data.track.title}" 🎵`, '🎵', data.triggered_by);
+                window.JAMRI_APP.currentChat.appendActivityNotice(`memutar "${data.track.title}"`, '', data.triggered_by);
             }
         }
     });
@@ -906,14 +959,14 @@ function bindRoomWebSocketEvents(ws, player, roomDetail) {
         }
         if (data.triggered_by && window.JAMRI_APP.currentChat) {
             if (data.action === 'reorder') {
-                window.JAMRI_APP.currentChat.appendActivityNotice('mengubah urutan antrean lagu 🔀', '🔀', data.triggered_by);
+                window.JAMRI_APP.currentChat.appendActivityNotice('mengubah urutan antrean lagu', '', data.triggered_by);
             } else if (data.action === 'shuffle') {
-                window.JAMRI_APP.currentChat.appendActivityNotice('mengacak antrean lagu 🎲', '🎲', data.triggered_by);
+                window.JAMRI_APP.currentChat.appendActivityNotice('mengacak antrean lagu', '', data.triggered_by);
             } else if (data.action === 'remove') {
                 const title = data.removed_track_title ? `"${data.removed_track_title}"` : 'sebuah lagu';
-                window.JAMRI_APP.currentChat.appendActivityNotice(`menghapus ${title} dari antrean 🗑️`, '🗑️', data.triggered_by);
+                window.JAMRI_APP.currentChat.appendActivityNotice(`menghapus ${title} dari antrean`, '', data.triggered_by);
             } else if (data.added_track) {
-                window.JAMRI_APP.currentChat.appendActivityNotice(`menambahkan "${data.added_track.title}" ke antrean ➕`, '➕', data.triggered_by);
+                window.JAMRI_APP.currentChat.appendActivityNotice(`menambahkan "${data.added_track.title}" ke antrean`, '', data.triggered_by);
             }
         }
     });
@@ -925,16 +978,16 @@ function bindRoomWebSocketEvents(ws, player, roomDetail) {
         if (data.triggered_by && window.JAMRI_APP.currentChat) {
             if (data.action === 'remove') {
                 const title = data.removed_track_title ? `"${data.removed_track_title}"` : 'sebuah lagu';
-                window.JAMRI_APP.currentChat.appendActivityNotice(`menghapus ${title} dari Bank Musik 🗑️`, '🗑️', data.triggered_by);
+                window.JAMRI_APP.currentChat.appendActivityNotice(`menghapus ${title} dari Bank Musik`, '', data.triggered_by);
             } else if (data.added_track) {
-                window.JAMRI_APP.currentChat.appendActivityNotice(`menambahkan "${data.added_track.title}" ke Bank Musik 💾`, '💾', data.triggered_by);
+                window.JAMRI_APP.currentChat.appendActivityNotice(`menambahkan "${data.added_track.title}" ke Bank Musik`, '', data.triggered_by);
             }
         }
     });
 
     ws.on('soundboard_play', (data) => {
         if (data.triggered_by && window.JAMRI_APP.currentChat) {
-            window.JAMRI_APP.currentChat.appendActivityNotice(`membunyikan soundboard ${data.title} ${data.emoji || ''}`, data.emoji || '🔊', data.triggered_by);
+            window.JAMRI_APP.currentChat.appendActivityNotice(`membunyikan soundboard: ${data.title}`, '', data.triggered_by);
         }
     });
 
@@ -1025,7 +1078,7 @@ function renderRoomQueue(queue) {
             e.preventDefault();
             item.classList.remove('drag-over');
             if (window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
-                alert('🚫 Anda sedang dihukum kalah game! Tidak bisa mengubah urutan antrean.');
+                window.JAMRI_APP.games.notifyPunishedAction('mengubah urutan antrean');
                 list._draggedIdx = null;
                 return;
             }
@@ -1069,7 +1122,7 @@ function renderRoomQueue(queue) {
                     const fromIdx = list._touchFromIdx;
                     if (!isNaN(toIdx) && fromIdx !== undefined && fromIdx !== toIdx) {
                         if (window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
-                            alert('🚫 Anda sedang dihukum kalah game! Tidak bisa mengubah urutan antrean.');
+                            window.JAMRI_APP.games.notifyPunishedAction('mengubah urutan antrean');
                             list._touchTargetCard = null;
                             list._touchFromIdx = null;
                             return;
@@ -1088,7 +1141,7 @@ function renderRoomQueue(queue) {
 
         const playTrackFn = () => {
             if (window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
-                alert('🚫 Anda sedang dihukum kalah game! Tidak bisa memutar lagu.');
+                window.JAMRI_APP.games.notifyPunishedAction('memutar lagu');
                 return;
             }
             window.JAMRI_APP.wsClient.sendSetTrack(track);
@@ -1110,7 +1163,7 @@ function renderRoomQueue(queue) {
         item.querySelector('.btn-remove-q').addEventListener('click', (e) => {
             e.stopPropagation();
             if (window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
-                alert('🚫 Anda sedang dihukum kalah game! Tidak bisa menghapus lagu dari antrean.');
+                window.JAMRI_APP.games.notifyPunishedAction('menghapus lagu dari antrean');
                 return;
             }
             window.JAMRI_APP.wsClient.sendQueueRemove(track.id);
@@ -1125,12 +1178,13 @@ function renderRoomPlaylist(playlist) {
     const list = document.getElementById('room-playlist-list');
     if (!list) return;
 
+    list.innerHTML = '';
+
     if (!playlist || playlist.length === 0) {
         list.innerHTML = '<div class="empty-state"><p>Bank musik room masih kosong. Cari lagu dan klik tombol bookmark untuk menyimpan ke sini.</p></div>';
         return;
     }
 
-    list.innerHTML = '';
     playlist.forEach((track) => {
         const item = document.createElement('div');
         item.className = 'track-item-card';
@@ -1162,7 +1216,7 @@ function renderRoomPlaylist(playlist) {
 
         item.querySelector('.btn-enqueue-p').addEventListener('click', () => {
             if (window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
-                alert('🚫 Anda sedang dihukum kalah game! Tidak bisa menambah lagu ke antrean.');
+                window.JAMRI_APP.games.notifyPunishedAction('menambah lagu ke antrean');
                 return;
             }
             if (window.JAMRI_APP.roomQueue && window.JAMRI_APP.roomQueue.some(t => t.youtube_id === track.youtube_id)) {
@@ -1177,7 +1231,7 @@ function renderRoomPlaylist(playlist) {
         if (btnRemove) {
             btnRemove.addEventListener('click', () => {
                 if (window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
-                    alert('🚫 Anda sedang dihukum kalah game! Tidak bisa menghapus lagu dari Bank Musik.');
+                    window.JAMRI_APP.games.notifyPunishedAction('menghapus lagu dari Bank Musik');
                     return;
                 }
                 window.JAMRI_APP.wsClient.sendPlaylistRemove(track.id);
@@ -1227,6 +1281,14 @@ function renderSoloView() {
                     <button type="button" class="tab-nav-item active" data-tab="solo-queue">
                         <span>Antrean Putar</span>
                     </button>
+                    <button type="button" class="tab-nav-item" data-tab="solo-lyrics">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M9 18V5l12-2v13"></path>
+                            <circle cx="6" cy="18" r="3"></circle>
+                            <circle cx="18" cy="16" r="3"></circle>
+                        </svg>
+                        <span>Lirik Karaoke</span>
+                    </button>
                     <button type="button" class="tab-nav-item" data-tab="solo-playlist">
                         <span>Bank Musik Saya</span>
                     </button>
@@ -1252,6 +1314,9 @@ function renderSoloView() {
 
                 <div id="solo-queue-panel" class="tab-panel">
                     <div class="track-list-box" id="solo-queue-list"></div>
+                </div>
+                <div id="solo-lyrics-panel" class="tab-panel" style="display:none; height:100%;">
+                    <div id="solo-embedded-lyrics-container" style="height:100%;"></div>
                 </div>
                 <div id="solo-playlist-panel" class="tab-panel" style="display:none;">
                     <div class="track-list-box" id="solo-playlist-list"></div>
@@ -1334,9 +1399,13 @@ function renderSoloView() {
             btn.classList.add('active');
             const t = btn.dataset.tab;
             container.querySelector('#solo-queue-panel').style.display = t === 'solo-queue' ? 'block' : 'none';
+            container.querySelector('#solo-lyrics-panel').style.display = t === 'solo-lyrics' ? 'block' : 'none';
             container.querySelector('#solo-playlist-panel').style.display = t === 'solo-playlist' ? 'block' : 'none';
             container.querySelector('#solo-offline-panel').style.display = t === 'solo-offline' ? 'block' : 'none';
 
+            if (t === 'solo-lyrics' && window.JAMRI_APP.lyrics) {
+                window.JAMRI_APP.lyrics.registerEmbeddedContainer('solo-embedded-lyrics-container');
+            }
             if (t === 'solo-offline') {
                 renderSoloOfflineList();
             }
@@ -1723,11 +1792,7 @@ function bindPlayerDock(player) {
 
     function checkControlPermitted() {
         if (window.JAMRI_APP && window.JAMRI_APP.currentView === 'room' && window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
-            const sec = window.JAMRI_APP.games.getPunishmentRemainingSeconds();
-            const m = Math.floor(sec / 60);
-            const s = sec % 60;
-            const timeStr = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-            alert(`🚫 Anda sedang dihukum kalah game! Kontrol musik terkunci (sisa ${timeStr}).`);
+            window.JAMRI_APP.games.notifyPunishedAction('mengontrol pemutaran musik');
             return false;
         }
         return true;
@@ -1852,6 +1917,16 @@ function bindPlayerDock(player) {
             btnDownloadJamri.innerHTML = originalText;
         }
     });
+
+    // Synchronized Lyrics Click
+    const btnDockLyrics = document.getElementById('btn-dock-lyrics');
+    if (btnDockLyrics) {
+        btnDockLyrics.addEventListener('click', () => {
+            if (window.JAMRI_APP && window.JAMRI_APP.lyrics) {
+                window.JAMRI_APP.lyrics.toggleModal();
+            }
+        });
+    }
 
     // Player Events
     player.on('state_change', ({ isPlaying }) => {

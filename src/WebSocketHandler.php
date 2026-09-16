@@ -475,7 +475,10 @@ class WebSocketHandler implements MessageComponentInterface
                     $this->broadcastToRoom($roomId, [
                         'type' => 'voice_chunk',
                         'audio' => $audio,
-                        'mime' => $data['mime'] ?? 'audio/webm',
+                        'mime' => $data['mime'] ?? 'pcm16',
+                        'sample_rate' => (int)($data['sample_rate'] ?? 16000),
+                        'seq' => (int)($data['seq'] ?? 0),
+                        'channel' => $data['channel'] ?? 'general',
                         'sender_nickname' => $meta['nickname'],
                         'sender_emoji' => $meta['emoji'],
                     ], $from);
@@ -486,6 +489,7 @@ class WebSocketHandler implements MessageComponentInterface
                 $this->broadcastToRoom($roomId, [
                     'type' => 'voice_state',
                     'speaking' => !empty($data['speaking']),
+                    'channel' => $data['channel'] ?? 'general',
                     'sender_nickname' => $meta['nickname'],
                     'sender_emoji' => $meta['emoji'],
                 ]);
@@ -775,6 +779,23 @@ class WebSocketHandler implements MessageComponentInterface
         $gameType = in_array($data['game_type'] ?? '', ['dice', 'number', 'wheel'], true) ? $data['game_type'] : 'dice';
         $penaltyMinutes = max(1, min(15, (int)($data['penalty_minutes'] ?? 2)));
 
+        $now = time();
+        $cooldownUntil = (int)($this->rooms[$roomId]['game_cooldown_until'] ?? 0);
+        if ($now < $cooldownUntil) {
+            $remaining = $cooldownUntil - $now;
+            $this->broadcastToRoom($roomId, [
+                'type' => 'game_cooldown_active',
+                'remaining' => $remaining,
+                'cooldown_until' => $cooldownUntil,
+                'message' => "Tunggu {$remaining} detik sebelum memulai game berikutnya.",
+            ]);
+            return;
+        }
+
+        // Cooldown: penaltyMinutes - 1 minute (minimal 30 detik) agar tidak bisa spam game
+        $cooldownDuration = max(30, ($penaltyMinutes - 1) * 60);
+        $this->rooms[$roomId]['game_cooldown_until'] = $now + $cooldownDuration;
+
         $onlineUsers = $this->getOnlineUsers($roomId);
         if (empty($onlineUsers)) {
             // Fallback to sender if room online list had a timing gap
@@ -787,9 +808,9 @@ class WebSocketHandler implements MessageComponentInterface
         }
 
         $gameTitles = [
-            'dice' => 'Adu Dadu 🎲',
-            'number' => 'Adu Angka 🎯',
-            'wheel' => 'Roulette Spin Wheel 🎡',
+            'dice' => 'Adu Dadu',
+            'number' => 'Adu Angka',
+            'wheel' => 'Roulette Spin',
         ];
         $gameName = $gameTitles[$gameType] ?? 'Mini Game';
 
@@ -883,9 +904,11 @@ class WebSocketHandler implements MessageComponentInterface
             $animationMs = 6500;
         }
 
-        // Apply penalty to the loser
-        $now = time();
-        $until = $now + ($penaltyMinutes * 60);
+        // Apply penalty to the loser (akumulasi jika kalah berkali-kali)
+        $existingUntil = (int)($this->rooms[$roomId]['punishments'][$loser['device_id']]['until'] ?? 0);
+        $baseTime = max($now, $existingUntil);
+        $until = $baseTime + ($penaltyMinutes * 60);
+
         $punishment = [
             'id' => uniqid('punish_'),
             'nickname' => $loser['nickname'],
@@ -909,6 +932,7 @@ class WebSocketHandler implements MessageComponentInterface
             'game_type' => $gameType,
             'game_name' => $gameName,
             'penalty_minutes' => $penaltyMinutes,
+            'cooldown_until' => $this->rooms[$roomId]['game_cooldown_until'],
             'started_by' => $meta['nickname'],
             'started_by_emoji' => $meta['emoji'],
             'participants' => $participants,
@@ -925,6 +949,7 @@ class WebSocketHandler implements MessageComponentInterface
         $this->broadcastToRoom($roomId, [
             'type' => 'punishments_updated',
             'punishments' => array_values($this->rooms[$roomId]['punishments']),
+            'cooldown_until' => $this->rooms[$roomId]['game_cooldown_until'],
         ]);
     }
 

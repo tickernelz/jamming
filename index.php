@@ -187,6 +187,7 @@
         <!-- Right: Actions & Volume -->
         <div class="dock-right-controls">
             <!-- Download / Cache .jamri button -->
+            <!-- Download / Cache .jamri button -->
             <button type="button" id="btn-dock-download-jamri" class="btn btn-outline btn-sm" title="Simpan sebagai file kompresi .jamri untuk diputar offline">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -194,6 +195,16 @@
                     <line x1="12" y1="15" x2="12" y2="3"></line>
                 </svg>
                 <span>Unduh .jamri</span>
+            </button>
+
+            <!-- Synchronized Lyrics button in dock -->
+            <button type="button" id="btn-dock-lyrics" class="btn btn-outline btn-sm" title="Tampilkan Lirik Lagu (Tekan 'L' untuk Buka/Tutup)">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M9 18V5l12-2v13"></path>
+                    <circle cx="6" cy="18" r="3"></circle>
+                    <circle cx="18" cy="16" r="3"></circle>
+                </svg>
+                <span>Lirik</span>
             </button>
 
             <!-- Search button in dock -->
@@ -237,6 +248,7 @@
     <script src="public/js/soundboard.js?v=<?= time() ?>"></script>
     <script src="public/js/voice-ptt.js?v=<?= time() ?>"></script>
     <script src="public/js/games.js?v=<?= time() ?>"></script>
+    <script src="public/js/lyrics.js?v=<?= time() ?>"></script>
     <script src="public/js/app.js?v=<?= time() ?>"></script>
 </body>
 </html>

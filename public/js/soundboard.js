@@ -700,17 +700,20 @@ class JamriSoundboard {
         const duration = modal._detectedDuration || 0;
 
         if (!title) {
-            alert('Harap masukkan nama soundboard!');
+            if (window.showToast) window.showToast('Harap masukkan nama soundboard!', 'warning');
+            else alert('Harap masukkan nama soundboard!');
             return;
         }
 
         if (!file) {
-            alert('Harap pilih file audio terlebih dahulu!');
+            if (window.showToast) window.showToast('Harap pilih file audio terlebih dahulu!', 'warning');
+            else alert('Harap pilih file audio terlebih dahulu!');
             return;
         }
 
         if (duration > 15.5) {
-            alert('Durasi file melebihi 15 detik. Pilih audio yang lebih pendek!');
+            if (window.showToast) window.showToast('Durasi file melebihi 15 detik. Pilih audio yang lebih pendek!', 'warning');
+            else alert('Durasi file melebihi 15 detik. Pilih audio yang lebih pendek!');
             return;
         }
 
@@ -748,11 +751,13 @@ class JamriSoundboard {
                     window.showToast('Soundboard berhasil diunggah dan dibagikan ke room!', 'success');
                 }
             } else {
-                alert(data.error || 'Gagal mengunggah file soundboard');
+                if (window.showToast) window.showToast(data.error || 'Gagal mengunggah file soundboard', 'error');
+                else alert(data.error || 'Gagal mengunggah file soundboard');
             }
         } catch (err) {
             console.error('[Soundboard] Upload error:', err);
-            alert('Terjadi kesalahan saat mengunggah file.');
+            if (window.showToast) window.showToast('Terjadi kesalahan saat mengunggah file.', 'error');
+            else alert('Terjadi kesalahan saat mengunggah file.');
         } finally {
             btnSubmit.disabled = false;
             btnSubmit.textContent = 'Unggah ke Room';

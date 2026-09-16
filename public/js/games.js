@@ -1,7 +1,7 @@
 /**
  * games.js
- * Real-time mini games (Adu Dadu, Adu Angka, Roulette Spin Wheel) for Jamri Jamming Rooms
- * Synchronized live across all room members with music control penalty enforcement.
+ * Real-time mini games (Adu Dadu, Adu Angka, Roulette Spin) for Jamri Jamming Rooms
+ * Synchronized live across room members with cooldown enforcement and accumulated penalties.
  */
 
 class JamriGames {
@@ -15,6 +15,8 @@ class JamriGames {
         this.activePunishments = [];
         this.myPunishment = null;
         this.punishmentTimer = null;
+        this.cooldownUntil = 0;
+        this.cooldownTimer = null;
         this.arenaActive = false;
 
         this.initAudioContext();
@@ -38,7 +40,6 @@ class JamriGames {
         }
     }
 
-    // --- Sound Synthesis ---
     playTickSound() {
         if (!this.audioCtx) return;
         try {
@@ -47,7 +48,7 @@ class JamriGames {
             osc.type = 'sine';
             osc.frequency.setValueAtTime(800 + Math.random() * 200, this.audioCtx.currentTime);
             osc.frequency.exponentialRampToValueAtTime(200, this.audioCtx.currentTime + 0.04);
-            gain.gain.setValueAtTime(0.2, this.audioCtx.currentTime);
+            gain.gain.setValueAtTime(0.15, this.audioCtx.currentTime);
             gain.gain.exponentialRampToValueAtTime(0.001, this.audioCtx.currentTime + 0.04);
             osc.connect(gain);
             gain.connect(this.audioCtx.destination);
@@ -59,7 +60,7 @@ class JamriGames {
     playDiceShakeSound() {
         if (!this.audioCtx) return;
         try {
-            const bufferSize = this.audioCtx.sampleRate * 0.15;
+            const bufferSize = this.audioCtx.sampleRate * 0.12;
             const buffer = this.audioCtx.createBuffer(1, bufferSize, this.audioCtx.sampleRate);
             const data = buffer.getChannelData(0);
             for (let i = 0; i < bufferSize; i++) {
@@ -71,7 +72,7 @@ class JamriGames {
             filter.type = 'bandpass';
             filter.frequency.value = 1400;
             const gain = this.audioCtx.createGain();
-            gain.gain.value = 0.25;
+            gain.gain.value = 0.2;
             noise.connect(filter);
             filter.connect(gain);
             gain.connect(this.audioCtx.destination);
@@ -89,7 +90,7 @@ class JamriGames {
             osc.frequency.setValueAtTime(220, now);
             osc.frequency.linearRampToValueAtTime(140, now + 0.35);
             osc.frequency.linearRampToValueAtTime(90, now + 0.7);
-            gain.gain.setValueAtTime(0.25, now);
+            gain.gain.setValueAtTime(0.2, now);
             gain.gain.exponentialRampToValueAtTime(0.001, now + 0.7);
             osc.connect(gain);
             gain.connect(this.audioCtx.destination);
@@ -101,14 +102,14 @@ class JamriGames {
     playFanfare() {
         if (!this.audioCtx) return;
         try {
-            const notes = [523.25, 659.25, 783.99, 1046.50]; // C E G C
+            const notes = [523.25, 659.25, 783.99, 1046.50];
             notes.forEach((freq, i) => {
                 const now = this.audioCtx.currentTime + i * 0.1;
                 const osc = this.audioCtx.createOscillator();
                 const gain = this.audioCtx.createGain();
                 osc.type = 'triangle';
                 osc.frequency.value = freq;
-                gain.gain.setValueAtTime(0.2, now);
+                gain.gain.setValueAtTime(0.15, now);
                 gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
                 osc.connect(gain);
                 gain.connect(this.audioCtx.destination);
@@ -130,17 +131,25 @@ class JamriGames {
         if (!this.ws) return;
 
         this.ws.on('game_started', (data) => {
+            if (data.cooldown_until) {
+                this.setCooldown(data.cooldown_until);
+            }
             this.openGameArena(data);
         });
 
         this.ws.on('punishments_updated', (data) => {
+            if (data.cooldown_until) {
+                this.setCooldown(data.cooldown_until);
+            }
             this.setPunishments(data.punishments || []);
         });
 
-        this.ws.on('punishment_status', (data) => {
-            if (data.punished && data.punishment) {
-                this.myPunishment = data.punishment;
-                this.updatePunishmentBanner();
+        this.ws.on('game_cooldown_active', (data) => {
+            if (data.cooldown_until) {
+                this.setCooldown(data.cooldown_until);
+            }
+            if (window.showToast) {
+                window.showToast(data.message || 'Game sedang dalam masa jeda (cooldown).', 'warning');
             }
         });
     }
@@ -151,9 +160,18 @@ class JamriGames {
         const myNick = this.user ? this.user.nickname : '';
         
         const now = Math.floor(Date.now() / 1000);
-        this.myPunishment = this.activePunishments.find(p => 
+        // Sort matching active punishments descending by until timestamp to pick maximum expiry
+        const matching = this.activePunishments.filter(p => 
             (p.device_id === myDevId || p.nickname === myNick) && p.until > now
-        ) || null;
+        );
+        matching.sort((a, b) => b.until - a.until);
+        this.myPunishment = matching[0] || null;
+
+        // Reset timer interval cleanly to avoid freezing or sticking
+        if (this.punishmentTimer) {
+            clearInterval(this.punishmentTimer);
+            this.punishmentTimer = null;
+        }
 
         this.updatePunishmentBanner();
         this.renderActivePunishmentsWidget();
@@ -173,6 +191,63 @@ class JamriGames {
         if (!this.myPunishment) return 0;
         const now = Math.floor(Date.now() / 1000);
         return Math.max(0, this.myPunishment.until - now);
+    }
+
+    notifyPunishedAction(actionName = 'mengubah musik') {
+        const sec = this.getPunishmentRemainingSeconds();
+        const m = Math.floor(sec / 60);
+        const s = sec % 60;
+        const timeStr = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+        const message = `Kontrol dinonaktifkan: Anda sedang dalam masa sanksi game (sisa ${timeStr}).`;
+        if (window.showToast) {
+            window.showToast(message, 'warning');
+        }
+    }
+
+    setCooldown(untilTimestamp) {
+        this.cooldownUntil = untilTimestamp || 0;
+        this.updateCooldownState();
+    }
+
+    updateCooldownState() {
+        const btnStart = document.getElementById('btn-start-mini-game');
+        if (!btnStart) return;
+
+        const now = Math.floor(Date.now() / 1000);
+        const remaining = Math.max(0, this.cooldownUntil - now);
+
+        if (remaining > 0) {
+            btnStart.disabled = true;
+            btnStart.style.opacity = '0.6';
+            btnStart.style.cursor = 'not-allowed';
+            btnStart.innerHTML = `
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <polyline points="12 6 12 12 16 14"></polyline>
+                </svg>
+                <span>Jeda Game (${remaining}s)</span>
+            `;
+
+            if (!this.cooldownTimer) {
+                this.cooldownTimer = setInterval(() => {
+                    this.updateCooldownState();
+                }, 1000);
+            }
+        } else {
+            if (this.cooldownTimer) {
+                clearInterval(this.cooldownTimer);
+                this.cooldownTimer = null;
+            }
+            btnStart.disabled = false;
+            btnStart.style.opacity = '1';
+            btnStart.style.cursor = 'pointer';
+            btnStart.innerHTML = `
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                    <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                </svg>
+                <span>Mulai Game</span>
+            `;
+        }
     }
 
     updatePunishmentBanner() {
@@ -208,7 +283,10 @@ class JamriGames {
                     clearInterval(this.punishmentTimer);
                     this.punishmentTimer = null;
                     if (window.JAMRI_APP && window.JAMRI_APP.currentChat) {
-                        window.JAMRI_APP.currentChat.appendActivityNotice('Hukuman Anda telah berakhir! Kontrol musik dipulihkan. 🎉', '🎉', 'Sistem');
+                        window.JAMRI_APP.currentChat.appendActivityNotice('Masa sanksi telah berakhir. Kontrol musik kembali aktif.', '', 'Sistem');
+                    }
+                    if (window.showToast) {
+                        window.showToast('Masa sanksi berakhir. Kontrol musik aktif kembali.', 'success');
                     }
                     return;
                 }
@@ -225,14 +303,21 @@ class JamriGames {
         const gameName = this.myPunishment ? this.myPunishment.game_name : 'Mini Game';
 
         banner.innerHTML = `
-            <div class="penalty-banner-content">
-                <span class="penalty-icon">🚫</span>
-                <div class="penalty-text-group">
-                    <div class="penalty-title">Anda Sedang Dihukum! (Kalah di ${this.escape(gameName)})</div>
-                    <div class="penalty-desc">Kontrol musik (play, pause, next, prev, antrean & playlist) terkunci sementara.</div>
+            <div class="penalty-banner-content" style="display:flex; align-items:center; justify-content:space-between; width:100%; gap:12px;">
+                <div style="display:flex; align-items:center; gap:10px;">
+                    <div style="width:32px; height:32px; border-radius:var(--radius-sm); background:var(--bg-surface); border:1px solid var(--danger); display:flex; align-items:center; justify-content:center; color:var(--danger); flex-shrink:0;">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                        </svg>
+                    </div>
+                    <div>
+                        <div style="font-size:13px; font-weight:700; color:var(--danger);">Kontrol Musik Terkunci (${this.escape(gameName)})</div>
+                        <div style="font-size:12px; color:var(--text-secondary);">Play, pause, skip, dan antrean lagu dinonaktifkan sementara.</div>
+                    </div>
                 </div>
-                <div class="penalty-countdown-badge">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <div class="penalty-countdown-badge" style="display:flex; align-items:center; gap:6px; background:var(--bg-surface); border:1px solid var(--danger); border-radius:var(--radius-full); padding:4px 10px; font-size:12px; font-weight:700; color:var(--danger); flex-shrink:0;">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="12" cy="12" r="10"></circle>
                         <polyline points="12 6 12 12 16 14"></polyline>
                     </svg>
@@ -242,7 +327,6 @@ class JamriGames {
         `;
     }
 
-    // --- Render Panel Launcher (Tab Mini Games) ---
     renderPanel(container) {
         if (!container) return;
 
@@ -250,35 +334,50 @@ class JamriGames {
             <div class="games-panel-wrapper">
                 <div class="games-panel-header">
                     <div class="games-header-info">
-                        <h2 class="games-header-title">Mini Games 1 Ronde 🎮</h2>
-                        <p class="games-header-sub">Tantang semua peserta room! Yang kalah dihukum tidak bisa mengatur musik selama beberapa menit.</p>
+                        <h2 class="games-header-title">Mini Game</h2>
+                        <p class="games-header-sub">Tantang peserta room dalam 1 ronde. Peserta yang kalah dinonaktifkan kontrol musiknya sementara waktu.</p>
                     </div>
                 </div>
 
                 <div class="game-cards-selector">
                     <div class="game-select-card ${this.selectedGame === 'dice' ? 'selected' : ''}" data-game="dice">
-                        <div class="game-card-badge">Paling Populer</div>
-                        <div class="game-card-emoji">🎲</div>
+                        <div class="game-card-icon">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                                <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"></circle>
+                                <circle cx="15.5" cy="15.5" r="1.5" fill="currentColor"></circle>
+                            </svg>
+                        </div>
                         <h3 class="game-card-title">Adu Dadu</h3>
-                        <p class="game-card-desc">Semua peserta mengocok 2 dadu. Siapa dapat skor terkecil, dia yang kena sanksi!</p>
+                        <p class="game-card-desc">Setiap peserta mengocok 2 dadu. Skor terkecil mendapat sanksi kontrol.</p>
                     </div>
                     <div class="game-select-card ${this.selectedGame === 'number' ? 'selected' : ''}" data-game="number">
-                        <div class="game-card-badge">Seru & Cepat</div>
-                        <div class="game-card-emoji">🎯</div>
+                        <div class="game-card-icon">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="4" y1="9" x2="20" y2="9"></line>
+                                <line x1="4" y1="15" x2="20" y2="15"></line>
+                                <line x1="10" y1="3" x2="8" y2="21"></line>
+                                <line x1="16" y1="3" x2="14" y2="21"></line>
+                            </svg>
+                        </div>
                         <h3 class="game-card-title">Adu Angka</h3>
-                        <p class="game-card-desc">Undian angka acak 1–100. Angka terendah otomatis jadi pecundang yang dihukum.</p>
+                        <p class="game-card-desc">Angka acak 1–100 per peserta. Angka terendah terkena sanksi.</p>
                     </div>
                     <div class="game-select-card ${this.selectedGame === 'wheel' ? 'selected' : ''}" data-game="wheel">
-                        <div class="game-card-badge">Penuh Ketegangan</div>
-                        <div class="game-card-emoji">🎡</div>
+                        <div class="game-card-icon">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <polyline points="12 6 12 12 16 14"></polyline>
+                            </svg>
+                        </div>
                         <h3 class="game-card-title">Roulette Spin</h3>
-                        <p class="game-card-desc">Roda keberuntungan berputar live! Jarum menunjuk ke peserta yang paling apes.</p>
+                        <p class="game-card-desc">Roda keberuntungan berputar live ke seluruh peserta room.</p>
                     </div>
                 </div>
 
                 <div class="game-settings-bar">
                     <div class="penalty-setting-group">
-                        <label class="penalty-setting-label">Durasi Hukuman Tidak Bisa Atur Musik:</label>
+                        <label class="penalty-setting-label">Durasi Sanksi Kontrol Musik:</label>
                         <div class="penalty-duration-btns">
                             <button type="button" class="btn-penalty-opt ${this.penaltyMinutes === 1 ? 'active' : ''}" data-min="1">1 Menit</button>
                             <button type="button" class="btn-penalty-opt ${this.penaltyMinutes === 2 ? 'active' : ''}" data-min="2">2 Menit</button>
@@ -289,10 +388,10 @@ class JamriGames {
                     </div>
 
                     <button type="button" id="btn-start-mini-game" class="btn btn-primary btn-start-game-cta">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
                             <polygon points="5 3 19 12 5 21 5 3"></polygon>
                         </svg>
-                        <span>Mulai Game Sekarang (Realtime ke Semua)</span>
+                        <span>Mulai Game</span>
                     </button>
                 </div>
 
@@ -300,7 +399,7 @@ class JamriGames {
             </div>
         `;
 
-        // Card Selection Listeners
+        // Card Selection
         const cards = container.querySelectorAll('.game-select-card');
         cards.forEach(card => {
             card.addEventListener('click', () => {
@@ -310,7 +409,7 @@ class JamriGames {
             });
         });
 
-        // Penalty Duration Listeners
+        // Penalty Duration
         const durBtns = container.querySelectorAll('.btn-penalty-opt');
         durBtns.forEach(btn => {
             btn.addEventListener('click', () => {
@@ -320,7 +419,7 @@ class JamriGames {
             });
         });
 
-        // Start Game Listener
+        // Start Game
         const btnStart = container.querySelector('#btn-start-mini-game');
         if (btnStart) {
             btnStart.addEventListener('click', () => {
@@ -328,34 +427,32 @@ class JamriGames {
                 const ws = this.ws || (window.JAMRI_APP && window.JAMRI_APP.wsClient);
                 if (!ws || !ws.isConnected) {
                     if (window.showToast) {
-                        window.showToast('Koneksi room belum terhubung ke server WebSocket.', 'warning');
-                    } else {
-                        alert('Koneksi room belum terhubung ke server WebSocket.');
+                        window.showToast('Koneksi room belum terhubung.', 'warning');
+                    }
+                    return;
+                }
+
+                const now = Math.floor(Date.now() / 1000);
+                if (this.cooldownUntil > now) {
+                    const rem = this.cooldownUntil - now;
+                    if (window.showToast) {
+                        window.showToast(`Tunggu jeda ${rem} detik sebelum memulai game berikutnya.`, 'warning');
                     }
                     return;
                 }
 
                 btnStart.disabled = true;
-                const oldContent = btnStart.innerHTML;
-                btnStart.innerHTML = `
-                    <svg style="animation:spin 1s linear infinite;" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="12" cy="12" r="10" stroke-opacity="0.25"></circle>
-                        <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"></path>
-                    </svg>
-                    <span>Memulai Permainan...</span>
-                `;
+                btnStart.innerHTML = `<span>Memulai...</span>`;
 
                 setTimeout(() => {
-                    if (btnStart) {
-                        btnStart.disabled = false;
-                        btnStart.innerHTML = oldContent;
-                    }
-                }, 3000);
+                    this.updateCooldownState();
+                }, 2000);
 
                 ws.sendGameStart(this.selectedGame, this.penaltyMinutes);
             });
         }
 
+        this.updateCooldownState();
         this.renderActivePunishmentsWidget();
     }
 
@@ -368,9 +465,8 @@ class JamriGames {
 
         if (active.length === 0) {
             box.innerHTML = `
-                <div class="empty-punish-box">
-                    <span style="font-size:20px;">🛡️</span>
-                    <span>Saat ini tidak ada peserta yang sedang dihukum. Bebas jamming!</span>
+                <div class="empty-punish-box" style="padding:14px; text-align:center; font-size:12px; color:var(--text-muted, #71717a);">
+                    Tidak ada peserta yang sedang dalam masa sanksi.
                 </div>
             `;
             return;
@@ -379,8 +475,8 @@ class JamriGames {
         const isHost = window.JAMRI_USER && window.JAMRI_USER.is_host;
 
         box.innerHTML = `
-            <div class="active-punish-header">
-                <span class="punish-heading">Daftar Peserta Sedang Dihukum (${active.length}):</span>
+            <div class="active-punish-header" style="margin-bottom:8px;">
+                <span class="punish-heading" style="font-size:12px; font-weight:600; color:var(--text-muted, #a1a1aa);">Peserta Dalam Masa Sanksi (${active.length}):</span>
             </div>
             <div class="punish-users-cards">
                 ${active.map(p => {
@@ -389,18 +485,22 @@ class JamriGames {
                     const s = sec % 60;
                     const timeStr = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
                     return `
-                        <div class="punish-user-item">
-                            <span class="p-avatar">${p.emoji || '🎧'}</span>
-                            <div class="p-info">
-                                <span class="p-nick">${this.escape(p.nickname)}</span>
-                                <span class="p-reason">Kalah di ${this.escape(p.game_name || 'Game')}</span>
+                        <div class="punish-user-item" style="display:flex; align-items:center; justify-content:space-between; padding:8px 10px; margin-bottom:6px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); border-radius:8px;">
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <span class="p-avatar" style="width:26px; height:26px; border-radius:50%; background:rgba(255,255,255,0.08); display:flex; align-items:center; justify-content:center; font-size:13px;">${p.emoji || '🎧'}</span>
+                                <div>
+                                    <span class="p-nick" style="font-size:13px; font-weight:500; color:var(--text-main);">${this.escape(p.nickname)}</span>
+                                    <span style="font-size:11px; color:var(--text-muted); margin-left:6px;">(${this.escape(p.game_name || 'Game')})</span>
+                                </div>
                             </div>
-                            <span class="p-timer">⏳ ${timeStr}</span>
-                            ${isHost ? `
-                                <button type="button" class="btn btn-ghost btn-xs btn-clear-punish" data-devid="${p.device_id}" title="Ampuni & Buka Kunci">
-                                    Ampuni
-                                </button>
-                            ` : ''}
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <span class="p-timer" style="font-size:12px; font-weight:600; color:#ef4444;">${timeStr}</span>
+                                ${isHost ? `
+                                    <button type="button" class="btn btn-ghost btn-xs btn-clear-punish" data-devid="${p.device_id}" style="font-size:11px; padding:2px 6px;">
+                                        Ampuni
+                                    </button>
+                                ` : ''}
+                            </div>
                         </div>
                     `;
                 }).join('')}
@@ -419,7 +519,6 @@ class JamriGames {
         }
     }
 
-    // --- Synchronized Game Arena Modal ---
     openGameArena(gameData) {
         this.ensureAudio();
         let modal = document.getElementById('jamri-game-arena-modal');
@@ -432,16 +531,15 @@ class JamriGames {
 
         modal.innerHTML = `
             <div class="game-arena-box">
-                <div class="arena-header">
-                    <div class="arena-title-area">
-                        <span class="arena-game-badge">${gameData.game_name}</span>
-                        <div class="arena-stakes-badge">Taruhan: Mute Kontrol ${gameData.penalty_minutes} Menit</div>
+                <div class="arena-header" style="display:flex; align-items:center; justify-content:space-between; padding:12px 18px; border-bottom:1px solid var(--border-subtle); background:var(--bg-surface-elevated);">
+                    <div class="arena-title-area" style="display:flex; align-items:center; gap:8px;">
+                        <span class="arena-game-badge" style="font-size:14px; font-weight:700; color:var(--text-primary);">${gameData.game_name}</span>
+                        <span style="font-size:11px; font-weight:600; color:var(--danger); background:var(--danger-light); border:1px solid var(--danger); padding:2px 8px; border-radius:12px;">Sanksi: ${gameData.penalty_minutes} Menit</span>
                     </div>
                     <button type="button" class="btn-close-arena btn btn-ghost btn-icon btn-sm" title="Tutup">✕</button>
                 </div>
 
                 <div class="arena-body" id="arena-stage"></div>
-
                 <div class="arena-footer" id="arena-result-bar" style="display:none;"></div>
             </div>
         `;
@@ -466,7 +564,6 @@ class JamriGames {
         }
     }
 
-    // --- Mode 1: Adu Dadu Arena ---
     runDiceArena(stage, resultBar, gameData) {
         const participants = gameData.participants || [];
         const loser = gameData.loser;
@@ -480,8 +577,8 @@ class JamriGames {
                         <div class="dice-p-avatar">${p.emoji || '🎧'}</div>
                         <div class="dice-p-name">${this.escape(p.nickname)}</div>
                         <div class="dice-cubes-row">
-                            <div class="dice-box rolling d1">🎲</div>
-                            <div class="dice-box rolling d2">🎲</div>
+                            <div class="dice-box rolling d1">·</div>
+                            <div class="dice-box rolling d2">·</div>
                         </div>
                         <div class="dice-total-score">Mengocok...</div>
                     </div>
@@ -489,20 +586,17 @@ class JamriGames {
             </div>
         `;
 
-        // Rolling sound loop
         let rollInterval = setInterval(() => {
             this.playDiceShakeSound();
         }, 220);
 
-        // Shake animation
-        const faces = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
+        const faces = ['1', '2', '3', '4', '5', '6'];
         let faceInterval = setInterval(() => {
             stage.querySelectorAll('.dice-box').forEach(box => {
                 box.textContent = faces[Math.floor(Math.random() * 6)];
             });
         }, 90);
 
-        // Stop rolling and reveal results
         setTimeout(() => {
             clearInterval(rollInterval);
             clearInterval(faceInterval);
@@ -519,8 +613,8 @@ class JamriGames {
 
                 d1Box.classList.remove('rolling');
                 d2Box.classList.remove('rolling');
-                d1Box.textContent = faces[(p.die1 || 1) - 1];
-                d2Box.textContent = faces[(p.die2 || 1) - 1];
+                d1Box.textContent = String(p.die1 || 1);
+                d2Box.textContent = String(p.die2 || 1);
 
                 scoreText.innerHTML = `Total: <strong>${p.score}</strong> (${p.die1} + ${p.die2})`;
 
@@ -528,7 +622,7 @@ class JamriGames {
                     card.classList.add('is-loser');
                     const badge = document.createElement('div');
                     badge.className = 'loser-stamp';
-                    badge.textContent = '💀 KALAH!';
+                    badge.textContent = 'Kalah';
                     card.appendChild(badge);
                 } else {
                     card.classList.add('is-safe');
@@ -539,7 +633,6 @@ class JamriGames {
         }, 3200);
     }
 
-    // --- Mode 2: Adu Angka Arena ---
     runNumberArena(stage, resultBar, gameData) {
         const participants = gameData.participants || [];
         const loser = gameData.loser;
@@ -561,12 +654,10 @@ class JamriGames {
             </div>
         `;
 
-        // Ticking audio
         let tickInterval = setInterval(() => {
             this.playTickSound();
         }, 120);
 
-        // Digital counter animation
         let counterInterval = setInterval(() => {
             stage.querySelectorAll('.rolling-number').forEach(box => {
                 box.textContent = String(Math.floor(Math.random() * 100) + 1).padStart(2, '0');
@@ -591,10 +682,10 @@ class JamriGames {
 
                 if (isLoser) {
                     card.classList.add('is-loser');
-                    statusEl.innerHTML = '<span style="color:#ef4444; font-weight:700;">💀 Terendah (Kalah!)</span>';
+                    statusEl.innerHTML = '<span style="color:#ef4444; font-weight:600;">Terendah (Kalah)</span>';
                 } else {
                     card.classList.add('is-safe');
-                    statusEl.innerHTML = '<span style="color:#10b981; font-weight:600;">Aman ✓</span>';
+                    statusEl.innerHTML = '<span style="color:#10b981; font-weight:500;">Aman</span>';
                 }
             });
 
@@ -602,7 +693,6 @@ class JamriGames {
         }, 3500);
     }
 
-    // --- Mode 3: Roulette Spin Wheel Arena ---
     runWheelArena(stage, resultBar, gameData) {
         const participants = gameData.participants || [];
         const loser = gameData.loser;
@@ -611,7 +701,7 @@ class JamriGames {
         stage.innerHTML = `
             <div class="wheel-arena-wrapper">
                 <div class="wheel-pointer-arrow">
-                    <svg width="34" height="40" viewBox="0 0 24 24" fill="#fbbf24">
+                    <svg width="24" height="28" viewBox="0 0 24 24" fill="#fbbf24">
                         <path d="M12 22l-10-18h20z"></path>
                     </svg>
                 </div>
@@ -623,11 +713,9 @@ class JamriGames {
         const canvas = stage.querySelector('#roulette-canvas');
         this.drawRouletteWheel(canvas, participants);
 
-        // Animate spin with CSS transform
         const durationSec = 6.2;
         canvas.style.transition = `transform ${durationSec}s cubic-bezier(0.12, 0.8, 0.2, 1)`;
         
-        // Spin tick audio
         let tickCount = 0;
         const tickTimer = setInterval(() => {
             tickCount++;
@@ -665,7 +753,6 @@ class JamriGames {
             const endAngle = startAngle + sliceAngle;
             const color = palette[i % palette.length];
 
-            // Slice arc
             ctx.beginPath();
             ctx.moveTo(radius, radius);
             ctx.arc(radius, radius, radius - 8, startAngle, endAngle);
@@ -673,32 +760,29 @@ class JamriGames {
             ctx.fillStyle = color;
             ctx.fill();
 
-            // Slice border
             ctx.lineWidth = 2;
             ctx.strokeStyle = 'rgba(255,255,255,0.2)';
             ctx.stroke();
 
-            // Participant text & emoji
             ctx.save();
             ctx.translate(radius, radius);
             ctx.rotate(startAngle + sliceAngle / 2);
             ctx.textAlign = 'right';
             ctx.fillStyle = '#ffffff';
-            ctx.font = 'bold 15px sans-serif';
-            ctx.shadowColor = 'rgba(0,0,0,0.8)';
-            ctx.shadowBlur = 4;
+            ctx.font = '500 14px sans-serif';
+            ctx.shadowColor = 'rgba(0,0,0,0.6)';
+            ctx.shadowBlur = 3;
 
             const p = participants[i];
-            const label = `${p.emoji || '🎧'} ${p.nickname}`;
-            ctx.fillText(label, radius - 24, 6);
+            const label = p.nickname;
+            ctx.fillText(label, radius - 24, 5);
             ctx.restore();
         }
 
-        // Outer ring
         ctx.beginPath();
         ctx.arc(radius, radius, radius - 8, 0, 2 * Math.PI);
-        ctx.lineWidth = 6;
-        ctx.strokeStyle = '#fbbf24';
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = 'rgba(255,255,255,0.3)';
         ctx.stroke();
     }
 
@@ -714,17 +798,17 @@ class JamriGames {
         }
 
         resultBar.innerHTML = `
-            <div class="result-summary-box ${isMe ? 'you-lost' : 'safe'}">
-                <div class="result-headline">
+            <div class="result-summary-box ${isMe ? 'you-lost' : 'safe'}" style="text-align:center; padding:14px; width:100%;">
+                <div class="result-headline" style="font-size:15px; font-weight:700; margin-bottom:4px;">
                     ${isMe 
-                        ? '💀 YAH, KAMU KALAH! 😭' 
-                        : `🎉 Selamat! Yang Kalah: <strong>${this.escape(loser ? loser.nickname : 'Peserta')}</strong>`
+                        ? 'Anda kalah di ronde ini.' 
+                        : `Peserta kalah: <strong>${this.escape(loser ? loser.nickname : 'Peserta')}</strong>`
                     }
                 </div>
-                <div class="result-penalty-info">
-                    Dihukum tidak bisa mengatur musik selama <strong>${gameData.penalty_minutes} menit</strong>!
+                <div class="result-penalty-info" style="font-size:12px; color:var(--text-secondary); margin-bottom:12px;">
+                    Kontrol musik dinonaktifkan selama <strong>${gameData.penalty_minutes} menit</strong>.
                 </div>
-                <button type="button" class="btn btn-outline btn-sm btn-dismiss-arena">Tutup Arena</button>
+                <button type="button" class="btn btn-primary btn-sm btn-dismiss-arena">Tutup Arena</button>
             </div>
         `;
 
@@ -733,12 +817,10 @@ class JamriGames {
             if (modal) modal.style.display = 'none';
         });
 
-        // Broadcast notice to live chat
         if (window.JAMRI_APP && window.JAMRI_APP.currentChat && loser) {
-            const icon = gameData.game_type === 'dice' ? '🎲' : (gameData.game_type === 'number' ? '🎯' : '🎡');
             window.JAMRI_APP.currentChat.appendActivityNotice(
-                `kalah di ${gameData.game_name} dan dihukum tidak bisa atur musik selama ${gameData.penalty_minutes} menit! 😈`,
-                icon,
+                `kalah di ${gameData.game_name}. Kontrol musik terkunci ${gameData.penalty_minutes} menit.`,
+                '',
                 loser.nickname
             );
         }

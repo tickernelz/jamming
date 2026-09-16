@@ -1563,12 +1563,12 @@
    PUSH-TO-TALK (PTT) STYLES
    ========================================================================== */
 .btn-ptt {
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: 8px;
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--bg-surface-elevated);
     border: 1px solid var(--border-color);
-    color: var(--text-color);
+    color: var(--text-primary);
     padding: 6px 14px;
     border-radius: var(--radius-full);
     font-size: 13px;
@@ -1581,18 +1581,18 @@
 }
 
 .btn-ptt:hover {
-    background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(255, 255, 255, 0.2);
+    background: var(--bg-surface);
+    border-color: var(--primary);
 }
 
 .btn-ptt kbd {
-    background: rgba(255, 255, 255, 0.12);
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
     border-radius: 4px;
     padding: 1px 5px;
     font-size: 10px;
     font-family: var(--font-mono);
-    color: var(--text-color);
+    color: var(--text-secondary);
     margin-left: 2px;
 }
 
@@ -1604,18 +1604,77 @@
     transform: scale(1.03);
 }
 
-.btn-ptt .ptt-waves {
+.btn-ptt.active kbd {
+    background: rgba(0, 0, 0, 0.25);
+    border-color: rgba(255, 255, 255, 0.4);
+    color: #ffffff;
+}
+
+/* Dedicated Karaoke PTT Button (Front Karaoke Tab & Modal) */
+.btn-karaoke-ptt {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    background: linear-gradient(135deg, rgba(236, 72, 153, 0.15), rgba(139, 92, 246, 0.15));
+    border: 1px solid rgba(236, 72, 153, 0.4);
+    color: var(--text-primary);
+    padding: 6px 14px;
+    border-radius: var(--radius-full);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    user-select: none;
+    transition: all 140ms ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.btn-karaoke-ptt:hover {
+    background: linear-gradient(135deg, rgba(236, 72, 153, 0.25), rgba(139, 92, 246, 0.25));
+    border-color: #ec4899;
+    box-shadow: 0 0 12px rgba(236, 72, 153, 0.25);
+}
+
+.btn-karaoke-ptt kbd {
+    background: rgba(236, 72, 153, 0.15);
+    border: 1px solid rgba(236, 72, 153, 0.35);
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: 10px;
+    font-family: var(--font-mono);
+    color: var(--text-primary);
+    margin-left: 2px;
+}
+
+.btn-karaoke-ptt.active {
+    background: linear-gradient(135deg, #ec4899, #8b5cf6) !important;
+    border-color: #f472b6 !important;
+    color: #ffffff !important;
+    box-shadow: 0 0 22px rgba(236, 72, 153, 0.7);
+    transform: scale(1.03);
+}
+
+.btn-karaoke-ptt.active kbd {
+    background: rgba(0, 0, 0, 0.25);
+    border-color: rgba(255, 255, 255, 0.4);
+    color: #ffffff;
+}
+
+.btn-ptt .ptt-waves,
+.btn-karaoke-ptt .ptt-waves {
     display: none;
     align-items: center;
     gap: 2px;
     height: 12px;
 }
 
-.btn-ptt.active .ptt-waves {
+.btn-ptt.active .ptt-waves,
+.btn-karaoke-ptt.active .ptt-waves {
     display: flex;
 }
 
-.btn-ptt .ptt-waves span {
+.btn-ptt .ptt-waves span,
+.btn-karaoke-ptt .ptt-waves span {
     display: block;
     width: 2px;
     background: #ffffff;
@@ -1623,16 +1682,19 @@
     animation: pttWave 0.5s ease-in-out infinite alternate;
 }
 
-.btn-ptt .ptt-waves span:nth-child(1) { height: 6px; animation-delay: 0s; }
-.btn-ptt .ptt-waves span:nth-child(2) { height: 12px; animation-delay: 0.15s; }
-.btn-ptt .ptt-waves span:nth-child(3) { height: 8px; animation-delay: 0.3s; }
+.btn-ptt .ptt-waves span:nth-child(1),
+.btn-karaoke-ptt .ptt-waves span:nth-child(1) { height: 6px; animation-delay: 0s; }
+.btn-ptt .ptt-waves span:nth-child(2),
+.btn-karaoke-ptt .ptt-waves span:nth-child(2) { height: 12px; animation-delay: 0.15s; }
+.btn-ptt .ptt-waves span:nth-child(3),
+.btn-karaoke-ptt .ptt-waves span:nth-child(3) { height: 8px; animation-delay: 0.3s; }
 
 @keyframes pttWave {
     from { height: 4px; }
     to { height: 14px; }
 }
 
-/* Active speakers banner */
+/* Active speakers banner (General Room) */
 .active-speakers-bar {
     display: flex;
     align-items: center;
@@ -1643,7 +1705,22 @@
     border-radius: var(--radius-full);
     margin-bottom: 12px;
     font-size: 12px;
-    color: #34d399;
+    color: #10b981;
+    animation: fadeIn 150ms ease;
+}
+
+/* Active Karaoke Singers banner (Karaoke Room/Modal) */
+.karaoke-active-singers-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    background: rgba(236, 72, 153, 0.12);
+    border: 1px solid rgba(236, 72, 153, 0.35);
+    border-radius: var(--radius-full);
+    margin: 8px 0 12px 0;
+    font-size: 12px;
+    color: #ec4899;
     animation: fadeIn 150ms ease;
 }
 
@@ -1885,18 +1962,18 @@
 .room-penalty-banner {
     display: flex;
     align-items: center;
-    background: linear-gradient(90deg, rgba(239, 68, 68, 0.25) 0%, rgba(185, 28, 28, 0.15) 100%);
-    border: 1px solid rgba(239, 68, 68, 0.45);
+    background: var(--danger-light);
+    border: 1px solid var(--danger);
     border-radius: var(--radius-md);
     padding: 10px 16px;
     margin-bottom: 14px;
-    box-shadow: 0 0 24px rgba(239, 68, 68, 0.2);
-    animation: pulseBorder 2s infinite ease-in-out;
+    box-shadow: 0 2px 10px rgba(220, 38, 38, 0.12);
+    animation: pulseBorder 2.5s infinite ease-in-out;
 }
 
 @keyframes pulseBorder {
-    0%, 100% { border-color: rgba(239, 68, 68, 0.4); box-shadow: 0 0 15px rgba(239, 68, 68, 0.15); }
-    50% { border-color: rgba(239, 68, 68, 0.8); box-shadow: 0 0 25px rgba(239, 68, 68, 0.35); }
+    0%, 100% { border-color: var(--danger); box-shadow: 0 0 8px rgba(220, 38, 38, 0.15); }
+    50% { border-color: #ef4444; box-shadow: 0 0 16px rgba(220, 38, 38, 0.3); }
 }
 
 .penalty-banner-content {
@@ -1918,25 +1995,25 @@
 .penalty-title {
     font-size: 14px;
     font-weight: 700;
-    color: #f87171;
+    color: var(--danger);
 }
 
 .penalty-desc {
     font-size: 12px;
-    color: var(--text-muted);
+    color: var(--text-secondary);
 }
 
 .penalty-countdown-badge {
     display: flex;
     align-items: center;
     gap: 6px;
-    background: rgba(239, 68, 68, 0.3);
-    border: 1px solid rgba(239, 68, 68, 0.6);
-    padding: 6px 12px;
+    background: var(--bg-surface);
+    border: 1px solid var(--danger);
+    padding: 5px 12px;
     border-radius: var(--radius-full);
-    color: #ffffff;
+    color: var(--danger);
     font-family: var(--font-mono);
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 700;
     letter-spacing: 0.5px;
     flex-shrink: 0;
@@ -1959,7 +2036,7 @@
 .games-header-title {
     font-size: 18px;
     font-weight: 700;
-    color: var(--text-main);
+    color: var(--text-primary);
     margin-bottom: 4px;
 }
 
@@ -1975,8 +2052,8 @@
 }
 
 .game-select-card {
-    background: var(--bg-surface-elevated);
-    border: 1px solid var(--border-subtle);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
     padding: 16px;
     cursor: pointer;
@@ -1984,18 +2061,20 @@
     transition: all 0.2s ease;
     display: flex;
     flex-direction: column;
+    box-shadow: var(--shadow-sm);
 }
 
 .game-select-card:hover {
     border-color: var(--primary);
+    background: var(--bg-surface-elevated);
     transform: translateY(-2px);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    box-shadow: var(--shadow-md);
 }
 
 .game-select-card.selected {
-    background: rgba(239, 68, 68, 0.08);
+    background: var(--primary-light);
     border: 2px solid var(--primary);
-    box-shadow: 0 0 20px rgba(239, 68, 68, 0.25);
+    box-shadow: 0 0 16px rgba(37, 99, 235, 0.2);
 }
 
 .game-card-badge {
@@ -2004,7 +2083,8 @@
     right: 10px;
     font-size: 10px;
     font-weight: 700;
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--bg-surface-elevated);
+    border: 1px solid var(--border-subtle);
     padding: 2px 8px;
     border-radius: 10px;
     color: var(--text-muted);
@@ -2013,6 +2093,7 @@
 .game-select-card.selected .game-card-badge {
     background: var(--primary);
     color: #ffffff;
+    border-color: var(--primary);
 }
 
 .game-card-emoji {
@@ -2023,24 +2104,25 @@
 .game-card-title {
     font-size: 15px;
     font-weight: 700;
-    color: var(--text-main);
+    color: var(--text-primary);
     margin-bottom: 6px;
 }
 
 .game-card-desc {
-    font-size: 11px;
-    color: var(--text-muted);
+    font-size: 12px;
+    color: var(--text-secondary);
     line-height: 1.4;
 }
 
 .game-settings-bar {
-    background: var(--bg-surface-elevated);
-    border: 1px solid var(--border-subtle);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
     padding: 16px;
     display: flex;
     flex-direction: column;
     gap: 14px;
+    box-shadow: var(--shadow-sm);
 }
 
 .penalty-setting-group {
@@ -2052,7 +2134,7 @@
 .penalty-setting-label {
     font-size: 12px;
     font-weight: 600;
-    color: var(--text-main);
+    color: var(--text-primary);
 }
 
 .penalty-duration-btns {
@@ -2062,9 +2144,9 @@
 }
 
 .btn-penalty-opt {
-    background: var(--bg-surface);
+    background: var(--bg-surface-elevated);
     border: 1px solid var(--border-subtle);
-    color: var(--text-muted);
+    color: var(--text-secondary);
     padding: 6px 14px;
     border-radius: var(--radius-sm);
     font-size: 12px;
@@ -2074,7 +2156,7 @@
 }
 
 .btn-penalty-opt:hover {
-    color: var(--text-main);
+    color: var(--text-primary);
     border-color: var(--border-color);
 }
 
@@ -2082,7 +2164,7 @@
     background: var(--primary);
     color: #ffffff;
     border-color: var(--primary);
-    box-shadow: 0 0 12px rgba(239, 68, 68, 0.4);
+    box-shadow: 0 0 10px rgba(37, 99, 235, 0.35);
 }
 
 .btn-start-game-cta {
@@ -2094,7 +2176,6 @@
     align-items: center;
     justify-content: center;
     gap: 8px;
-    box-shadow: 0 4px 18px rgba(239, 68, 68, 0.4);
 }
 
 .active-punishments-section {
@@ -2106,11 +2187,11 @@
     align-items: center;
     gap: 10px;
     padding: 12px 16px;
-    background: rgba(16, 185, 129, 0.08);
-    border: 1px solid rgba(16, 185, 129, 0.2);
+    background: var(--success-light);
+    border: 1px solid rgba(22, 163, 74, 0.3);
     border-radius: var(--radius-md);
     font-size: 12px;
-    color: #34d399;
+    color: var(--success);
 }
 
 .active-punish-header {
@@ -2134,8 +2215,8 @@
     align-items: center;
     gap: 10px;
     padding: 8px 12px;
-    background: rgba(239, 68, 68, 0.08);
-    border: 1px solid rgba(239, 68, 68, 0.25);
+    background: var(--danger-light);
+    border: 1px solid rgba(220, 38, 38, 0.25);
     border-radius: var(--radius-md);
 }
 
@@ -2150,20 +2231,20 @@
 .p-nick {
     font-size: 13px;
     font-weight: 600;
-    color: var(--text-main);
+    color: var(--text-primary);
     display: block;
 }
 
 .p-reason {
     font-size: 11px;
-    color: #f87171;
+    color: var(--danger);
 }
 
 .p-timer {
     font-family: var(--font-mono);
     font-size: 12px;
     font-weight: 600;
-    color: #fca5a5;
+    color: var(--danger);
 }
 
 .btn-clear-punish {
@@ -2173,8 +2254,8 @@
 }
 
 .btn-clear-punish:hover {
-    color: #34d399;
-    border-color: #34d399;
+    color: var(--success);
+    border-color: var(--success);
 }
 
 /* ==========================================================================
@@ -2186,9 +2267,9 @@
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(0, 0, 0, 0.82);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
+    background: rgba(0, 0, 0, 0.72);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
     z-index: 10000;
     display: flex;
     align-items: center;
@@ -2198,10 +2279,10 @@
 }
 
 .game-arena-box {
-    background: #0f1117;
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
     border-radius: var(--radius-lg);
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8), 0 0 30px rgba(239, 68, 68, 0.2);
+    box-shadow: var(--shadow-lg);
     width: 100%;
     max-width: 580px;
     max-height: 90vh;
@@ -2209,6 +2290,7 @@
     flex-direction: column;
     overflow: hidden;
     animation: modalIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    color: var(--text-primary);
 }
 
 .arena-header {
@@ -2216,8 +2298,8 @@
     align-items: center;
     justify-content: space-between;
     padding: 14px 18px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    background: rgba(255, 255, 255, 0.02);
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--bg-surface-elevated);
 }
 
 .arena-title-area {
@@ -2229,15 +2311,15 @@
 .arena-game-badge {
     font-size: 15px;
     font-weight: 700;
-    color: var(--text-main);
+    color: var(--text-primary);
 }
 
 .arena-stakes-badge {
     font-size: 11px;
     font-weight: 600;
-    background: rgba(239, 68, 68, 0.2);
-    color: #f87171;
-    border: 1px solid rgba(239, 68, 68, 0.4);
+    background: var(--danger-light);
+    color: var(--danger);
+    border: 1px solid var(--danger);
     padding: 2px 8px;
     border-radius: 12px;
 }
@@ -2250,6 +2332,7 @@
     justify-content: center;
     min-height: 280px;
     overflow-y: auto;
+    background: var(--bg-surface);
 }
 
 /* --- Adu Dadu Arena --- */
@@ -2261,8 +2344,8 @@
 }
 
 .dice-player-card {
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: var(--bg-surface-elevated);
+    border: 1px solid var(--border-subtle);
     border-radius: var(--radius-md);
     padding: 12px 8px;
     display: flex;
@@ -2270,19 +2353,19 @@
     align-items: center;
     text-align: center;
     position: relative;
-    transition: all 0.3s ease;
+    transition: all 0.25s ease;
 }
 
 .dice-player-card.is-loser {
-    background: rgba(239, 68, 68, 0.2);
-    border-color: #ef4444;
-    box-shadow: 0 0 25px rgba(239, 68, 68, 0.5);
-    transform: scale(1.05);
+    background: var(--danger-light);
+    border-color: var(--danger);
+    box-shadow: 0 0 20px rgba(220, 38, 38, 0.3);
+    transform: scale(1.04);
 }
 
 .dice-player-card.is-safe {
-    background: rgba(16, 185, 129, 0.06);
-    border-color: rgba(16, 185, 129, 0.3);
+    background: var(--success-light);
+    border-color: var(--success);
 }
 
 .dice-p-avatar {
@@ -2293,7 +2376,7 @@
 .dice-p-name {
     font-size: 12px;
     font-weight: 600;
-    color: var(--text-main);
+    color: var(--text-primary);
     margin-bottom: 8px;
     max-width: 100%;
     overflow: hidden;
@@ -2310,14 +2393,15 @@
 .dice-box {
     width: 44px;
     height: 44px;
-    background: #ffffff;
-    color: #111827;
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
     border-radius: 8px;
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 28px;
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
+    box-shadow: var(--shadow-sm);
     transition: transform 0.15s ease;
 }
 
@@ -2340,14 +2424,14 @@
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%) rotate(-15deg);
-    background: #ef4444;
+    background: var(--danger);
     color: #ffffff;
     font-size: 12px;
     font-weight: 900;
     padding: 4px 10px;
     border-radius: 4px;
     border: 2px solid #ffffff;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.6);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
     pointer-events: none;
     animation: popIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -2361,22 +2445,22 @@
 }
 
 .number-player-card {
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: var(--bg-surface-elevated);
+    border: 1px solid var(--border-subtle);
     border-radius: var(--radius-md);
     padding: 12px 8px;
     display: flex;
     flex-direction: column;
     align-items: center;
     text-align: center;
-    transition: all 0.3s ease;
+    transition: all 0.25s ease;
 }
 
 .number-player-card.is-loser {
-    background: rgba(239, 68, 68, 0.2);
-    border-color: #ef4444;
-    box-shadow: 0 0 25px rgba(239, 68, 68, 0.5);
-    transform: scale(1.05);
+    background: var(--danger-light);
+    border-color: var(--danger);
+    box-shadow: 0 0 20px rgba(220, 38, 38, 0.3);
+    transform: scale(1.04);
 }
 
 .num-p-avatar {
@@ -2387,31 +2471,28 @@
 .num-p-name {
     font-size: 12px;
     font-weight: 600;
-    color: var(--text-main);
+    color: var(--text-primary);
     margin-bottom: 6px;
 }
 
 .num-digital-display {
-    background: #000000;
-    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: var(--bg-base);
+    border: 1px solid var(--border-color);
     border-radius: 6px;
     padding: 6px 14px;
     margin-bottom: 6px;
-    box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.8);
 }
 
 .digital-number {
     font-family: var(--font-mono);
     font-size: 28px;
     font-weight: 800;
-    color: #60a5fa;
-    text-shadow: 0 0 10px rgba(96, 165, 250, 0.8);
+    color: var(--primary);
     letter-spacing: 2px;
 }
 
 .digital-number.rolling-number {
-    color: #fbbf24;
-    text-shadow: 0 0 10px rgba(251, 191, 36, 0.8);
+    color: var(--warning);
 }
 
 .num-status-label {
@@ -2433,7 +2514,7 @@
     width: 300px;
     height: 300px;
     border-radius: 50%;
-    box-shadow: 0 0 30px rgba(0, 0, 0, 0.9), 0 0 20px rgba(251, 191, 36, 0.3);
+    box-shadow: var(--shadow-lg);
 }
 
 .wheel-pointer-arrow {
@@ -2442,7 +2523,7 @@
     left: 50%;
     transform: translateX(-50%);
     z-index: 10;
-    filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.8));
+    filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.4));
     animation: pointerWobble 0.2s infinite alternate;
 }
 
@@ -2455,14 +2536,15 @@
     position: absolute;
     width: 44px;
     height: 44px;
-    background: #111827;
-    border: 3px solid #fbbf24;
+    background: var(--bg-surface);
+    border: 3px solid var(--primary);
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 18px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.8);
+    color: var(--text-primary);
+    box-shadow: var(--shadow-md);
     z-index: 5;
     pointer-events: none;
 }
@@ -2470,8 +2552,8 @@
 /* --- Result Summary Bar --- */
 .arena-footer {
     padding: 14px 20px;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
-    background: rgba(255, 255, 255, 0.02);
+    border-top: 1px solid var(--border-subtle);
+    background: var(--bg-surface-elevated);
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -2487,22 +2569,127 @@
 }
 
 .result-summary-box.you-lost .result-headline {
-    color: #ef4444;
+    color: var(--danger);
     font-size: 18px;
     font-weight: 800;
 }
 
 .result-summary-box.safe .result-headline {
-    color: #10b981;
+    color: var(--success);
     font-size: 16px;
     font-weight: 700;
 }
 
 .result-penalty-info {
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-secondary);
     margin-bottom: 4px;
 }
 
+/* ==========================================================================
+   LYRICS: EMBEDDED FRONT VIEW (KARAOKE) & MODAL
+   ========================================================================== */
+.embedded-lyrics-box {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    display: flex;
+    flex-direction: column;
+    height: 540px;
+    overflow: hidden;
+    position: relative;
+    box-shadow: var(--shadow-sm);
+}
 
+.embedded-lyrics-header {
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--bg-surface-elevated);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
 
+.embedded-lyrics-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 32px 24px;
+    text-align: center;
+    scroll-behavior: smooth;
+    background: var(--bg-surface);
+}
+
+.embedded-lyrics-footer {
+    padding: 10px 18px;
+    border-top: 1px solid var(--border-subtle);
+    background: var(--bg-surface-elevated);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.lyrics-modal-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    box-shadow: var(--shadow-lg);
+    animation: lyricsModalIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes lyricsModalIn {
+    from {
+        opacity: 0;
+        transform: scale(0.96) translateY(12px);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+.lyric-line-item {
+    transition: all 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    border-radius: 8px;
+    padding: 6px 14px;
+    font-size: 20px;
+    line-height: 1.6;
+    font-weight: 700;
+    margin: 12px 0;
+    cursor: pointer;
+    user-select: none;
+    color: var(--text-muted);
+    opacity: 0.45;
+}
+
+.lyric-line-item:hover {
+    opacity: 0.8 !important;
+    background: var(--bg-surface-hover);
+    color: var(--text-primary) !important;
+}
+
+.lyric-line-item.active-line {
+    opacity: 1 !important;
+    transform: scale(1.03) !important;
+    color: var(--primary) !important;
+    font-weight: 800 !important;
+    background: var(--primary-light);
+}
+
+#jamri-lyrics-scroll-box::-webkit-scrollbar,
+.embedded-lyrics-scroll::-webkit-scrollbar {
+    width: 6px;
+}
+
+#jamri-lyrics-scroll-box::-webkit-scrollbar-thumb,
+.embedded-lyrics-scroll::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 3px;
+}
+
+#jamri-lyrics-scroll-box::-webkit-scrollbar-thumb:hover,
+.embedded-lyrics-scroll::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+}
