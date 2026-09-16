@@ -216,6 +216,40 @@
                 <span>Cari Musik</span>
             </button>
 
+            <!-- PiP Button (Desktop Only, Icon-only) -->
+            <div class="lyrics-pip-dropdown-wrapper dock-pip-wrapper" id="dock-pip-wrapper">
+                <button type="button" class="btn btn-ghost btn-icon btn-sm btn-lyrics-pip" id="btn-dock-pip" title="Floating Picture-in-Picture Karaoke (Desktop)">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="2" y="3" width="20" height="14" rx="2"></rect>
+                        <rect x="11" y="9" width="9" height="7" rx="1" fill="currentColor" opacity="0.35"></rect>
+                        <rect x="11" y="9" width="9" height="7" rx="1"></rect>
+                    </svg>
+                </button>
+                <div class="lyrics-pip-menu lyrics-pip-menu-up" style="display:none;">
+                    <button type="button" class="pip-menu-item" data-pip-mode="mini">
+                        <span class="pip-menu-badge">Minimalis</span>
+                        <div class="pip-menu-text">
+                            <strong>Thumbnail + Navigasi</strong>
+                            <small>Tanpa lirik, kontrol musik ringkas</small>
+                        </div>
+                    </button>
+                    <button type="button" class="pip-menu-item" data-pip-mode="full">
+                        <span class="pip-menu-badge">Lengkap</span>
+                        <div class="pip-menu-text">
+                            <strong>Navigasi + Lirik</strong>
+                            <small>Judul, seek, play/pause &amp; lirik</small>
+                        </div>
+                    </button>
+                    <button type="button" class="pip-menu-item" data-pip-mode="lyrics">
+                        <span class="pip-menu-badge">Lirik Saja</span>
+                        <div class="pip-menu-text">
+                            <strong>Teks Lirik Minimalis</strong>
+                            <small>Fokus lirik auto-scroll</small>
+                        </div>
+                    </button>
+                </div>
+            </div>
+
             <!-- Local Volume Controller Group (Strictly client-side) -->
             <div class="dock-volume-group" title="Volume Suara Lokal (Hanya di perangkat Anda, tidak mengubah volume orang lain)">
                 <button type="button" id="btn-dock-mute" class="btn btn-ghost btn-icon btn-sm" title="Mute / Unmute Volume Lokal">

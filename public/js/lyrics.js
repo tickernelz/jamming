@@ -34,6 +34,30 @@ class JamriLyricsManager {
         this.player = player;
         this.ws = ws;
 
+        // Bind dock PiP button directly (dock-pip-wrapper IS itself the dropdown wrapper,
+        // so we can't use bindPiPDropdown which does querySelectorAll('.lyrics-pip-dropdown-wrapper') inside)
+        const dockPipWrapper = document.getElementById('dock-pip-wrapper');
+        if (dockPipWrapper) {
+            const pipBtn = dockPipWrapper.querySelector('.btn-lyrics-pip');
+            const pipMenu = dockPipWrapper.querySelector('.lyrics-pip-menu');
+            if (pipBtn && pipMenu) {
+                pipBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const isShowing = pipMenu.style.display === 'flex';
+                    document.querySelectorAll('.lyrics-pip-menu').forEach(m => m.style.display = 'none');
+                    pipMenu.style.display = isShowing ? 'none' : 'flex';
+                });
+                pipMenu.querySelectorAll('.pip-menu-item').forEach(item => {
+                    item.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        pipMenu.style.display = 'none';
+                        const mode = item.dataset.pipMode || 'full';
+                        this.openPiP(mode);
+                    });
+                });
+            }
+        }
+
         if (this.player) {
             this.player.on('track_change', (track) => {
                 this.onTrackChange(track);
@@ -108,8 +132,8 @@ class JamriLyricsManager {
     }
 
     onTimeUpdate(currentTime) {
-        // Sync PiP scrubber and time label if PiP is open in Full mode
-        if (this.pipWindow && !this.pipWindow.closed && this.pipMode === 'full') {
+        // Sync PiP scrubber and time label if PiP is open in Full or Mini mode
+        if (this.pipWindow && !this.pipWindow.closed && (this.pipMode === 'full' || this.pipMode === 'mini')) {
             const curEl = this.pipWindow.document.getElementById('pip-current-time');
             if (curEl) curEl.textContent = this.formatTime(currentTime);
             const slider = this.pipWindow.document.getElementById('pip-seek-slider');
@@ -773,11 +797,18 @@ class JamriLyricsManager {
                     </svg>
                 </button>
                 <div class="lyrics-pip-menu" style="display:none;">
+                    <button type="button" class="pip-menu-item" data-pip-mode="mini">
+                        <span class="pip-menu-badge">Minimalis</span>
+                        <div class="pip-menu-text">
+                            <strong>Thumbnail + Navigasi</strong>
+                            <small>Tanpa lirik, kontrol musik ringkas</small>
+                        </div>
+                    </button>
                     <button type="button" class="pip-menu-item" data-pip-mode="full">
                         <span class="pip-menu-badge">Lengkap</span>
                         <div class="pip-menu-text">
-                            <strong>Lirik + Navigasi Musik</strong>
-                            <small>Judul, seek, play/pause & lirik</small>
+                            <strong>Navigasi + Lirik</strong>
+                            <small>Judul, seek, play/pause &amp; lirik</small>
                         </div>
                     </button>
                     <button type="button" class="pip-menu-item" data-pip-mode="lyrics">
@@ -796,34 +827,7 @@ class JamriLyricsManager {
         return `
             <div class="embedded-lyrics-footer">
                 <span>Klik lirik untuk melompat (seek)</span>
-                <div class="embedded-lyrics-footer-right">
-                    <span>Sumber: <a href="https://lrclib.net" target="_blank" rel="noopener" style="color:var(--primary); text-decoration:none; font-weight:600;">LRCLIB</a></span>
-                    <div class="lyrics-pip-dropdown-wrapper lyrics-pip-footer-wrapper">
-                        <button type="button" class="btn-lyrics-pip-footer btn-lyrics-pip" title="Buka Floating Picture-in-Picture (PiP Desktop)">
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <rect x="2" y="3" width="20" height="14" rx="2"></rect>
-                                <rect x="11" y="9" width="9" height="7" rx="1" fill="currentColor"></rect>
-                            </svg>
-                            <span>Floating PiP</span>
-                        </button>
-                        <div class="lyrics-pip-menu lyrics-pip-menu-up" style="display:none;">
-                            <button type="button" class="pip-menu-item" data-pip-mode="full">
-                                <span class="pip-menu-badge">Lengkap</span>
-                                <div class="pip-menu-text">
-                                    <strong>Lirik + Navigasi Musik</strong>
-                                    <small>Judul, seek, play/pause & lirik</small>
-                                </div>
-                            </button>
-                            <button type="button" class="pip-menu-item" data-pip-mode="lyrics">
-                                <span class="pip-menu-badge">Lirik Saja</span>
-                                <div class="pip-menu-text">
-                                    <strong>Teks Lirik Minimalis</strong>
-                                    <small>Fokus lirik auto-scroll</small>
-                                </div>
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                <span>Sumber: <a href="https://lrclib.net" target="_blank" rel="noopener" style="color:var(--primary); text-decoration:none; font-weight:600;">LRCLIB</a></span>
             </div>
         `;
     }
@@ -1026,8 +1030,8 @@ class JamriLyricsManager {
             return;
         }
 
-        const width = mode === 'full' ? 420 : 360;
-        const height = mode === 'full' ? 560 : 460;
+        const width = mode === 'full' ? 420 : (mode === 'mini' ? 340 : 360);
+        const height = mode === 'full' ? 560 : (mode === 'mini' ? 200 : 460);
 
         try {
             if ('documentPictureInPicture' in window && typeof window.documentPictureInPicture.requestWindow === 'function') {
@@ -1199,23 +1203,30 @@ class JamriLyricsManager {
                 accent-color: var(--primary, #3b82f6);
                 cursor: pointer;
             }
-            .pip-actions-row {
+            .pip-nav-row {
                 display: flex;
                 align-items: center;
-                justify-content: space-between;
-                gap: 10px;
+                justify-content: center;
+                gap: 12px;
+                padding: 4px 0;
             }
-            .pip-playback-btns {
+            .pip-vol-row {
                 display: flex;
                 align-items: center;
+                justify-content: center;
                 gap: 8px;
+                padding: 4px 0 2px;
+                color: var(--text-muted, #64748b);
+            }
+            .pip-vol-slider-wide {
+                width: 100px;
             }
             .pip-btn {
                 background: transparent;
                 border: none;
                 color: var(--text-primary, #f8fafc);
                 cursor: pointer;
-                padding: 5px;
+                padding: 6px;
                 border-radius: 6px;
                 display: flex;
                 align-items: center;
@@ -1230,8 +1241,8 @@ class JamriLyricsManager {
                 background: var(--primary, #3b82f6);
                 color: #ffffff !important;
                 border-radius: 50%;
-                width: 30px;
-                height: 30px;
+                width: 34px;
+                height: 34px;
                 padding: 0;
             }
             .pip-btn-play:hover {
@@ -1296,6 +1307,51 @@ class JamriLyricsManager {
                 font-size: 13px;
                 text-align: center;
             }
+            /* === Mini Mode === */
+            .pip-container-mini {
+                display: flex;
+                flex-direction: column;
+                height: 100%;
+                width: 100%;
+                overflow: hidden;
+                gap: 4px;
+                padding-bottom: 6px;
+            }
+            .pip-mini-card {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                padding: 8px 12px 6px;
+                background: var(--bg-surface-elevated, #1e293b);
+                border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+                flex-shrink: 0;
+            }
+            .pip-mini-thumb {
+                width: 36px;
+                height: 36px;
+                border-radius: 6px;
+                object-fit: cover;
+                flex-shrink: 0;
+            }
+            .pip-mini-thumb-placeholder {
+                width: 36px;
+                height: 36px;
+                border-radius: 6px;
+                background: var(--bg-surface-hover, rgba(255,255,255,0.06));
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 16px;
+                flex-shrink: 0;
+            }
+            .pip-mini-meta {
+                flex: 1;
+                min-width: 0;
+            }
+            .pip-btn-play-lg {
+                width: 38px !important;
+                height: 38px !important;
+            }
             @keyframes spin {
                 from { transform: rotate(0deg); }
                 to { transform: rotate(360deg); }
@@ -1352,7 +1408,48 @@ class JamriLyricsManager {
             `;
         }
 
-        if (this.pipMode === 'full') {
+        if (this.pipMode === 'mini') {
+            // Minimalist mode: big thumbnail + title/artist + nav controls, no lyrics
+            doc.body.innerHTML = `
+                <div class="pip-container pip-container-mini">
+                    <!-- Mini Track Card -->
+                    <div class="pip-mini-card">
+                        ${thumb ? `<img src="${thumb}" alt="" class="pip-mini-thumb" onerror="this.style.display='none'" />` : `<div class="pip-mini-thumb-placeholder">🎵</div>`}
+                        <div class="pip-mini-meta">
+                            <div class="pip-track-title" title="${this.escape(title)}">${this.escape(title)}</div>
+                            <div class="pip-track-artist">${this.escape(artist)}</div>
+                        </div>
+                        <button type="button" class="pip-mode-badge" id="pip-btn-toggle-mode" title="Beralih ke mode Lengkap">🎵 Lirik</button>
+                    </div>
+
+                    <!-- Progress bar -->
+                    <div class="pip-progress-row" style="padding: 0 12px;">
+                        <span id="pip-current-time">${this.formatTime(currentTime)}</span>
+                        <input type="range" id="pip-seek-slider" class="pip-slider" min="0" max="100" value="${duration > 0 ? (currentTime / duration) * 100 : 0}" />
+                        <span id="pip-duration">${this.formatTime(duration)}</span>
+                    </div>
+
+                    <!-- Navigation Controls centered -->
+                    <div class="pip-nav-row" style="padding: 0 12px;">
+                        <button type="button" class="pip-btn" id="pip-btn-prev" title="Lagu Sebelumnya">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="19 20 9 12 19 4 19 20"></polygon><line x1="5" y1="19" x2="5" y2="5" stroke="currentColor" stroke-width="2.5"></line></svg>
+                        </button>
+                        <button type="button" class="pip-btn pip-btn-play pip-btn-play-lg" id="pip-btn-play" title="${isPlaying ? 'Jeda' : 'Putar'}">
+                            ${isPlaying
+                                ? `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"></rect><rect x="14" y="4" width="4" height="16" rx="1"></rect></svg>`
+                                : `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"></polygon></svg>`}
+                        </button>
+                        <button type="button" class="pip-btn" id="pip-btn-next" title="Lagu Berikutnya">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2.5"></line></svg>
+                        </button>
+                        <div class="pip-vol-box" title="Volume Suara" style="margin-left:8px;">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
+                            <input type="range" id="pip-vol-slider" class="pip-vol-slider" min="0" max="1" step="0.05" value="${volume}" />
+                        </div>
+                    </div>
+                </div>
+            `;
+        } else if (this.pipMode === 'full') {
             doc.body.innerHTML = `
                 <div class="pip-container">
                     <!-- Top Bar -->
@@ -1363,7 +1460,7 @@ class JamriLyricsManager {
                         </div>
                         <div style="display:flex; align-items:center; gap:6px;">
                             ${isSynced ? `<span style="font-size:9px; font-weight:700; background:rgba(34,197,94,0.15); color:#22c55e; border:1px solid rgba(34,197,94,0.3); border-radius:10px; padding:1px 6px;">Sinkron</span>` : ''}
-                            <button type="button" class="pip-mode-badge" id="pip-btn-toggle-mode" title="Klik untuk beralih ke mode lirik minimalis">
+                            <button type="button" class="pip-mode-badge" id="pip-btn-toggle-mode" title="Klik untuk beralih ke mode lirik saja">
                                 📄 Lirik Saja
                             </button>
                         </div>
@@ -1385,24 +1482,22 @@ class JamriLyricsManager {
                             <input type="range" id="pip-seek-slider" class="pip-slider" min="0" max="100" value="${duration > 0 ? (currentTime / duration) * 100 : 0}" />
                             <span id="pip-duration">${this.formatTime(duration)}</span>
                         </div>
-                        <div class="pip-actions-row">
-                            <div class="pip-playback-btns">
-                                <button type="button" class="pip-btn" id="pip-btn-prev" title="Lagu Sebelumnya">
-                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><polygon points="19 20 9 12 19 4 19 20"></polygon><line x1="5" y1="19" x2="5" y2="5" stroke="currentColor" stroke-width="2.5"></line></svg>
-                                </button>
-                                <button type="button" class="pip-btn pip-btn-play" id="pip-btn-play" title="${isPlaying ? 'Jeda' : 'Putar'}">
-                                    ${isPlaying 
-                                        ? `<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"></rect><rect x="14" y="4" width="4" height="16" rx="1"></rect></svg>`
-                                        : `<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"></polygon></svg>`}
-                                </button>
-                                <button type="button" class="pip-btn" id="pip-btn-next" title="Lagu Berikutnya">
-                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2.5"></line></svg>
-                                </button>
-                            </div>
-                            <div class="pip-vol-box" title="Volume Suara">
-                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
-                                <input type="range" id="pip-vol-slider" class="pip-vol-slider" min="0" max="1" step="0.05" value="${volume}" />
-                            </div>
+                        <div class="pip-nav-row">
+                            <button type="button" class="pip-btn" id="pip-btn-prev" title="Lagu Sebelumnya">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="19 20 9 12 19 4 19 20"></polygon><line x1="5" y1="19" x2="5" y2="5" stroke="currentColor" stroke-width="2.5"></line></svg>
+                            </button>
+                            <button type="button" class="pip-btn pip-btn-play" id="pip-btn-play" title="${isPlaying ? 'Jeda' : 'Putar'}">
+                                ${isPlaying
+                                    ? `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"></rect><rect x="14" y="4" width="4" height="16" rx="1"></rect></svg>`
+                                    : `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"></polygon></svg>`}
+                            </button>
+                            <button type="button" class="pip-btn" id="pip-btn-next" title="Lagu Berikutnya">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2.5"></line></svg>
+                            </button>
+                        </div>
+                        <div class="pip-vol-row">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
+                            <input type="range" id="pip-vol-slider" class="pip-vol-slider pip-vol-slider-wide" min="0" max="1" step="0.05" value="${volume}" />
                         </div>
                     </div>
 
@@ -1413,7 +1508,7 @@ class JamriLyricsManager {
                 </div>
             `;
         } else {
-            // Minimal Lyrics-only mode
+            // Lyrics-only mode
             doc.body.innerHTML = `
                 <div class="pip-container">
                     <!-- Compact Top Bar -->
@@ -1524,7 +1619,10 @@ class JamriLyricsManager {
     }
 
     togglePiPMode() {
-        this.pipMode = this.pipMode === 'full' ? 'lyrics' : 'full';
+        // Cycle: full -> lyrics -> mini -> full
+        if (this.pipMode === 'full') this.pipMode = 'lyrics';
+        else if (this.pipMode === 'lyrics') this.pipMode = 'mini';
+        else this.pipMode = 'full';
         try {
             localStorage.setItem('jamri_pip_mode', this.pipMode);
         } catch (e) {}
@@ -1533,6 +1631,8 @@ class JamriLyricsManager {
             try {
                 if (this.pipMode === 'full') {
                     this.pipWindow.resizeTo(420, 560);
+                } else if (this.pipMode === 'mini') {
+                    this.pipWindow.resizeTo(340, 200);
                 } else {
                     this.pipWindow.resizeTo(360, 460);
                 }
