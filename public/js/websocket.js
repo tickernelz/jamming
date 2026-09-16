@@ -211,6 +211,10 @@ class JamriWebSocket {
         this.send('voice_state', { speaking: !!isSpeaking, channel });
     }
 
+    sendKaraokeMuteToggle(muted) {
+        this.send('karaoke_mute_toggle', { muted: !!muted });
+    }
+
     sendGameStart(gameType, penaltyMinutes = 2, options = {}) {
         return this.send('game_start', {
             game_type: gameType,

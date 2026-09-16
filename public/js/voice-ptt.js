@@ -37,6 +37,9 @@ class JamriVoicePTT {
         this.originalMusicVolume = null;
         this.nextPlayTime = 0;
 
+        // User preference: Listen to others' karaoke (default: true)
+        this.isKaraokeMuted = localStorage.getItem('jamri_mute_karaoke') === '1';
+
         this.initMobileAudioUnlocker();
         this.initKeyListeners();
     }
@@ -48,6 +51,7 @@ class JamriVoicePTT {
 
         this.setupWebSocketListeners();
         this.renderPTTButton();
+        this.updateKaraokeMuteUI();
     }
 
     detach() {
@@ -249,6 +253,15 @@ class JamriVoicePTT {
                 }
                 this.updateSpeakerIndicator();
             }
+
+            if (!data.speaking) {
+                const remaining = Math.max(0, (this.nextPlayTime || 0) - (this.audioCtx ? this.audioCtx.currentTime : 0));
+                setTimeout(() => {
+                    if (this.audioCtx && this.nextPlayTime && this.audioCtx.currentTime >= this.nextPlayTime - 0.02) {
+                        this.nextPlayTime = 0;
+                    }
+                }, (remaining + 0.05) * 1000);
+            }
         });
     }
 
@@ -320,21 +333,21 @@ class JamriVoicePTT {
                 this.duckMusic();
             }
 
-            // Real-time Audio Processor (Low latency streaming)
+            // Real-time Audio Processor (Optimal balance of low latency & smooth networking)
             this.micSource = this.audioCtx.createMediaStreamSource(this.mediaStream);
-            const bufferSize = 2048; // ~128ms per chunk at 16kHz
+            const bufferSize = 4096; // ~85ms per chunk at 48kHz
             this.micProcessor = this.audioCtx.createScriptProcessor(bufferSize, 1, 1);
 
-            const inputSampleRate = this.audioCtx.sampleRate;
-            const targetSampleRate = 16000;
+            const inputSampleRate = this.audioCtx.sampleRate || 48000;
+            // Exact 2:1 decimation provides 24000Hz (or 22050Hz) crystal-clear studio voice with zero boundary truncation
+            const targetSampleRate = Math.round(inputSampleRate / 2);
 
             this.micProcessor.onaudioprocess = (e) => {
                 if (!this.isSpeaking) return;
                 const inputData = e.inputBuffer.getChannelData(0);
 
-                // Downsample to 16kHz for lean, fast streaming
-                const downsampled = this.downsampleBuffer(inputData, inputSampleRate, targetSampleRate);
-                const pcm16 = this.floatToInt16(downsampled);
+                // Anti-aliased 2:1 decimation directly to Int16Array
+                const pcm16 = this.downsample2To1(inputData);
                 const base64 = this.pcmToBase64(pcm16);
 
                 if (this.ws && base64.length > 0) {
@@ -451,8 +464,11 @@ class JamriVoicePTT {
         const channel = data.channel || 'general';
         const inKaraoke = this.isKaraokeActive();
 
-        // 1. Channel Separation Filtering
+        // 1. Channel Separation & Mute Filtering
         if (channel === 'karaoke') {
+            // If user turned off hearing karaoke, completely ignore karaoke voice chunks!
+            if (this.isKaraokeMuted) return;
+
             // Karaoke channel: ONLY heard by users currently in karaoke mode
             if (!inKaraoke) return;
 
@@ -480,11 +496,13 @@ class JamriVoicePTT {
             try { await this.audioCtx.resume(); } catch (e) {}
         }
 
-        // Live Real-Time PCM16 Stream Playback (Discord Style)
+        // Live Real-Time PCM16 Stream Playback (Seamless Jitter Buffer)
         if (data.mime === 'pcm16' || !data.mime || data.mime === 'audio/pcm') {
             try {
                 const float32 = this.base64ToFloat32(data.audio);
-                const sampleRate = data.sample_rate || 16000;
+                if (float32.length === 0) return;
+
+                const sampleRate = data.sample_rate || 24000;
                 const buffer = this.audioCtx.createBuffer(1, float32.length, sampleRate);
                 buffer.getChannelData(0).set(float32);
 
@@ -493,10 +511,15 @@ class JamriVoicePTT {
                 source.connect(this.audioCtx.destination);
 
                 const now = this.audioCtx.currentTime;
-                // Maintain smooth continuous playhead with 20ms jitter margin
-                if (!this.nextPlayTime || this.nextPlayTime < now || (this.nextPlayTime - now) > 0.4) {
-                    this.nextPlayTime = now + 0.02;
+                const JITTER_BUFFER = 0.08; // 80ms smooth jitter cushion to eliminate pops & gaps
+
+                // Continuous seamless timeline scheduling (Prevents overlapping double-voice)
+                if (!this.nextPlayTime || this.nextPlayTime < now) {
+                    this.nextPlayTime = now + JITTER_BUFFER;
+                } else if (this.nextPlayTime - now > 0.45) {
+                    this.nextPlayTime = now + 0.08;
                 }
+
                 source.start(this.nextPlayTime);
                 this.nextPlayTime += buffer.duration;
 
@@ -507,7 +530,7 @@ class JamriVoicePTT {
                     this.karaokeFadeTimers.set(data.sender_nickname, setTimeout(() => {
                         this.karaokeSpeakers.delete(data.sender_nickname);
                         this.updateKaraokeSpeakerIndicator();
-                    }, 500));
+                    }, 600));
                 } else {
                     if (this.generalFadeTimers.has(data.sender_nickname)) {
                         clearTimeout(this.generalFadeTimers.get(data.sender_nickname));
@@ -518,7 +541,7 @@ class JamriVoicePTT {
                         if (this.generalSpeakers.size === 0) {
                             this.restoreMusic();
                         }
-                    }, 500));
+                    }, 600));
                 }
                 return;
             } catch (err) {
@@ -592,32 +615,14 @@ class JamriVoicePTT {
     }
 
     // Audio Conversion & DSP Helpers for Real-Time Streaming
-    downsampleBuffer(buffer, inputRate, outputRate) {
-        if (outputRate === inputRate) return buffer;
-        const ratio = inputRate / outputRate;
-        const newLength = Math.round(buffer.length / ratio);
-        const result = new Float32Array(newLength);
-        let offsetResult = 0;
-        let offsetBuffer = 0;
-        while (offsetResult < result.length) {
-            const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio);
-            let accum = 0, count = 0;
-            for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
-                accum += buffer[i];
-                count++;
-            }
-            result[offsetResult] = count > 0 ? accum / count : buffer[offsetBuffer];
-            offsetResult++;
-            offsetBuffer = nextOffsetBuffer;
-        }
-        return result;
-    }
-
-    floatToInt16(floatArr) {
-        const pcm16 = new Int16Array(floatArr.length);
-        for (let i = 0; i < floatArr.length; i++) {
-            const s = Math.max(-1, Math.min(1, floatArr[i]));
-            pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    downsample2To1(input) {
+        const len = Math.floor(input.length / 2);
+        const pcm16 = new Int16Array(len);
+        for (let i = 0; i < len; i++) {
+            // 2-point boxcar average (simple, fast lowpass filter preventing aliasing)
+            const s = (input[i * 2] + input[i * 2 + 1]) * 0.5;
+            const clamped = s < -1 ? -1 : (s > 1 ? 1 : s);
+            pcm16[i] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7FFF;
         }
         return pcm16;
     }
@@ -634,16 +639,48 @@ class JamriVoicePTT {
 
     base64ToFloat32(base64) {
         const binary = atob(base64);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) {
-            bytes[i] = binary.charCodeAt(i);
-        }
-        const pcm16 = new Int16Array(bytes.buffer);
-        const float32 = new Float32Array(pcm16.length);
-        for (let i = 0; i < pcm16.length; i++) {
-            float32[i] = pcm16[i] < 0 ? pcm16[i] / 0x8000 : pcm16[i] / 0x7FFF;
+        const pcmLen = Math.floor(binary.length / 2);
+        const float32 = new Float32Array(pcmLen);
+        for (let i = 0; i < pcmLen; i++) {
+            const byte1 = binary.charCodeAt(i * 2);
+            const byte2 = binary.charCodeAt(i * 2 + 1);
+            let val = byte1 | (byte2 << 8);
+            if (val >= 0x8000) val -= 0x10000;
+            float32[i] = val / 32768.0;
         }
         return float32;
+    }
+
+    // Karaoke Mute Management (User setting to listen/mute others' karaoke)
+    setKaraokeMuted(muted, broadcast = true) {
+        this.isKaraokeMuted = !!muted;
+        localStorage.setItem('jamri_mute_karaoke', this.isKaraokeMuted ? '1' : '0');
+        this.updateKaraokeMuteUI();
+
+        if (broadcast && this.ws) {
+            this.ws.sendKaraokeMuteToggle(this.isKaraokeMuted);
+        }
+    }
+
+    toggleKaraokeMuted() {
+        this.setKaraokeMuted(!this.isKaraokeMuted, true);
+    }
+
+    updateKaraokeMuteUI() {
+        const isMuted = this.isKaraokeMuted;
+        document.querySelectorAll('.btn-hear-karaoke').forEach(btn => {
+            btn.classList.toggle('active', isMuted);
+            btn.classList.toggle('is-muted', isMuted);
+            btn.classList.toggle('btn-outline', !isMuted);
+            btn.classList.toggle('btn-danger', isMuted);
+            const label = btn.querySelector('.hear-karaoke-label');
+            if (label) {
+                label.textContent = isMuted ? 'Karaoke Lain: Dibisukan' : 'Karaoke Lain: Terdengar';
+            }
+            btn.title = isMuted 
+                ? 'Suara karaoke peserta lain sedang dibisukan di perangkat Anda. Klik untuk mendengarkan.' 
+                : 'Anda dapat mendengar suara karaoke peserta lain. Klik untuk membisukan.';
+        });
     }
 
     blobToBase64(blob) {

@@ -489,6 +489,17 @@ class WebSocketHandler implements MessageComponentInterface
                 ]);
                 break;
 
+            case 'karaoke_mute_toggle':
+                $muted = !empty($data['muted']);
+                $this->broadcastToRoom($roomId, [
+                    'type' => 'karaoke_mute_toggle',
+                    'muted' => $muted,
+                    'user' => $meta['nickname'],
+                    'emoji' => $meta['emoji'],
+                    'device_id' => $meta['device_id'],
+                ]);
+                break;
+
             case 'game_start':
                 $this->handleGameStart($roomId, $meta, $data);
                 break;

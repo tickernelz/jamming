@@ -1848,6 +1848,22 @@
     animation: pulse 1.2s infinite;
 }
 
+/* --- HEAR / MUTE KARAOKE BUTTON --- */
+.btn-hear-karaoke {
+    transition: all 0.2s ease;
+}
+
+.btn-hear-karaoke.is-muted {
+    background: rgba(239, 68, 68, 0.12) !important;
+    border-color: rgba(239, 68, 68, 0.45) !important;
+    color: #f87171 !important;
+}
+
+.btn-hear-karaoke.is-muted:hover {
+    background: rgba(239, 68, 68, 0.24) !important;
+    border-color: #ef4444 !important;
+}
+
 .online-users-modal-box {
     max-width: 360px;
     width: 90%;

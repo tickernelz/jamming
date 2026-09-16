@@ -571,6 +571,13 @@ function renderRoomShell(roomDetail) {
                     </svg>
                     <span>Lirik Karaoke</span>
                 </button>
+                <button type="button" id="btn-toggle-hear-karaoke" class="btn btn-outline btn-sm btn-hear-karaoke" title="Dengarkan atau bisukan suara karaoke dari peserta lain">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 18v-6a9 9 0 0 1 18 0v6"></path>
+                        <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"></path>
+                    </svg>
+                    <span class="hear-karaoke-label">Karaoke Lain: Terdengar</span>
+                </button>
                 <button type="button" id="btn-room-minigames" class="btn btn-outline btn-sm" title="Mainkan Mini Game Realtime">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect>
@@ -734,6 +741,15 @@ function renderRoomShell(roomDetail) {
         });
     }
 
+    const btnHearKaraoke = container.querySelector('#btn-toggle-hear-karaoke');
+    if (btnHearKaraoke) {
+        btnHearKaraoke.addEventListener('click', () => {
+            if (window.JAMRI_APP.voicePTT) {
+                window.JAMRI_APP.voicePTT.toggleKaraokeMuted();
+            }
+        });
+    }
+
     // Tabs switch
     const tabBtns = container.querySelectorAll('.tab-nav-item');
     tabBtns.forEach(btn => {
@@ -884,6 +900,16 @@ function bindRoomWebSocketEvents(ws, player, roomDetail) {
         }
         if (data.started_by && window.JAMRI_APP.currentChat) {
             window.JAMRI_APP.currentChat.appendActivityNotice(`memulai permainan ${data.game_name}`, '', data.started_by);
+        }
+    });
+
+    ws.on('karaoke_mute_toggle', (data) => {
+        if (window.JAMRI_APP.currentChat && data.user) {
+            const isMe = window.JAMRI_USER && window.JAMRI_USER.nickname === data.user;
+            const actionText = data.muted 
+                ? (isMe ? 'mematikan suara karaoke peserta lain (telinga butuh istirahat)' : 'mematikan suara karaoke peserta lain')
+                : (isMe ? 'mengaktifkan kembali suara karaoke peserta lain' : 'mengaktifkan kembali suara karaoke peserta lain');
+            window.JAMRI_APP.currentChat.appendActivityNotice(actionText, '', data.user);
         }
     });
 

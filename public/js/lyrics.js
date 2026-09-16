@@ -262,6 +262,14 @@ class JamriLyricsManager {
                             <span class="ptt-waves"><span></span><span></span><span></span></span>
                         </button>
 
+                        <button type="button" class="btn btn-outline btn-xs btn-hear-karaoke" title="Dengarkan atau bisukan suara karaoke dari peserta lain">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M3 18v-6a9 9 0 0 1 18 0v6"></path>
+                                <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"></path>
+                            </svg>
+                            <span class="hear-karaoke-label">Karaoke Lain: Terdengar</span>
+                        </button>
+
                         ${isSynced ? `
                             <span style="font-size:10px; font-weight:700; padding:2px 8px; border-radius:12px; background:var(--success-light); color:var(--success); border:1px solid rgba(22,163,74,0.3);">
                                 Sinkron Real-Time
@@ -326,6 +334,18 @@ class JamriLyricsManager {
 
         if (btnKaraokePtt && window.JAMRI_APP && window.JAMRI_APP.voicePTT) {
             window.JAMRI_APP.voicePTT.bindKaraokePTTButton(btnKaraokePtt);
+        }
+
+        const btnHearKaraoke = container.querySelector('.btn-hear-karaoke');
+        if (btnHearKaraoke) {
+            btnHearKaraoke.addEventListener('click', () => {
+                if (window.JAMRI_APP && window.JAMRI_APP.voicePTT) {
+                    window.JAMRI_APP.voicePTT.toggleKaraokeMuted();
+                }
+            });
+            if (window.JAMRI_APP && window.JAMRI_APP.voicePTT) {
+                window.JAMRI_APP.voicePTT.updateKaraokeMuteUI();
+            }
         }
 
         if (btnFullscreen) {
@@ -503,6 +523,14 @@ class JamriLyricsManager {
                             <span class="ptt-waves"><span></span><span></span><span></span></span>
                         </button>
 
+                        <button type="button" class="btn btn-outline btn-xs btn-hear-karaoke" title="Dengarkan atau bisukan suara karaoke dari peserta lain">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M3 18v-6a9 9 0 0 1 18 0v6"></path>
+                                <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"></path>
+                            </svg>
+                            <span class="hear-karaoke-label">Karaoke Lain: Terdengar</span>
+                        </button>
+
                         ${isSynced ? `
                             <span style="display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:700; padding:3px 8px; border-radius:12px; background:var(--success-light); color:var(--success); border:1px solid rgba(22,163,74,0.3);">
                                 <span style="width:6px; height:6px; border-radius:50%; background:var(--success);"></span>
@@ -626,6 +654,18 @@ class JamriLyricsManager {
         const btnKaraokePtt = this.modalEl.querySelector('.btn-karaoke-ptt');
         if (btnKaraokePtt && window.JAMRI_APP && window.JAMRI_APP.voicePTT) {
             window.JAMRI_APP.voicePTT.bindKaraokePTTButton(btnKaraokePtt);
+        }
+
+        const btnHearKaraoke = this.modalEl.querySelector('.btn-hear-karaoke');
+        if (btnHearKaraoke) {
+            btnHearKaraoke.addEventListener('click', () => {
+                if (window.JAMRI_APP && window.JAMRI_APP.voicePTT) {
+                    window.JAMRI_APP.voicePTT.toggleKaraokeMuted();
+                }
+            });
+            if (window.JAMRI_APP && window.JAMRI_APP.voicePTT) {
+                window.JAMRI_APP.voicePTT.updateKaraokeMuteUI();
+            }
         }
 
         const searchToggle = this.modalEl.querySelector('#btn-lyrics-search-toggle');
