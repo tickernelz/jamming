@@ -325,9 +325,34 @@ class JamriGames {
         if (btnStart) {
             btnStart.addEventListener('click', () => {
                 this.ensureAudio();
-                if (this.ws) {
-                    this.ws.sendGameStart(this.selectedGame, this.penaltyMinutes);
+                const ws = this.ws || (window.JAMRI_APP && window.JAMRI_APP.wsClient);
+                if (!ws || !ws.isConnected) {
+                    if (window.showToast) {
+                        window.showToast('Koneksi room belum terhubung ke server WebSocket.', 'warning');
+                    } else {
+                        alert('Koneksi room belum terhubung ke server WebSocket.');
+                    }
+                    return;
                 }
+
+                btnStart.disabled = true;
+                const oldContent = btnStart.innerHTML;
+                btnStart.innerHTML = `
+                    <svg style="animation:spin 1s linear infinite;" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10" stroke-opacity="0.25"></circle>
+                        <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"></path>
+                    </svg>
+                    <span>Memulai Permainan...</span>
+                `;
+
+                setTimeout(() => {
+                    if (btnStart) {
+                        btnStart.disabled = false;
+                        btnStart.innerHTML = oldContent;
+                    }
+                }, 3000);
+
+                ws.sendGameStart(this.selectedGame, this.penaltyMinutes);
             });
         }
 
@@ -448,8 +473,10 @@ class JamriGames {
 
         stage.innerHTML = `
             <div class="dice-arena-grid">
-                ${participants.map(p => `
-                    <div class="dice-player-card" id="dice-card-${p.device_id}">
+                ${participants.map((p, idx) => {
+                    const cardId = p.id || ('p_' + idx);
+                    return `
+                    <div class="dice-player-card" id="dice-card-${cardId}">
                         <div class="dice-p-avatar">${p.emoji || '🎧'}</div>
                         <div class="dice-p-name">${this.escape(p.nickname)}</div>
                         <div class="dice-cubes-row">
@@ -458,7 +485,7 @@ class JamriGames {
                         </div>
                         <div class="dice-total-score">Mengocok...</div>
                     </div>
-                `).join('')}
+                `}).join('')}
             </div>
         `;
 
@@ -480,11 +507,12 @@ class JamriGames {
             clearInterval(rollInterval);
             clearInterval(faceInterval);
 
-            participants.forEach(p => {
-                const card = stage.querySelector(`#dice-card-${p.device_id}`);
+            participants.forEach((p, idx) => {
+                const cardId = p.id || ('p_' + idx);
+                const card = stage.querySelector(`#dice-card-${cardId}`);
                 if (!card) return;
 
-                const isLoser = loser && loser.device_id === p.device_id;
+                const isLoser = loser && (loser.id ? loser.id === cardId : (loser.device_id === p.device_id && loser.nickname === p.nickname));
                 const d1Box = card.querySelector('.d1');
                 const d2Box = card.querySelector('.d2');
                 const scoreText = card.querySelector('.dice-total-score');
@@ -518,8 +546,10 @@ class JamriGames {
 
         stage.innerHTML = `
             <div class="number-arena-grid">
-                ${participants.map(p => `
-                    <div class="number-player-card" id="num-card-${p.device_id}">
+                ${participants.map((p, idx) => {
+                    const cardId = p.id || ('p_' + idx);
+                    return `
+                    <div class="number-player-card" id="num-card-${cardId}">
                         <div class="num-p-avatar">${p.emoji || '🎧'}</div>
                         <div class="num-p-name">${this.escape(p.nickname)}</div>
                         <div class="num-digital-display">
@@ -527,7 +557,7 @@ class JamriGames {
                         </div>
                         <div class="num-status-label">Mengacak angka...</div>
                     </div>
-                `).join('')}
+                `}).join('')}
             </div>
         `;
 
@@ -547,11 +577,12 @@ class JamriGames {
             clearInterval(tickInterval);
             clearInterval(counterInterval);
 
-            participants.forEach(p => {
-                const card = stage.querySelector(`#num-card-${p.device_id}`);
+            participants.forEach((p, idx) => {
+                const cardId = p.id || ('p_' + idx);
+                const card = stage.querySelector(`#num-card-${cardId}`);
                 if (!card) return;
 
-                const isLoser = loser && loser.device_id === p.device_id;
+                const isLoser = loser && (loser.id ? loser.id === cardId : (loser.device_id === p.device_id && loser.nickname === p.nickname));
                 const numEl = card.querySelector('.digital-number');
                 const statusEl = card.querySelector('.num-status-label');
 

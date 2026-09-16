@@ -821,6 +821,9 @@ function bindRoomWebSocketEvents(ws, player, roomDetail) {
     });
 
     ws.on('game_started', (data) => {
+        if (window.JAMRI_APP.games) {
+            window.JAMRI_APP.games.openGameArena(data);
+        }
         if (data.started_by && window.JAMRI_APP.currentChat) {
             window.JAMRI_APP.currentChat.appendActivityNotice(`memulai permainan ${data.game_name} 🎮`, '🎮', data.started_by);
         }

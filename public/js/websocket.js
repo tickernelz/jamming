@@ -177,7 +177,7 @@ class JamriWebSocket {
     }
 
     sendGameStart(gameType, penaltyMinutes = 2, options = {}) {
-        this.send('game_start', {
+        return this.send('game_start', {
             game_type: gameType,
             penalty_minutes: parseInt(penaltyMinutes, 10) || 2,
             options: options

@@ -1,7 +1,7 @@
 /**
  * voice-ptt.js
  * Real-Time Push-to-Talk (PTT) Engine for Jamri Jamming Rooms
- * Low-latency audio streaming over WebSocket with visual speaking indicators
+ * Crystal clear voice audio transmission with live speaking indicators and LAN context guide
  */
 
 class JamriVoicePTT {
@@ -12,9 +12,11 @@ class JamriVoicePTT {
         this.isSpeaking = false;
         this.mediaStream = null;
         this.mediaRecorder = null;
-        this.activeSpeakers = new Map(); // nickname -> timestamp
+        this.recordedChunks = [];
+        this.activeSpeakers = new Map(); // nickname -> { emoji, time }
         this.speakerTimer = null;
         this.isKeyHeld = false;
+        this.maxSpeechTimeout = null;
 
         this.initKeyListeners();
     }
@@ -33,6 +35,60 @@ class JamriVoicePTT {
         this.roomId = null;
         this.activeSpeakers.clear();
         this.updateSpeakerIndicator();
+    }
+
+    checkInsecureContext() {
+        const hostname = window.location.hostname;
+        const isLocal = hostname === 'localhost' || hostname === '127.0.0.1';
+        return (!window.isSecureContext && !isLocal);
+    }
+
+    showInsecureContextGuide() {
+        let modal = document.getElementById('jamri-mic-permission-modal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'jamri-mic-permission-modal';
+            modal.className = 'game-arena-backdrop';
+            document.body.appendChild(modal);
+        }
+
+        const currentHost = window.location.host;
+        modal.innerHTML = `
+            <div class="game-arena-box" style="max-width: 520px; padding: 24px; text-align: left;">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span style="font-size: 26px;">🎙️</span>
+                        <h3 style="margin: 0; font-size: 18px; color: var(--text-main);">Izin Mikrofon Dibutuhkan</h3>
+                    </div>
+                    <button type="button" class="btn btn-ghost btn-icon btn-sm btn-close-mic-guide">✕</button>
+                </div>
+                <div style="font-size: 14px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 16px;">
+                    Anda mengakses Jamri melalui alamat IP lokal (<strong>http://${currentHost}</strong>).
+                    Browser modern (Chrome/Android) secara default memblokir mikrofon pada protokol HTTP biasa demi keamanan.
+                </div>
+                <div style="background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; padding: 14px; margin-bottom: 18px;">
+                    <div style="font-weight: 600; font-size: 13px; color: var(--accent-primary, #6366f1); margin-bottom: 8px;">
+                        💡 Cara mengaktifkan mikrofon di Chrome (Android / PC):
+                    </div>
+                    <ol style="margin: 0; padding-left: 20px; font-size: 13px; color: var(--text-muted); display: flex; flex-direction: column; gap: 8px; line-height: 1.5;">
+                        <li>Buka tab baru di browser Anda, ketik:<br><code style="background: rgba(0,0,0,0.5); padding: 3px 6px; border-radius: 4px; color: #38bdf8; word-break: break-all;">chrome://flags/#unsafely-treat-insecure-origin-as-secure</code></li>
+                        <li>Masukkan alamat URL Jamri Anda:<br><code style="background: rgba(0,0,0,0.5); padding: 3px 6px; border-radius: 4px; color: #38bdf8;">http://${currentHost}</code></li>
+                        <li>Ubah pilihan dropdown dari <strong>Disabled</strong> menjadi <strong>Enabled</strong>.</li>
+                        <li>Klik tombol <strong>Relaunch</strong> di sudut bawah browser. Selesai!</li>
+                    </ol>
+                </div>
+                <div style="display: flex; justify-content: flex-end; gap: 10px;">
+                    <button type="button" class="btn btn-primary btn-close-mic-guide">Saya Mengerti</button>
+                </div>
+            </div>
+        `;
+
+        modal.querySelectorAll('.btn-close-mic-guide').forEach(btn => {
+            btn.addEventListener('click', () => {
+                modal.style.display = 'none';
+            });
+        });
+        modal.style.display = 'flex';
     }
 
     initKeyListeners() {
@@ -64,13 +120,13 @@ class JamriVoicePTT {
     setupWebSocketListeners() {
         if (!this.ws) return;
 
-        // Receiving real-time voice chunk from another user
+        // Receiving real-time voice transmission from another user
         this.ws.on('voice_chunk', (data) => {
             if (!data.audio) return;
             this.playVoiceChunk(data);
         });
 
-        // Receiving speaker state change
+        // Receiving speaker state change (instant visual feedback)
         this.ws.on('voice_state', (data) => {
             const nickname = data.sender_nickname;
             if (!nickname) return;
@@ -89,12 +145,27 @@ class JamriVoicePTT {
 
     async startSpeaking() {
         if (this.isSpeaking || !this.roomId) return;
-        this.isSpeaking = true;
 
+        // Check insecure context (HTTP on LAN IP)
+        if (this.checkInsecureContext() && (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)) {
+            this.showInsecureContextGuide();
+            return;
+        }
+
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            if (window.showToast) {
+                window.showToast('Browser tidak mendukung akses mikrofon pada koneksi ini.', 'error');
+            } else {
+                alert('Browser tidak mendukung akses mikrofon pada koneksi ini.');
+            }
+            return;
+        }
+
+        this.isSpeaking = true;
         this.updateButtonUI(true);
 
         try {
-            // Request microphone access
+            // Request microphone stream
             this.mediaStream = await navigator.mediaDevices.getUserMedia({
                 audio: {
                     echoCancellation: true,
@@ -105,30 +176,53 @@ class JamriVoicePTT {
 
             // Determine best supported audio mime type
             let mimeType = 'audio/webm;codecs=opus';
-            if (!MediaRecorder.isTypeSupported(mimeType)) {
-                if (MediaRecorder.isTypeSupported('audio/mp4')) {
-                    mimeType = 'audio/mp4';
-                } else if (MediaRecorder.isTypeSupported('audio/ogg')) {
-                    mimeType = 'audio/ogg';
-                } else {
-                    mimeType = '';
+            if (typeof MediaRecorder !== 'undefined') {
+                if (!MediaRecorder.isTypeSupported(mimeType)) {
+                    if (MediaRecorder.isTypeSupported('audio/webm')) {
+                        mimeType = 'audio/webm';
+                    } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+                        mimeType = 'audio/mp4';
+                    } else if (MediaRecorder.isTypeSupported('audio/ogg')) {
+                        mimeType = 'audio/ogg';
+                    } else {
+                        mimeType = '';
+                    }
                 }
             }
 
             const options = mimeType ? { mimeType } : {};
             this.mediaRecorder = new MediaRecorder(this.mediaStream, options);
+            this.recordedChunks = [];
 
-            this.mediaRecorder.ondataavailable = async (event) => {
-                if (event.data && event.data.size > 0 && this.ws && this.isSpeaking) {
-                    const base64 = await this.blobToBase64(event.data);
-                    this.ws.sendVoiceChunk(base64, this.mediaRecorder.mimeType);
+            this.mediaRecorder.ondataavailable = (event) => {
+                if (event.data && event.data.size > 0) {
+                    this.recordedChunks.push(event.data);
                 }
             };
 
-            // Start sending in 250ms chunks for near real-time transmission
-            this.mediaRecorder.start(250);
+            this.mediaRecorder.onstop = async () => {
+                const chunks = this.recordedChunks;
+                this.recordedChunks = [];
+                if (chunks.length === 0) return;
 
-            // Notify room that this user is speaking
+                const actualMime = (this.mediaRecorder && this.mediaRecorder.mimeType) || mimeType || 'audio/webm';
+                const completeBlob = new Blob(chunks, { type: actualMime });
+
+                // Transmit only if user actually spoke (> 250 bytes)
+                if (completeBlob.size > 250 && this.ws) {
+                    try {
+                        const base64 = await this.blobToBase64(completeBlob);
+                        this.ws.sendVoiceChunk(base64, actualMime);
+                    } catch (e) {
+                        console.error('[PTT] Encode voice message failed:', e);
+                    }
+                }
+            };
+
+            // Collect slices during speech
+            this.mediaRecorder.start(100);
+
+            // Immediately broadcast visual speaking state to all users
             if (this.ws) {
                 this.ws.sendVoiceState(true);
             }
@@ -140,11 +234,21 @@ class JamriVoicePTT {
             });
             this.updateSpeakerIndicator();
 
+            // Auto cutoff after 15 seconds
+            if (this.maxSpeechTimeout) clearTimeout(this.maxSpeechTimeout);
+            this.maxSpeechTimeout = setTimeout(() => {
+                if (this.isSpeaking) {
+                    this.stopSpeaking();
+                }
+            }, 15000);
+
         } catch (err) {
             console.warn('[PTT] Mic access error:', err);
             this.stopSpeaking();
-            if (window.showToast) {
-                window.showToast('Gagal mengakses mikrofon. Pastikan izin mic diizinkan!', 'error');
+            if (this.checkInsecureContext()) {
+                this.showInsecureContextGuide();
+            } else if (window.showToast) {
+                window.showToast('Gagal mengakses mikrofon. Pastikan izin mic telah diberikan!', 'error');
             }
         }
     }
@@ -153,10 +257,17 @@ class JamriVoicePTT {
         if (!this.isSpeaking) return;
         this.isSpeaking = false;
 
+        if (this.maxSpeechTimeout) {
+            clearTimeout(this.maxSpeechTimeout);
+            this.maxSpeechTimeout = null;
+        }
+
         this.updateButtonUI(false);
 
         if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
-            try { this.mediaRecorder.stop(); } catch (e) {}
+            try {
+                this.mediaRecorder.stop();
+            } catch (e) {}
         }
         this.mediaRecorder = null;
 
@@ -178,39 +289,37 @@ class JamriVoicePTT {
     playVoiceChunk(data) {
         try {
             const audio = new Audio(data.audio);
-            // Duck volume slightly or play at normal speech volume
             audio.volume = 1.0;
+
             const playPromise = audio.play();
             if (playPromise !== undefined) {
-                playPromise.catch(() => {});
+                playPromise.catch(err => {
+                    console.warn('[PTT] Playback blocked or failed:', err);
+                });
             }
 
-            // Refresh active speaker timeout
+            // Show active speaker indicator while audio is playing
             this.activeSpeakers.set(data.sender_nickname, {
                 emoji: data.sender_emoji || '🎧',
                 time: Date.now()
             });
             this.updateSpeakerIndicator();
 
-            if (!this.speakerTimer) {
-                this.speakerTimer = setInterval(() => {
-                    const now = Date.now();
-                    let changed = false;
-                    for (const [nick, info] of this.activeSpeakers.entries()) {
-                        if (nick !== this.user.nickname && now - info.time > 1200) {
-                            this.activeSpeakers.delete(nick);
-                            changed = true;
-                        }
-                    }
-                    if (changed) this.updateSpeakerIndicator();
-                    if (this.activeSpeakers.size === 0) {
-                        clearInterval(this.speakerTimer);
-                        this.speakerTimer = null;
-                    }
-                }, 500);
-            }
+            audio.onended = () => {
+                this.activeSpeakers.delete(data.sender_nickname);
+                this.updateSpeakerIndicator();
+            };
+
+            // Fallback timeout to clear indicator
+            setTimeout(() => {
+                if (this.activeSpeakers.has(data.sender_nickname)) {
+                    this.activeSpeakers.delete(data.sender_nickname);
+                    this.updateSpeakerIndicator();
+                }
+            }, 12000);
+
         } catch (e) {
-            console.warn('[PTT] Failed to play chunk:', e);
+            console.warn('[PTT] Failed to play voice:', e);
         }
     }
 

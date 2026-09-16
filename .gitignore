@@ -1,11 +1,12 @@
 # Composer dependencies
 /vendor/
 
-# Database runtime files (SQLite)
+# Database runtime files (SQLite) & runtime state
 /data/*.sqlite
 /data/*.sqlite-shm
 /data/*.sqlite-wal
 /data/*.db
+/data/*.json
 !/data/.htaccess
 !/data/.gitkeep
 

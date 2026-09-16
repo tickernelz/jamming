@@ -737,7 +737,9 @@ class WebSocketHandler implements MessageComponentInterface
             if (isset($this->clientMeta[$resId])) {
                 $meta = $this->clientMeta[$resId];
                 $devId = (string)$meta['device_id'];
-                $users[$devId] = [
+                // Distinguish users by device ID and nickname to allow multi-tab testing
+                $uniqueKey = $devId . '_' . $meta['nickname'];
+                $users[$uniqueKey] = [
                     'nickname' => $meta['nickname'],
                     'emoji' => $meta['emoji'],
                     'device_id' => $devId,
@@ -775,7 +777,13 @@ class WebSocketHandler implements MessageComponentInterface
 
         $onlineUsers = $this->getOnlineUsers($roomId);
         if (empty($onlineUsers)) {
-            return;
+            // Fallback to sender if room online list had a timing gap
+            $onlineUsers = [[
+                'nickname' => $meta['nickname'] ?? 'Player',
+                'emoji' => $meta['emoji'] ?? '🎧',
+                'device_id' => $meta['device_id'] ?? 'dev_guest',
+                'is_host' => true,
+            ]];
         }
 
         $gameTitles = [
@@ -792,11 +800,13 @@ class WebSocketHandler implements MessageComponentInterface
         if ($gameType === 'dice') {
             $minScore = 999;
             $loserCandidates = [];
-            foreach ($onlineUsers as $u) {
+            foreach ($onlineUsers as $idx => $u) {
                 $d1 = mt_rand(1, 6);
                 $d2 = mt_rand(1, 6);
                 $total = $d1 + $d2;
                 $pData = [
+                    'id' => 'p_' . $idx,
+                    'index' => $idx,
                     'nickname' => $u['nickname'],
                     'emoji' => $u['emoji'],
                     'device_id' => $u['device_id'],
@@ -814,20 +824,23 @@ class WebSocketHandler implements MessageComponentInterface
                 }
             }
 
-            $loser = $loserCandidates[array_rand($loserCandidates)];
+            $loserKey = array_rand($loserCandidates);
+            $loser = $loserCandidates[$loserKey];
             $animationMs = 4000;
 
         } elseif ($gameType === 'number') {
             $usedNumbers = [];
             $minScore = 999;
             $loserCandidates = [];
-            foreach ($onlineUsers as $u) {
+            foreach ($onlineUsers as $idx => $u) {
                 do {
                     $score = mt_rand(1, 100);
                 } while (in_array($score, $usedNumbers, true) && count($usedNumbers) < 100);
                 $usedNumbers[] = $score;
 
                 $pData = [
+                    'id' => 'p_' . $idx,
+                    'index' => $idx,
                     'nickname' => $u['nickname'],
                     'emoji' => $u['emoji'],
                     'device_id' => $u['device_id'],
@@ -842,16 +855,18 @@ class WebSocketHandler implements MessageComponentInterface
                     $loserCandidates[] = $pData;
                 }
             }
-            $loser = $loserCandidates[array_rand($loserCandidates)];
+            $loserKey = array_rand($loserCandidates);
+            $loser = $loserCandidates[$loserKey];
             $animationMs = 4500;
 
         } else { // wheel
             foreach ($onlineUsers as $idx => $u) {
                 $participants[] = [
+                    'id' => 'p_' . $idx,
+                    'index' => $idx,
                     'nickname' => $u['nickname'],
                     'emoji' => $u['emoji'],
                     'device_id' => $u['device_id'],
-                    'index' => $idx,
                 ];
             }
 
