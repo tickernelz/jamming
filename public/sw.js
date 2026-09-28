@@ -1,8 +1,7 @@
 // sw.js - Jamri Service Worker for Offline PWA Capabilities
 
-const CACHE_NAME = 'jamri-shell-v10';
+const CACHE_NAME = 'jamri-shell-v11';
 const SHELL_ASSETS = [
-    '../index.php',
     './css/main.css',
     './css/components.css',
     './js/jamri-format.js',
@@ -14,6 +13,7 @@ const SHELL_ASSETS = [
     './js/soundboard.js',
     './js/voice-ptt.js',
     './js/games.js',
+    './js/lyrics.js',
     './js/app.js',
     './manifest.json',
     './icon-192.svg',
@@ -53,8 +53,12 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
     const url = new URL(e.request.url);
 
-    // Bypass API and WebSocket from cache
-    if (url.pathname.includes('/api/') || url.port === '8080') {
+    // Only handle same-origin GET requests. Bypass API, WebSocket and the
+    // dynamic HTML shell entirely so the app never serves a stale index.php.
+    if (e.request.method !== 'GET' || url.origin !== self.location.origin) {
+        return;
+    }
+    if (url.pathname.includes('/api/') || url.port === '8080' || url.pathname.endsWith('.php') || url.pathname.endsWith('/')) {
         return;
     }
 
@@ -64,10 +68,7 @@ self.addEventListener('fetch', (e) => {
                 return cachedResponse;
             }
             return fetch(e.request).catch(() => {
-                // Offline fallback if navigation
-                if (e.request.mode === 'navigate') {
-                    return caches.match('./index.php');
-                }
+                return new Response('', { status: 504, statusText: 'Offline' });
             });
         })
     );

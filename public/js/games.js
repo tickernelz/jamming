@@ -487,7 +487,7 @@ class JamriGames {
                     return `
                         <div class="punish-user-item" style="display:flex; align-items:center; justify-content:space-between; padding:8px 10px; margin-bottom:6px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); border-radius:8px;">
                             <div style="display:flex; align-items:center; gap:8px;">
-                                <span class="p-avatar" style="width:26px; height:26px; border-radius:50%; background:rgba(255,255,255,0.08); display:flex; align-items:center; justify-content:center; font-size:13px;">${p.emoji || '🎧'}</span>
+                                <span class="p-avatar" style="width:26px; height:26px; border-radius:50%; background:rgba(255,255,255,0.08); display:flex; align-items:center; justify-content:center; font-size:13px;">${this.safeEmoji(p.emoji)}</span>
                                 <div>
                                     <span class="p-nick" style="font-size:13px; font-weight:500; color:var(--text-main);">${this.escape(p.nickname)}</span>
                                     <span style="font-size:11px; color:var(--text-muted); margin-left:6px;">(${this.escape(p.game_name || 'Game')})</span>
@@ -574,7 +574,7 @@ class JamriGames {
                     const cardId = p.id || ('p_' + idx);
                     return `
                     <div class="dice-player-card" id="dice-card-${cardId}">
-                        <div class="dice-p-avatar">${p.emoji || '🎧'}</div>
+                        <div class="dice-p-avatar">${this.safeEmoji(p.emoji)}</div>
                         <div class="dice-p-name">${this.escape(p.nickname)}</div>
                         <div class="dice-cubes-row">
                             <div class="dice-box rolling d1">·</div>
@@ -643,7 +643,7 @@ class JamriGames {
                     const cardId = p.id || ('p_' + idx);
                     return `
                     <div class="number-player-card" id="num-card-${cardId}">
-                        <div class="num-p-avatar">${p.emoji || '🎧'}</div>
+                        <div class="num-p-avatar">${this.safeEmoji(p.emoji)}</div>
                         <div class="num-p-name">${this.escape(p.nickname)}</div>
                         <div class="num-digital-display">
                             <span class="digital-number rolling-number">--</span>
@@ -834,6 +834,16 @@ class JamriGames {
             '"': '&quot;',
             "'": '&#039;'
         }[m]));
+    }
+
+    /**
+     * Sanitise an avatar emoji received via WebSocket before innerHTML injection.
+     * game_started payloads are broadcast by the room host, so they are untrusted.
+     */
+    safeEmoji(str) {
+        if (typeof str !== 'string' || str.length === 0 || str.length > 8) return '🎧';
+        if (/[<>&"'`\/\\{}()\[\]=;:]/.test(str)) return '🎧';
+        return str;
     }
 }
 

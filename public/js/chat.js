@@ -113,7 +113,7 @@ class JamriChat {
 
         item.innerHTML = `
             <div class="chat-avatar-box">
-                <span class="chat-user-emoji">${msg.sender_emoji || '🎧'}</span>
+                <span class="chat-user-emoji">${safeEmoji(msg.sender_emoji)}</span>
             </div>
             <div class="chat-bubble-content">
                 <div class="chat-meta">
@@ -149,7 +149,7 @@ class JamriChat {
             const timeStr = new Date(msg.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
             item.innerHTML = `
                 <div class="chat-avatar-box">
-                    <span class="chat-user-emoji">${msg.sender_emoji || '🎧'}</span>
+                    <span class="chat-user-emoji">${safeEmoji(msg.sender_emoji)}</span>
                 </div>
                 <div class="chat-bubble-content">
                     <div class="chat-meta">
@@ -285,7 +285,7 @@ class JamriChat {
             return `
                 <div class="online-user-row ${isMe ? 'is-me' : ''}" style="display:flex; align-items:center; justify-content:space-between; padding:8px 12px; margin-bottom:6px; background:var(--bg-surface-elevated); border:1px solid var(--border-subtle); border-radius:var(--radius-sm);">
                     <div style="display:flex; align-items:center; gap:10px; min-width:0;">
-                        <div class="online-user-avatar" style="width:32px; height:32px; border-radius:50%; background:var(--bg-surface); border:1px solid var(--border-subtle); display:flex; align-items:center; justify-content:center; font-size:16px; flex-shrink:0;">${user.emoji || '🎧'}</div>
+                        <div class="online-user-avatar" style="width:32px; height:32px; border-radius:50%; background:var(--bg-surface); border:1px solid var(--border-subtle); display:flex; align-items:center; justify-content:center; font-size:16px; flex-shrink:0;">${safeEmoji(user.emoji)}</div>
                         <div style="display:flex; align-items:center; gap:6px; min-width:0;">
                             <span class="online-user-name" style="font-size:13px; font-weight:600; color:var(--text-primary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${this.escape(user.nickname)}</span>
                             ${isMe ? '<span class="user-role-badge me" style="font-size:10px; padding:2px 6px; border-radius:4px; background:var(--primary-light); color:var(--primary); font-weight:600;">Anda</span>' : ''}

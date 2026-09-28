@@ -52,9 +52,15 @@ class JamriSearch {
                                     <circle cx="11" cy="11" r="8"></circle>
                                     <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                                 </svg>
-                                <input type="text" id="search-keyword" class="search-input-main" placeholder="Ketik judul lagu, artis, atau link YouTube..." autocomplete="off" />
+                                <input type="text" id="search-keyword" class="search-input-main" placeholder="Ketik judul lagu, artis, link video, atau link playlist..." autocomplete="off" />
                             </div>
                             <button type="submit" class="btn btn-primary" id="btn-do-search">Cari</button>
+                            <button type="button" class="btn btn-outline" id="btn-import-playlist" title="Import semua lagu dari link playlist YouTube ke Bank Musik">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path>
+                                </svg>
+                                <span>Playlist</span>
+                            </button>
                         </form>
                         <!-- Preview Active Banner -->
                         <div id="preview-active-bar" style="display:none; margin-top:10px; padding:8px 12px; background:var(--primary-light); border:1px solid var(--primary-border); border-radius:var(--radius-sm); font-size:12px; display:flex; align-items:center; justify-content:space-between;">
@@ -105,6 +111,14 @@ class JamriSearch {
             modal.querySelector('#btn-stop-preview-bar').addEventListener('click', () => {
                 this.player.stopPreview();
             });
+
+            // Import YouTube playlist into Bank Musik (room or solo)
+            const btnImport = modal.querySelector('#btn-import-playlist');
+            if (btnImport) {
+                btnImport.addEventListener('click', () => {
+                    this.importPlaylist();
+                });
+            }
 
             const form = modal.querySelector('#search-input-form');
             form.addEventListener('submit', (e) => {
@@ -179,8 +193,8 @@ class JamriSearch {
 
             row.innerHTML = `
                 <div class="track-thumb-box">
-                    <img src="${track.thumbnail}" alt="" class="track-thumb-img" loading="lazy" />
-                    <span class="track-duration-pill">${track.duration_formatted}</span>
+                    <img src="${this.safeImageUrl(track.thumbnail)}" alt="" class="track-thumb-img" loading="lazy" />
+                    <span class="track-duration-pill">${this.escape(track.duration_formatted || '')}</span>
                 </div>
                 <div class="track-info-box">
                     <div class="track-title" title="${this.escape(track.title)}">${this.escape(track.title)}</div>
@@ -342,6 +356,119 @@ class JamriSearch {
         });
     }
 
+    /**
+     * Import all tracks from a YouTube playlist into the Bank Musik
+     * (room playlist when jamming, solo playlist otherwise).
+     */
+    async importPlaylist() {
+        const modal = document.getElementById('search-modal');
+        if (!modal) return;
+        const input = modal.querySelector('#search-keyword');
+        const btn = modal.querySelector('#btn-import-playlist');
+        const listItems = modal.querySelector('#search-list-items');
+        const emptyState = modal.querySelector('#search-empty-state');
+
+        const raw = (input.value || '').trim();
+        const playlistId = this.extractPlaylistId(raw);
+        if (!playlistId) {
+            if (window.showToast) {
+                window.showToast('Tempelkan link playlist YouTube (mengandung "list=") terlebih dahulu.', 'warning');
+            } else {
+                alert('Tempelkan link playlist YouTube terlebih dahulu.');
+            }
+            if (input) input.focus();
+            return;
+        }
+
+        const originalHtml = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span>Mengambil...</span>';
+        emptyState.style.display = 'none';
+        listItems.style.display = 'block';
+        listItems.innerHTML = '<div class="loading-spinner-box"><div class="spinner"></div><span>Membaca playlist YouTube...</span></div>';
+
+        try {
+            const res = await fetch(`api/playlist.php?url=${encodeURIComponent(playlistId)}&limit=100`);
+            const data = await res.json();
+
+            if (!data.success || !Array.isArray(data.tracks) || data.tracks.length === 0) {
+                listItems.innerHTML = `<div class="empty-state"><p>${this.escape(data.message || 'Playlist kosong atau tidak dapat diakses.')}</p></div>`;
+                return;
+            }
+
+            const added = this.addTracksToBankMusik(data.tracks);
+            const skipped = data.tracks.length - added;
+
+            let summary = `Berhasil menambahkan ${added} lagu ke Bank Musik.`;
+            if (skipped > 0) summary += ` ${skipped} lagu dilewati (duplikat).`;
+
+            listItems.innerHTML = `
+                <div class="empty-state">
+                    <p style="font-weight:600; margin-bottom:4px;">Playlist berhasil di-import!</p>
+                    <p>${this.escape(summary)}</p>
+                </div>
+            `;
+            if (window.showToast) window.showToast(summary, added > 0 ? 'success' : 'warning');
+        } catch (e) {
+            listItems.innerHTML = '<div class="empty-state text-danger"><p>Gagal mengambil playlist. Periksa koneksi ke backend.</p></div>';
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+        }
+    }
+
+    /** Pull a playlist id out of a URL, or accept a raw id. */
+    extractPlaylistId(str) {
+        if (!str) return '';
+        const m = str.match(/[?&]list=([A-Za-z0-9_-]+)/);
+        if (m) return m[1];
+        if (/^[A-Za-z0-9_-]{10,60}$/.test(str)) return str;
+        return '';
+    }
+
+    /**
+     * Route imported tracks to the correct Bank Musik:
+     * - Jamming room -> WebSocket bulk playlist_add
+     * - Solo -> local soloPlaylist
+     * Returns the number actually added (not counting duplicates).
+     */
+    addTracksToBankMusik(tracks) {
+        const activeWs = this.ws || (window.JAMRI_APP && window.JAMRI_APP.wsClient);
+        const isCurrentlyJamming = this.player.mode === 'jamming' || !!(window.JAMRI_APP && window.JAMRI_APP.activeRoomId);
+
+        if (isCurrentlyJamming && window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
+            window.JAMRI_APP.games.notifyPunishedAction('menambah lagu ke Bank Musik');
+            return 0;
+        }
+
+        if (isCurrentlyJamming) {
+            const existing = (window.JAMRI_APP && window.JAMRI_APP.roomPlaylist) || [];
+            const fresh = tracks.filter(t => !existing.some(e => e.youtube_id === t.youtube_id));
+            if (fresh.length === 0) return 0;
+
+            if (activeWs && activeWs.isConnected) {
+                activeWs.sendPlaylistAddBulk(fresh);
+            } else {
+                const roomId = (activeWs && activeWs.roomId) || (window.JAMRI_APP && window.JAMRI_APP.activeRoomId);
+                const deviceId = (window.JAMRI_USER && window.JAMRI_USER.device_id) || '';
+                fresh.forEach(track => {
+                    fetch('api/rooms.php', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ action: 'add_playlist', track, room_id: roomId, device_id: deviceId })
+                    }).catch(console.warn);
+                });
+            }
+            return fresh.length;
+        }
+
+        let added = 0;
+        tracks.forEach(track => {
+            if (this.player.addToSoloPlaylist(track)) added++;
+        });
+        return added;
+    }
+
     updatePreviewButtons() {
         const rows = document.querySelectorAll('.track-result-item');
         rows.forEach(row => {
@@ -379,6 +506,20 @@ class JamriSearch {
             '"': '&quot;',
             "'": '&#039;'
         }[m]));
+    }
+
+    /** Restrict artwork to YouTube image hosts (blocks javascript:/data: srcs). */
+    safeImageUrl(url) {
+        if (typeof url !== 'string' || url.length === 0 || url.length > 512) return '';
+        if (/[<>"'\s]/.test(url)) return '';
+        try {
+            const u = new URL(url, window.location.origin);
+            if (u.protocol !== 'https:') return '';
+            const allowed = ['i.ytimg.com', 'img.youtube.com', 'yt3.ggpht.com', 'i9.ytimg.com'];
+            return allowed.includes(u.hostname.toLowerCase()) ? u.href : '';
+        } catch (e) {
+            return '';
+        }
     }
 }
 

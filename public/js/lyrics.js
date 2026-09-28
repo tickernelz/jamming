@@ -1414,7 +1414,7 @@ class JamriLyricsManager {
                 <div class="pip-container pip-container-mini">
                     <!-- Mini Track Card -->
                     <div class="pip-mini-card">
-                        ${thumb ? `<img src="${thumb}" alt="" class="pip-mini-thumb" onerror="this.style.display='none'" />` : `<div class="pip-mini-thumb-placeholder">🎵</div>`}
+                        ${thumb ? `<img src="${this.safeImageUrl(thumb)}" alt="" class="pip-mini-thumb" onerror="this.style.display='none'" />` : `<div class="pip-mini-thumb-placeholder">🎵</div>`}
                         <div class="pip-mini-meta">
                             <div class="pip-track-title" title="${this.escape(title)}">${this.escape(title)}</div>
                             <div class="pip-track-artist">${this.escape(artist)}</div>
@@ -1585,16 +1585,14 @@ class JamriLyricsManager {
         if (seekSlider) {
             seekSlider.addEventListener('input', () => {
                 this.pipIsDraggingSeek = true;
-                const track = this.currentTrack || (this.player && this.player.currentTrack);
-                const dur = track ? (track.duration_seconds || track.duration || 0) : 0;
+                const dur = (this.player && typeof this.player.getDuration === 'function') ? this.player.getDuration() : 0;
                 const previewSec = (parseFloat(seekSlider.value) / 100) * dur;
                 if (curTimeEl) curTimeEl.textContent = this.formatTime(previewSec);
             });
             seekSlider.addEventListener('change', () => {
                 this.pipIsDraggingSeek = false;
                 if (!checkPerm()) return;
-                const track = this.currentTrack || (this.player && this.player.currentTrack);
-                const dur = track ? (track.duration_seconds || track.duration || 0) : 0;
+                const dur = (this.player && typeof this.player.getDuration === 'function') ? this.player.getDuration() : 0;
                 const targetSec = (parseFloat(seekSlider.value) / 100) * dur;
                 this.handleSeekClick(targetSec);
             });
@@ -1678,6 +1676,20 @@ class JamriLyricsManager {
             '"': '&quot;',
             "'": '&#039;'
         }[m]));
+    }
+
+    /** Restrict artwork to YouTube image hosts (blocks javascript:/data: srcs). */
+    safeImageUrl(url) {
+        if (typeof url !== 'string' || url.length === 0 || url.length > 512) return '';
+        if (/[<>"'\s]/.test(url)) return '';
+        try {
+            const u = new URL(url, window.location.origin);
+            if (u.protocol !== 'https:') return '';
+            const allowed = ['i.ytimg.com', 'img.youtube.com', 'yt3.ggpht.com', 'i9.ytimg.com'];
+            return allowed.includes(u.hostname.toLowerCase()) ? u.href : '';
+        } catch (e) {
+            return '';
+        }
     }
 }
 

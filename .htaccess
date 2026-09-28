@@ -1,0 +1,40 @@
+# ==========================================================================
+# Jamri - root hardening (.htaccess)
+# Protects source, config, database and build artifacts from web access.
+# Works on Apache (XAMPP). For Nginx, mirror these rules in the server block.
+# ==========================================================================
+
+# Disable directory listings everywhere.
+Options -Indexes
+
+# Block direct access to sensitive folders.
+RedirectMatch 404 ^/(vendor|src|config|bin|scratch|tests|data)(/|$)
+
+# Block composer files, archives, sqlite databases and runtime state.
+<FilesMatch "\.(sqlite|sqlite3|db|sqlite-shm|sqlite-wal|zip|tar|gz|rar|json|log|sh|bat|md|lock|pem|ini)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order deny,allow
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# Never serve dotfiles (.git, .env, .htaccess ...).
+<FilesMatch "^\.">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order deny,allow
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# Extra safety headers (the PHP layer sets the full CSP).
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "DENY"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>

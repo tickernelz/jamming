@@ -182,6 +182,10 @@ class JamriWebSocket {
         this.send('playlist_add', { track });
     }
 
+    sendPlaylistAddBulk(tracks) {
+        this.send('playlist_add', { tracks });
+    }
+
     sendPlaylistRemove(playlistId) {
         this.send('playlist_remove', { playlist_id: playlistId });
     }

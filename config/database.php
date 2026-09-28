@@ -35,8 +35,11 @@ class Database
                 self::$instance = $pdo;
                 self::initSchema($pdo);
             } catch (PDOException $e) {
+                // Log the detail, but never expose internals (paths, driver info)
+                // to the client.
+                error_log('[Database] Connection failed: ' . $e->getMessage());
                 http_response_code(500);
-                echo json_encode(['error' => 'Database connection failed: ' . $e->getMessage()]);
+                echo json_encode(['success' => false, 'error' => 'Database tidak tersedia saat ini.']);
                 exit;
             }
         }

@@ -12,8 +12,16 @@ use SplObjectStorage;
 
 class WebSocketHandler implements MessageComponentInterface
 {
+    /** Hard ceiling for an inbound websocket frame (~256 KB). */
+    private const MAX_FRAME_BYTES = 262144;
+    /** Base64 audio payload ceiling for voice/soundboard (~96 KB decoded). */
+    private const MAX_AUDIO_CHARS = 131072;
+    /** Cap the in-memory play history to prevent unbounded growth. */
+    private const MAX_HISTORY = 50;
+
     private RoomManager $roomManager;
     private YouTubeService $ytService;
+    private RateLimiter $rateLimiter;
 
     /**
      * Structure:
@@ -40,6 +48,7 @@ class WebSocketHandler implements MessageComponentInterface
     {
         $this->roomManager = $roomManager;
         $this->ytService = $ytService;
+        $this->rateLimiter = new RateLimiter();
         $this->restoreRuntimeState();
         register_shutdown_function([$this, 'persistRuntimeState']);
     }
@@ -50,13 +59,20 @@ class WebSocketHandler implements MessageComponentInterface
         $queryString = $conn->httpRequest->getUri()->getQuery();
         parse_str($queryString, $params);
 
-        $roomId = trim((string)($params['room_id'] ?? ''));
-        $deviceId = trim((string)($params['device_id'] ?? ''));
-        $nickname = trim((string)($params['nickname'] ?? 'Guest'));
-        $emoji = trim((string)($params['emoji'] ?? '🎧'));
+        $roomId = Validator::roomId($params['room_id'] ?? '');
+        $deviceId = Validator::deviceId($params['device_id'] ?? '');
+        $nickname = Validator::nickname($params['nickname'] ?? 'Guest', 'Guest');
+        $emoji = Validator::emoji($params['emoji'] ?? '');
 
         if ($roomId === '' || $deviceId === '') {
             $conn->send(json_encode(['type' => 'error', 'message' => 'room_id and device_id are required']));
+            $conn->close();
+            return;
+        }
+
+        // Throttle connection churn per device (reconnect storms / socket floods).
+        if (!$this->rateLimiter->allow(RateLimiter::key('ws_open', $deviceId), 30, 60)) {
+            $conn->send(json_encode(['type' => 'error', 'message' => 'Terlalu banyak koneksi. Coba lagi sebentar.']));
             $conn->close();
             return;
         }
@@ -106,6 +122,7 @@ class WebSocketHandler implements MessageComponentInterface
                 'history' => [],
                 'is_shuffled' => false,
                 'punishments' => [],
+                'host_device_id' => (string)($roomSummary['host_device_id'] ?? ''),
             ];
         }
 
@@ -153,9 +170,23 @@ class WebSocketHandler implements MessageComponentInterface
 
         $meta = $this->clientMeta[$resId];
         $roomId = $meta['room_id'];
-        $data = json_decode((string)$msg, true);
 
-        if (!$data || empty($data['type'])) {
+        // Cheap guard before any decoding: reject oversized frames outright so a
+        // single client cannot exhaust daemon memory with a huge JSON blob.
+        if (!is_string($msg) || strlen($msg) > self::MAX_FRAME_BYTES) {
+            return;
+        }
+
+        // Per-device message flood protection (covers ping/chat/game spam).
+        // Kept generous because real-time voice PTT streams ~12 chunks/second;
+        // tighter per-action limits below handle the sensitive operations.
+        if (!$this->rateLimiter->allow(RateLimiter::key('ws_msg', $meta['device_id']), 400, 10)) {
+            return;
+        }
+
+        $data = json_decode($msg, true);
+
+        if (!$data || empty($data['type']) || !is_string($data['type'])) {
             return;
         }
 
@@ -208,7 +239,7 @@ class WebSocketHandler implements MessageComponentInterface
                     break;
                 }
 
-                $requestedPos = isset($data['position']) ? (float)$data['position'] : $this->getCurrentPosition($roomId);
+                $requestedPos = isset($data['position']) ? Validator::position($data['position']) : $this->getCurrentPosition($roomId);
                 $this->rooms[$roomId]['playback_state'] = 'playing';
                 $this->rooms[$roomId]['position'] = $requestedPos;
                 $this->rooms[$roomId]['last_sync_timestamp'] = microtime(true);
@@ -244,7 +275,7 @@ class WebSocketHandler implements MessageComponentInterface
                 break;
 
             case 'seek':
-                $newPos = (float)($data['position'] ?? 0.0);
+                $newPos = Validator::position($data['position'] ?? 0.0);
                 $this->rooms[$roomId]['position'] = $newPos;
                 $this->rooms[$roomId]['last_sync_timestamp'] = microtime(true);
 
@@ -263,12 +294,12 @@ class WebSocketHandler implements MessageComponentInterface
 
             case 'set_track':
                 // Set current track and play
-                $track = $data['track'] ?? null;
-                if ($track && !empty($track['youtube_id'])) {
+                $track = Validator::track($data['track'] ?? []);
+                if ($track !== null) {
                     if (isset($track['id'])) {
                         $this->roomManager->markTrackPlayed($roomId, (int)$track['id']);
                     }
-                    $this->setRoomTrack($roomId, $track);
+                    $this->setRoomTrack($roomId, $track, $meta['nickname']);
                     $remainingQueue = $this->roomManager->getQueue($roomId);
                     $this->broadcastToRoom($roomId, [
                         'type' => 'queue_updated',
@@ -301,7 +332,7 @@ class WebSocketHandler implements MessageComponentInterface
                 break;
 
             case 'set_loop':
-                $mode = in_array($data['mode'] ?? '', ['off', 'one', 'all'], true) ? $data['mode'] : 'off';
+                $mode = Validator::loopMode($data['mode'] ?? 'off');
                 $this->rooms[$roomId]['loop_mode'] = $mode;
                 $this->broadcastToRoom($roomId, [
                     'type' => 'loop_changed',
@@ -322,8 +353,8 @@ class WebSocketHandler implements MessageComponentInterface
                 break;
 
             case 'queue_add':
-                $track = $data['track'] ?? null;
-                if ($track && !empty($track['youtube_id'])) {
+                $track = Validator::track($data['track'] ?? []);
+                if ($track !== null) {
                     $added = $this->roomManager->addTrackToQueue($roomId, $track, $meta['nickname']);
                     if ($added === null) {
                         $from->send(json_encode([
@@ -338,7 +369,7 @@ class WebSocketHandler implements MessageComponentInterface
 
                     // If currently nothing is playing, start this track immediately
                     if ($this->rooms[$roomId]['current_track'] === null) {
-                        $this->setRoomTrack($roomId, $added);
+                        $this->setRoomTrack($roomId, $added, $meta['nickname']);
                     }
 
                     $this->broadcastToRoom($roomId, [
@@ -353,7 +384,22 @@ class WebSocketHandler implements MessageComponentInterface
             case 'queue_reorder':
                 $orderedIds = $data['ordered_ids'] ?? [];
                 if (is_array($orderedIds) && !empty($orderedIds)) {
-                    $reordered = $this->roomManager->reorderQueue($roomId, $orderedIds);
+                    // Only accept ids that actually belong to this room's live queue.
+                    $validIds = array_map(
+                        static fn($row) => (int)$row['id'],
+                        $this->roomManager->getQueue($roomId)
+                    );
+                    $safeIds = [];
+                    foreach ($orderedIds as $oid) {
+                        $oid = (int)$oid;
+                        if ($oid > 0 && in_array($oid, $validIds, true)) {
+                            $safeIds[] = $oid;
+                        }
+                    }
+                    if (empty($safeIds)) {
+                        break;
+                    }
+                    $reordered = $this->roomManager->reorderQueue($roomId, $safeIds);
                     $this->broadcastToRoom($roomId, [
                         'type' => 'queue_updated',
                         'queue' => $reordered,
@@ -390,26 +436,58 @@ class WebSocketHandler implements MessageComponentInterface
                 break;
 
             case 'playlist_add':
-                $track = $data['track'] ?? null;
-                if ($track && !empty($track['youtube_id'])) {
-                    $added = $this->roomManager->addTrackToPlaylist($roomId, $track, $meta['nickname']);
-                    if ($added === null) {
-                        $from->send(json_encode([
-                            'type' => 'notice',
-                            'message' => 'Lagu ini sudah ada di Bank Musik.',
-                            'level' => 'warning',
-                        ]));
-                        break;
-                    }
-
-                    $playlist = $this->roomManager->getPlaylist($roomId);
-                    $this->broadcastToRoom($roomId, [
-                        'type' => 'playlist_updated',
-                        'playlist' => $playlist,
-                        'added_track' => $added,
-                        'triggered_by' => $meta['nickname'],
-                    ]);
+                // Support both a single "track" and a bulk "tracks" array (playlist import).
+                $incoming = [];
+                if (is_array($data['tracks'] ?? null)) {
+                    $incoming = array_slice($data['tracks'], 0, 150);
+                } elseif (is_array($data['track'] ?? null)) {
+                    $incoming = [$data['track']];
                 }
+
+                // Bulk import is heavier: throttle separately.
+                if (count($incoming) > 3 && !$this->rateLimiter->allow(RateLimiter::key('playlist_bulk', $meta['device_id']), 3, 120)) {
+                    $from->send(json_encode([
+                        'type' => 'notice',
+                        'message' => 'Terlalu banyak import playlist. Coba lagi nanti.',
+                        'level' => 'warning',
+                    ]));
+                    break;
+                }
+
+                $addedList = [];
+                foreach ($incoming as $rawTrack) {
+                    if (!is_array($rawTrack)) {
+                        continue;
+                    }
+                    $track = Validator::track($rawTrack);
+                    if ($track === null) {
+                        continue;
+                    }
+                    $added = $this->roomManager->addTrackToPlaylist($roomId, $track, $meta['nickname']);
+                    if ($added !== null) {
+                        $addedList[] = $added;
+                    }
+                }
+
+                if (empty($addedList)) {
+                    $from->send(json_encode([
+                        'type' => 'notice',
+                        'message' => count($incoming) > 1
+                            ? 'Semua lagu pada playlist ini sudah ada di Bank Musik.'
+                            : 'Lagu ini sudah ada di Bank Musik.',
+                        'level' => 'warning',
+                    ]));
+                    break;
+                }
+
+                $playlist = $this->roomManager->getPlaylist($roomId);
+                $this->broadcastToRoom($roomId, [
+                    'type' => 'playlist_updated',
+                    'playlist' => $playlist,
+                    'added_track' => $addedList[0],
+                    'added_count' => count($addedList),
+                    'triggered_by' => $meta['nickname'],
+                ]);
                 break;
 
             case 'playlist_remove':
@@ -429,8 +507,17 @@ class WebSocketHandler implements MessageComponentInterface
                 break;
 
             case 'chat':
-                $text = trim((string)($data['message'] ?? ''));
+                $text = Validator::chatMessage($data['message'] ?? '');
                 if ($text !== '') {
+                    // Anti-spam: at most 5 messages per 4 seconds per device.
+                    if (!$this->rateLimiter->allow(RateLimiter::key('chat', $meta['device_id']), 5, 4)) {
+                        $from->send(json_encode([
+                            'type' => 'notice',
+                            'message' => 'Pelan-pelan ya, pesan kamu terlalu cepat.',
+                            'level' => 'warning',
+                        ]));
+                        break;
+                    }
                     $saved = $this->roomManager->saveChatMessage(
                         $roomId,
                         $meta['nickname'],
@@ -445,11 +532,27 @@ class WebSocketHandler implements MessageComponentInterface
                 break;
 
             case 'soundboard_play':
-                $title = (string)($data['title'] ?? 'Soundboard');
-                $emoji = (string)($data['emoji'] ?? '🔊');
-                $soundId = (string)($data['sound_id'] ?? $data['id'] ?? '');
-                $audioData = (string)($data['audio'] ?? ''); // client-side streamed audio
+                $title = Validator::clean($data['title'] ?? 'Soundboard', Validator::MAX_SOUND_TITLE_LEN) ?: 'Soundboard';
+                $emoji = Validator::emoji($data['emoji'] ?? '');
+                $soundId = Validator::clean($data['sound_id'] ?? $data['id'] ?? '', 64);
                 $fileUrl = (string)($data['file_url'] ?? '');
+
+                // Audio must be a bounded base64 blob. file_url is not trusted and
+                // is dropped entirely to avoid broadcasting arbitrary URLs.
+                $audioData = (string)($data['audio'] ?? '');
+                if ($audioData !== '' && (strlen($audioData) > self::MAX_AUDIO_CHARS || !preg_match('#^data:audio/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+$#i', $audioData))) {
+                    $from->send(json_encode([
+                        'type' => 'notice',
+                        'message' => 'Ukuran atau format soundboard tidak didukung.',
+                        'level' => 'warning',
+                    ]));
+                    break;
+                }
+
+                // Anti-spam: at most 12 sounds per 6 seconds.
+                if (!$this->rateLimiter->allow(RateLimiter::key('soundboard', $meta['device_id']), 12, 6)) {
+                    break;
+                }
 
                 $this->broadcastToRoom($roomId, [
                     'type' => 'soundboard_play',
@@ -457,33 +560,39 @@ class WebSocketHandler implements MessageComponentInterface
                     'title' => $title,
                     'emoji' => $emoji,
                     'audio' => $audioData,
-                    'file_url' => $fileUrl,
+                    'file_url' => '',
                     'triggered_by' => $meta['nickname'],
                     'sender_emoji' => $meta['emoji'],
                 ]);
                 break;
 
             case 'voice_chunk':
-                $audio = $data['audio'] ?? '';
-                if ($audio !== '') {
-                    $this->broadcastToRoom($roomId, [
-                        'type' => 'voice_chunk',
-                        'audio' => $audio,
-                        'mime' => $data['mime'] ?? 'pcm16',
-                        'sample_rate' => (int)($data['sample_rate'] ?? 16000),
-                        'seq' => (int)($data['seq'] ?? 0),
-                        'channel' => $data['channel'] ?? 'general',
-                        'sender_nickname' => $meta['nickname'],
-                        'sender_emoji' => $meta['emoji'],
-                    ], $from);
+                $audio = (string)($data['audio'] ?? '');
+                if ($audio === '' || strlen($audio) > self::MAX_AUDIO_CHARS || !preg_match('#^[A-Za-z0-9+/=]+$#', $audio)) {
+                    break;
                 }
+                // Voice flood protection: generous enough for smooth audio, hard
+                // enough to stop amplification abuse.
+                if (!$this->rateLimiter->allow(RateLimiter::key('voice', $meta['device_id']), 60, 3)) {
+                    break;
+                }
+                $this->broadcastToRoom($roomId, [
+                    'type' => 'voice_chunk',
+                    'audio' => $audio,
+                    'mime' => 'pcm16',
+                    'sample_rate' => max(8000, min(48000, (int)($data['sample_rate'] ?? 16000))),
+                    'seq' => (int)($data['seq'] ?? 0),
+                    'channel' => in_array($data['channel'] ?? '', ['general', 'karaoke'], true) ? $data['channel'] : 'general',
+                    'sender_nickname' => $meta['nickname'],
+                    'sender_emoji' => $meta['emoji'],
+                ], $from);
                 break;
 
             case 'voice_state':
                 $this->broadcastToRoom($roomId, [
                     'type' => 'voice_state',
                     'speaking' => !empty($data['speaking']),
-                    'channel' => $data['channel'] ?? 'general',
+                    'channel' => in_array($data['channel'] ?? '', ['general', 'karaoke'], true) ? $data['channel'] : 'general',
                     'sender_nickname' => $meta['nickname'],
                     'sender_emoji' => $meta['emoji'],
                 ]);
@@ -505,8 +614,29 @@ class WebSocketHandler implements MessageComponentInterface
                 break;
 
             case 'punishment_clear':
-                $targetDevId = $data['device_id'] ?? '';
-                if ($targetDevId !== '' && isset($this->rooms[$roomId]['punishments'][$targetDevId])) {
+                $targetDevId = Validator::deviceId($data['device_id'] ?? '');
+                if ($targetDevId !== '') {
+                    // Only the room host, or the punished user themselves, may clear
+                    // a penalty. This stops anyone from lifting another player's
+                    // (or their own) sanction.
+                    $hostDeviceId = (string)($this->rooms[$roomId]['host_device_id'] ?? '');
+                    if ($hostDeviceId === '') {
+                        $roomSummary = $this->roomManager->getRoomSummary($roomId);
+                        $hostDeviceId = $roomSummary ? (string)$roomSummary['host_device_id'] : '';
+                        $this->rooms[$roomId]['host_device_id'] = $hostDeviceId;
+                    }
+                    $isHost = $hostDeviceId !== '' && $hostDeviceId === $meta['device_id'];
+                    $isSelf = $targetDevId === $meta['device_id'];
+
+                    if ((!$isHost && !$isSelf) || !isset($this->rooms[$roomId]['punishments'][$targetDevId])) {
+                        $from->send(json_encode([
+                            'type' => 'notice',
+                            'message' => 'Hanya host yang bisa membatalkan sanksi pemain lain.',
+                            'level' => 'warning',
+                        ]));
+                        break;
+                    }
+
                     $cleared = $this->rooms[$roomId]['punishments'][$targetDevId];
                     unset($this->rooms[$roomId]['punishments'][$targetDevId]);
                     $this->broadcastToRoom($roomId, [
@@ -577,13 +707,16 @@ class WebSocketHandler implements MessageComponentInterface
             }
         }
 
+        // Keep the in-memory rate-limit map from growing forever.
+        $this->rateLimiter->gc();
+
         $purgedCount = $this->roomManager->purgeInactiveRooms(600);
         if ($purgedCount > 0) {
             echo "[CLEANUP] Purged {$purgedCount} inactive room(s) from database.\n";
         }
     }
 
-    private function setRoomTrack(string $roomId, array $track): void
+    private function setRoomTrack(string $roomId, array $track, string $triggeredBy = ''): void
     {
         $this->rooms[$roomId]['current_track'] = $track;
         $this->rooms[$roomId]['playback_state'] = 'playing';
@@ -598,6 +731,7 @@ class WebSocketHandler implements MessageComponentInterface
             'position' => 0.0,
             'state' => 'playing',
             'server_time' => (int)(microtime(true) * 1000),
+            'triggered_by' => $triggeredBy,
         ]);
 
         $this->roomManager->updatePlaybackState($roomId, 'playing', 0.0, $track['youtube_id'] ?? null);
@@ -634,7 +768,7 @@ class WebSocketHandler implements MessageComponentInterface
             $this->roomManager->prependTrackToQueue($roomId, $currentTrack);
         }
 
-        $this->setRoomTrack($roomId, $prevTrack);
+        $this->setRoomTrack($roomId, $prevTrack, $triggeredBy);
 
         $remainingQueue = $this->roomManager->getQueue($roomId);
         $this->broadcastToRoom($roomId, [
@@ -656,6 +790,13 @@ class WebSocketHandler implements MessageComponentInterface
         if ($currentTrack !== null) {
             // Simpan track saat ini ke riwayat playback
             $this->rooms[$roomId]['history'][] = $currentTrack;
+            // Cap the in-memory history so a long-running daemon cannot leak memory.
+            if (count($this->rooms[$roomId]['history']) > self::MAX_HISTORY) {
+                $this->rooms[$roomId]['history'] = array_slice(
+                    $this->rooms[$roomId]['history'],
+                    -self::MAX_HISTORY
+                );
+            }
 
             // Jika Loop All Queue: masukkan kembali ke ujung antrean agar antrean berputar terus tanpa hilang
             if ($loopMode === 'all') {
@@ -687,7 +828,7 @@ class WebSocketHandler implements MessageComponentInterface
             $this->roomManager->markTrackPlayed($roomId, (int)$nextTrack['id']);
         }
 
-        $this->setRoomTrack($roomId, $nextTrack);
+        $this->setRoomTrack($roomId, $nextTrack, $triggeredBy);
 
         $remainingQueue = $this->roomManager->getQueue($roomId);
         $this->broadcastToRoom($roomId, [
@@ -708,7 +849,7 @@ class WebSocketHandler implements MessageComponentInterface
 
         if ($loopMode === 'one' && $currentTrack !== null) {
             // Loop 1 song: ulang lagu yang sama terus menerus
-            $this->setRoomTrack($roomId, $currentTrack);
+            $this->setRoomTrack($roomId, $currentTrack, 'Auto');
             return;
         }
 
@@ -738,10 +879,14 @@ class WebSocketHandler implements MessageComponentInterface
             return [];
         }
 
-        $hostDeviceId = '';
-        $roomSummary = $this->roomManager->getRoomSummary($roomId);
-        if ($roomSummary) {
-            $hostDeviceId = (string)($roomSummary['host_device_id'] ?? '');
+        $hostDeviceId = (string)($this->rooms[$roomId]['host_device_id'] ?? '');
+        if ($hostDeviceId === '') {
+            // Cached host id was missing (e.g. restored snapshot): resolve once.
+            $roomSummary = $this->roomManager->getRoomSummary($roomId);
+            if ($roomSummary) {
+                $hostDeviceId = (string)($roomSummary['host_device_id'] ?? '');
+                $this->rooms[$roomId]['host_device_id'] = $hostDeviceId;
+            }
         }
 
         $users = [];
@@ -1097,6 +1242,7 @@ class WebSocketHandler implements MessageComponentInterface
                 'history' => $saved['history'] ?? [],
                 'is_shuffled' => !empty($saved['is_shuffled']),
                 'punishments' => $saved['punishments'] ?? [],
+                'host_device_id' => '',
             ];
         }
     }

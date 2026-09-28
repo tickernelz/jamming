@@ -223,23 +223,20 @@ class JamriPlayer {
             if (!this.currentTrack) return;
 
             let cur = 0;
-            let dur = this.currentTrack.duration || 0;
+            let dur = this.getDuration();
 
             if (this.currentTrack.is_blob) {
                 if (!this.isPlaying) return;
                 cur = this.blobAudio.currentTime || 0;
-                dur = this.blobAudio.duration || dur;
+                const bDur = this.blobAudio.duration;
+                if (isFinite(bDur) && bDur > 0) dur = bDur;
             } else {
                 let ytCur = 0;
-                let ytDur = 0;
                 if (this.isYtReady && this.ytPlayer && typeof this.ytPlayer.getCurrentTime === 'function') {
                     try {
                         ytCur = this.ytPlayer.getCurrentTime() || 0;
-                        ytDur = this.ytPlayer.getDuration() || 0;
                     } catch (e) {}
                 }
-
-                if (ytDur > 0) dur = ytDur;
 
                 // Di mode jamming: timeline jam server tetap maju meskipun audio lokal dibatasi YouTube
                 if (this.mode === 'jamming') {
@@ -266,6 +263,28 @@ class JamriPlayer {
             const progress = dur > 0 ? (cur / dur) * 100 : 0;
             this.emit('time_update', { currentTime: cur, duration: dur, progress });
         }, 300);
+    }
+
+    /**
+     * Reliable duration resolver: prefers the real player duration (works for any
+     * track length), then falls back to track metadata. Without this, long tracks
+     * (whose metadata duration is missing/0) produced a dead progress bar.
+     */
+    getDuration() {
+        if (this.currentTrack && this.currentTrack.is_blob) {
+            const d = this.blobAudio.duration;
+            if (isFinite(d) && d > 0) return d;
+        }
+        if (this.isYtReady && this.ytPlayer && typeof this.ytPlayer.getDuration === 'function') {
+            try {
+                const d = this.ytPlayer.getDuration();
+                if (typeof d === 'number' && isFinite(d) && d > 0) return d;
+            } catch (e) {}
+        }
+        if (this.currentTrack) {
+            return this.currentTrack.duration_seconds || this.currentTrack.duration || 0;
+        }
+        return 0;
     }
 
     startSilentAudioAnchor() {
@@ -587,6 +606,9 @@ class JamriPlayer {
 
     _internalSeek(seconds) {
         seconds = Math.max(0, seconds);
+        // Lock out periodic pong re-syncs briefly so the seek is not immediately
+        // reverted by an in-flight server position (the "click does nothing" bug).
+        this._seekLockUntil = Date.now() + 1500;
         if (this.currentTrack && this.currentTrack.is_blob) {
             this.blobAudio.currentTime = seconds;
         } else if (this.isYtReady && this.ytPlayer && typeof this.ytPlayer.seekTo === 'function') {
@@ -911,8 +933,10 @@ class JamriPlayer {
 
         if (serverState === 'playing') {
             const cur = this.getCurrentTime();
-            // Untuk explicit seek: selalu apply. Untuk pong rutin: hanya jika deviasi > 4.5 detik
-            if (isExplicitSeek || Math.abs(cur - targetPos) > 4.5) {
+            // Untuk explicit seek: selalu apply. Untuk pong rutin: hanya jika deviasi > 4.5 detik.
+            // Jangan pernah timpa posisi yang baru saja di-seek user (seek lock).
+            const withinSeekLock = Date.now() < (this._seekLockUntil || 0);
+            if (isExplicitSeek || (!withinSeekLock && Math.abs(cur - targetPos) > 4.5)) {
                 this._internalSeek(targetPos);
             }
             if (!this.isPlaying) {

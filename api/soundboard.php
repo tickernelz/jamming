@@ -5,19 +5,21 @@
 
 declare(strict_types=1);
 
-header('Content-Type: application/json; charset=utf-8');
+require_once dirname(__DIR__) . '/vendor/autoload.php';
+
+use Jamri\Http;
+
+Http::securityHeaders();
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
-    echo json_encode([
+    Http::json([
         'success' => true,
         'soundboards' => [],
         'message' => 'Soundboards are managed client-side in browser IndexedDB.'
     ]);
-    exit;
 }
 
-http_response_code(410);
-echo json_encode([
+Http::json([
     'success' => false,
     'error' => 'Server file upload is disabled for security. Custom soundboards are stored locally in client IndexedDB.'
-]);
+], 410);

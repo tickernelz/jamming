@@ -240,7 +240,7 @@ async function refreshLobbyRooms(searchQuery = '') {
                         <div class="room-card-name">${escapeHtml(room.name)}</div>
                         <div class="room-card-host">
                             <span>Host:</span>
-                            <span>${room.host_emoji || '🎧'}</span>
+                            <span>${safeEmoji(room.host_emoji)}</span>
                             <span>${escapeHtml(room.host_nickname || 'Member')}</span>
                         </div>
                     </div>
@@ -556,8 +556,8 @@ function renderRoomShell(roomDetail) {
                 <div>
                     <h1 class="lobby-title" style="font-size:18px;">${escapeHtml(room.name)}</h1>
                     <div style="font-size:12px; color:var(--text-muted);">
-                        Host: ${room.host_emoji || '🎧'} ${escapeHtml(room.host_nickname || '')}
-                        ${room.is_private ? ' • Private (Kode: ' + escapeHtml(room.passcode) + ')' : ''}
+                        Host: ${safeEmoji(room.host_emoji)} ${escapeHtml(room.host_nickname || '')}
+                        ${room.is_private ? ' • Private' : ''}
                     </div>
                 </div>
             </div>
@@ -961,6 +961,8 @@ function bindRoomWebSocketEvents(ws, player, roomDetail) {
             if (data.action === 'remove') {
                 const title = data.removed_track_title ? `"${data.removed_track_title}"` : 'sebuah lagu';
                 window.JAMRI_APP.currentChat.appendActivityNotice(`menghapus ${title} dari Bank Musik`, '', data.triggered_by);
+            } else if (data.added_count && data.added_count > 1) {
+                window.JAMRI_APP.currentChat.appendActivityNotice(`menambahkan ${data.added_count} lagu dari playlist ke Bank Musik`, '', data.triggered_by);
             } else if (data.added_track) {
                 window.JAMRI_APP.currentChat.appendActivityNotice(`menambahkan "${data.added_track.title}" ke Bank Musik`, '', data.triggered_by);
             }
@@ -1011,7 +1013,7 @@ function renderRoomQueue(queue) {
             </div>
             <span style="font-family:var(--font-mono); font-size:11px; color:var(--text-muted); width:18px;">${idx + 1}</span>
             <div class="track-thumb-box" style="cursor:pointer;" title="Klik untuk putar">
-                <img src="${track.thumbnail_url || track.thumbnail}" alt="" class="track-thumb-img" />
+                <img src="${safeImageUrl(track.thumbnail_url || track.thumbnail)}" alt="" class="track-thumb-img" />
                 <span class="track-duration-pill">${formatSeconds(track.duration_seconds || track.duration)}</span>
             </div>
             <div class="track-info-box" style="cursor:pointer;" title="Klik untuk putar">
@@ -1172,7 +1174,7 @@ function renderRoomPlaylist(playlist) {
         item.className = 'track-item-card';
         item.innerHTML = `
             <div class="track-thumb-box">
-                <img src="${track.thumbnail_url || track.thumbnail}" alt="" class="track-thumb-img" />
+                <img src="${safeImageUrl(track.thumbnail_url || track.thumbnail)}" alt="" class="track-thumb-img" />
                 <span class="track-duration-pill">${formatSeconds(track.duration_seconds || track.duration)}</span>
             </div>
             <div class="track-info-box">
@@ -1432,7 +1434,7 @@ function renderSoloQueueList() {
             </div>
             <span style="font-family:var(--font-mono); font-size:11px; color:var(--text-muted); width:18px;">${idx + 1}</span>
             <div class="track-thumb-box" style="cursor:pointer;" title="Klik untuk putar">
-                <img src="${track.thumbnail}" alt="" class="track-thumb-img" />
+                <img src="${safeImageUrl(track.thumbnail)}" alt="" class="track-thumb-img" />
                 <span class="track-duration-pill">${track.duration_formatted || formatSeconds(track.duration)}</span>
             </div>
             <div class="track-info-box" style="cursor:pointer;" title="Klik untuk putar">
@@ -1567,7 +1569,7 @@ function renderSoloPlaylistList() {
         item.className = 'track-item-card';
         item.innerHTML = `
             <div class="track-thumb-box">
-                <img src="${track.thumbnail}" alt="" class="track-thumb-img" />
+                <img src="${safeImageUrl(track.thumbnail)}" alt="" class="track-thumb-img" />
                 <span class="track-duration-pill">${track.duration_formatted || formatSeconds(track.duration)}</span>
             </div>
             <div class="track-info-box">
@@ -1633,7 +1635,7 @@ async function renderSoloOfflineList() {
             item.className = 'track-item-card';
             item.innerHTML = `
                 <div class="track-thumb-box">
-                    <img src="${t.thumbnail}" alt="" class="track-thumb-img" />
+                    <img src="${safeImageUrl(t.thumbnail)}" alt="" class="track-thumb-img" />
                     <span class="track-duration-pill">${t.duration_formatted || formatSeconds(t.duration)}</span>
                 </div>
                 <div class="track-info-box">
@@ -1864,12 +1866,11 @@ function bindPlayerDock(player) {
         const rect = progressBar.getBoundingClientRect();
         const clickX = e.clientX - rect.left;
         const width = rect.width;
-        let duration = 0;
-        if (player.currentTrack) {
-            duration = player.currentTrack.duration_seconds || player.currentTrack.duration || 0;
-        }
+        // Use the real player duration (metadata duration can be 0 for long tracks,
+        // which previously made the progress bar unclickable).
+        const duration = player.getDuration();
         if (duration > 0 && width > 0) {
-            const seekTo = (clickX / width) * duration;
+            const seekTo = Math.max(0, Math.min(duration, (clickX / width) * duration));
             player.seek(seekTo);
         }
     });
@@ -1937,38 +1938,44 @@ function bindPlayerDock(player) {
         btnLoop.classList.remove('active-control', 'loop-one', 'loop-all', 'btn-primary');
         btnLoop.classList.add('btn-ghost');
 
+        const repeatArrow = `
+                <polyline points="17 1 21 5 17 9"></polyline>
+                <path d="M3 11V9a4 4 0 0 1 4-4h14"></path>
+                <polyline points="7 23 3 19 7 15"></polyline>
+                <path d="M21 13v2a4 4 0 0 1-4 4H3"></path>`;
+
         if (mode === 'one') {
             btnLoop.classList.add('active-control', 'loop-one', 'btn-primary');
             btnLoop.classList.remove('btn-ghost');
-            btnLoop.title = 'Looping: ULANGI LAGU INI (1 Lagu terus-menerus)';
+            btnLoop.style.color = '';
+            btnLoop.title = 'Looping: ULANGI LAGU INI (1 lagu terus-menerus)';
+            // Icon with a "1" badge distinguishes loop-one from loop-all.
             btnLoop.innerHTML = `
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <polyline points="17 1 21 5 17 9"></polyline>
-                    <path d="M3 11V9a4 4 0 0 1 4-4h14"></path>
-                    <polyline points="7 23 3 19 7 15"></polyline>
-                    <path d="M21 13v2a4 4 0 0 1-4 4H3"></path>
+                    ${repeatArrow}
                 </svg>
+                <span class="loop-badge" style="position:absolute; top:-2px; right:-2px; font-size:8px; font-weight:800; line-height:1; background:var(--primary); color:#fff; border-radius:6px; padding:1px 3px;">1</span>
             `;
+            btnLoop.style.position = 'relative';
         } else if (mode === 'all') {
             btnLoop.classList.add('active-control', 'loop-all', 'btn-primary');
             btnLoop.classList.remove('btn-ghost');
-            btnLoop.title = 'Looping: PUTAR SEMUA ANTREAN (Antrean berputar terus tanpa habis)';
+            btnLoop.style.color = '';
+            btnLoop.title = 'Looping: PUTAR SEMUA ANTREAN (antrean berputar terus tanpa habis)';
+            // Icon with an "ALL" badge distinguishes loop-all from loop-one.
             btnLoop.innerHTML = `
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <polyline points="17 1 21 5 17 9"></polyline>
-                    <path d="M3 11V9a4 4 0 0 1 4-4h14"></path>
-                    <polyline points="7 23 3 19 7 15"></polyline>
-                    <path d="M21 13v2a4 4 0 0 1-4 4H3"></path>
+                    ${repeatArrow}
                 </svg>
+                <span class="loop-badge" style="position:absolute; top:-2px; right:-2px; font-size:7px; font-weight:800; line-height:1; background:var(--primary); color:#fff; border-radius:6px; padding:1px 3px;">ALL</span>
             `;
+            btnLoop.style.position = 'relative';
         } else {
-            btnLoop.title = 'Looping: NON-AKTIF (Mainkan antrean sampai habis)';
+            btnLoop.title = 'Looping: NON-AKTIF (mainkan antrean sampai habis)';
+            btnLoop.style.color = '';
             btnLoop.innerHTML = `
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <polyline points="17 1 21 5 17 9"></polyline>
-                    <path d="M3 11V9a4 4 0 0 1 4-4h14"></path>
-                    <polyline points="7 23 3 19 7 15"></polyline>
-                    <path d="M21 13v2a4 4 0 0 1-4 4H3"></path>
+                    ${repeatArrow}
                 </svg>
             `;
         }
@@ -2010,7 +2017,7 @@ function updateDockTrackDisplay(track) {
 
     if (titleEl) titleEl.textContent = track.title;
     if (artistEl) artistEl.textContent = track.channel || 'Artis';
-    if (thumbEl) thumbEl.src = track.thumbnail || track.thumbnail_url || 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" fill="%231a202c"></svg>';
+    if (thumbEl) thumbEl.src = safeImageUrl(track.thumbnail || track.thumbnail_url) || 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" fill="%231a202c"></svg>';
 }
 
 /* ==========================================================================
@@ -2032,6 +2039,34 @@ function escapeHtml(str) {
         '"': '&quot;',
         "'": '&#039;'
     }[m]));
+}
+
+/**
+ * Sanitise an avatar emoji before injecting it into innerHTML. The server already
+ * validates this, but the client must never trust broadcast payloads either.
+ */
+function safeEmoji(str) {
+    if (typeof str !== 'string' || str.length === 0 || str.length > 8) return '🎧';
+    if (/[<>&"'`\/\\{}()\[\]=;:]/.test(str)) return '🎧';
+    return str;
+}
+
+/**
+ * Only allow image URLs from YouTube's own hosts. Blocks `javascript:`/`data:`
+ * and HTML-breaking payloads carried through thumbnail fields.
+ */
+function safeImageUrl(url) {
+    if (typeof url !== 'string' || url.length > 512) return '';
+    if (/[<>"'\s]/.test(url)) return '';
+    try {
+        const u = new URL(url, window.location.origin);
+        if (u.protocol !== 'https:') return '';
+        const host = u.hostname.toLowerCase();
+        const allowed = ['i.ytimg.com', 'img.youtube.com', 'yt3.ggpht.com', 'i9.ytimg.com'];
+        return allowed.includes(host) ? u.href : '';
+    } catch (e) {
+        return '';
+    }
 }
 
 function showToast(message, type = 'info') {

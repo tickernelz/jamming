@@ -1,16 +1,27 @@
 <?php
 declare(strict_types=1);
 
-header('Content-Type: application/json; charset=utf-8');
+require_once dirname(__DIR__) . '/vendor/autoload.php';
+
+use Jamri\Http;
+use Jamri\RateLimiter;
+use Jamri\Validator;
+
+Http::securityHeaders();
 header('Cache-Control: public, max-age=86400');
 
-$title = trim($_GET['title'] ?? '');
-$artist = trim($_GET['artist'] ?? '');
-$duration = isset($_GET['duration']) ? (int)$_GET['duration'] : 0;
-$query = trim($_GET['q'] ?? '');
+$rateLimiter = new RateLimiter();
+if (!$rateLimiter->allow(RateLimiter::key('lyrics', Http::clientKey()), 40, 60)) {
+    Http::error('Terlalu banyak permintaan lirik. Coba lagi sebentar.', 429);
+}
 
-$action = trim($_GET['action'] ?? '');
-$lyricId = isset($_GET['id']) ? (int)$_GET['id'] : 0;
+$title = Validator::clean($_GET['title'] ?? '', 160);
+$artist = Validator::clean($_GET['artist'] ?? '', 120);
+$duration = isset($_GET['duration']) ? Validator::duration($_GET['duration']) : 0;
+$query = Validator::clean($_GET['q'] ?? '', 160);
+
+$action = Validator::clean($_GET['action'] ?? '', 20);
+$lyricId = isset($_GET['id']) ? max(0, (int)$_GET['id']) : 0;
 
 // Direct get by LRCLIB ID
 if ($action === 'get' || $lyricId > 0) {
@@ -22,7 +33,7 @@ if ($action === 'get' || $lyricId > 0) {
     $cacheKey = 'lrclib_id_' . $lyricId;
     $cacheDir = __DIR__ . '/../data/lyrics_cache';
     if (!is_dir($cacheDir)) {
-        @mkdir($cacheDir, 0777, true);
+        @mkdir($cacheDir, 0755, true);
     }
     $cacheFile = $cacheDir . '/' . $cacheKey . '.json';
     if (file_exists($cacheFile) && (time() - filemtime($cacheFile) < 86400 * 30)) {
@@ -198,7 +209,7 @@ function fetchLrclib(string $url): ?array
 $cacheKey = md5($title . '|' . $artist . '|' . $duration . '|' . $query);
 $cacheDir = __DIR__ . '/../data/lyrics_cache';
 if (!is_dir($cacheDir)) {
-    @mkdir($cacheDir, 0777, true);
+    @mkdir($cacheDir, 0755, true);
 }
 $cacheFile = $cacheDir . '/' . $cacheKey . '.json';
 if (file_exists($cacheFile) && (time() - filemtime($cacheFile) < 86400 * 7)) {

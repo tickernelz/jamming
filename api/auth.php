@@ -3,47 +3,49 @@
 
 declare(strict_types=1);
 
-header('Content-Type: application/json; charset=utf-8');
 require_once dirname(__DIR__) . '/vendor/autoload.php';
 require_once dirname(__DIR__) . '/config/database.php';
 
 use Jamri\Database;
+use Jamri\Http;
+use Jamri\RateLimiter;
 use Jamri\UserManager;
+use Jamri\Validator;
+
+Http::securityHeaders();
 
 $pdo = Database::getConnection();
 $userManager = new UserManager($pdo);
+$rateLimiter = new RateLimiter();
 $method = $_SERVER['REQUEST_METHOD'];
 
 if ($method === 'GET') {
-    $deviceId = trim((string)($_GET['device_id'] ?? ''));
+    $deviceId = Validator::deviceId($_GET['device_id'] ?? '');
     if ($deviceId === '') {
-        http_response_code(400);
-        echo json_encode(['error' => 'device_id is required']);
-        exit;
+        Http::error('device_id is required', 400);
     }
 
     $user = $userManager->getUser($deviceId);
-    echo json_encode(['exists' => (bool)$user, 'user' => $user]);
-    exit;
+    Http::json(['exists' => (bool)$user, 'user' => $user]);
 }
 
 if ($method === 'POST') {
-    $input = json_decode(file_get_contents('php://input') ?: '', true) ?? $_POST;
-    $deviceId = trim((string)($input['device_id'] ?? ''));
-    $nickname = trim((string)($input['nickname'] ?? ''));
-    $emoji = trim((string)($input['emoji'] ?? '🎧'));
+    $input = Http::input();
+    $deviceId = Validator::deviceId($input['device_id'] ?? '');
+    $nickname = Validator::nickname($input['nickname'] ?? '', 'Kawan Jamming');
+    $emoji = Validator::emoji($input['emoji'] ?? '');
 
     if ($deviceId === '') {
-        http_response_code(400);
-        echo json_encode(['error' => 'Device ID is required']);
-        exit;
+        Http::error('Device ID is required', 400);
     }
 
-    if ($nickname === '') {
-        $nickname = 'Kawan Jamming';
+    // Anonymous platform: throttle profile writes per device to stop abuse.
+    if (!$rateLimiter->allow(RateLimiter::key('auth_write', $deviceId), 10, 60)) {
+        Http::error('Terlalu banyak permintaan. Coba lagi sebentar.', 429);
     }
 
     $user = $userManager->registerOrUpdate($deviceId, $nickname, $emoji);
-    echo json_encode(['success' => true, 'user' => $user]);
-    exit;
+    Http::json(['success' => true, 'user' => $user]);
 }
+
+Http::error('Method not allowed', 405);

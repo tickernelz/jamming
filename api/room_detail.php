@@ -3,37 +3,41 @@
 
 declare(strict_types=1);
 
-header('Content-Type: application/json; charset=utf-8');
 require_once dirname(__DIR__) . '/vendor/autoload.php';
 require_once dirname(__DIR__) . '/config/database.php';
 
 use Jamri\Database;
+use Jamri\Http;
+use Jamri\RateLimiter;
 use Jamri\RoomManager;
+use Jamri\Validator;
+
+Http::securityHeaders();
 
 $pdo = Database::getConnection();
 $roomManager = new RoomManager($pdo);
+$rateLimiter = new RateLimiter();
 
-$roomId = trim((string)($_GET['room_id'] ?? ''));
-$passcode = trim((string)($_GET['passcode'] ?? ''));
+$roomId = Validator::roomId($_GET['room_id'] ?? '');
+$passcode = Validator::passcode($_GET['passcode'] ?? '');
 
 if ($roomId === '') {
-    http_response_code(400);
-    echo json_encode(['error' => 'room_id is required']);
-    exit;
+    Http::error('room_id is required', 400);
 }
 
-$detail = $roomManager->getRoomDetail($roomId, $passcode ?: null);
+// Throttle passcode attempts to make brute-forcing impractical.
+if (!$rateLimiter->allow(RateLimiter::key('room_detail', Http::clientKey()), 30, 60)) {
+    Http::error('Terlalu banyak permintaan. Coba lagi sebentar.', 429);
+}
+
+$detail = $roomManager->getRoomDetail($roomId, $passcode !== '' ? $passcode : null);
 
 if (!$detail) {
-    http_response_code(404);
-    echo json_encode(['error' => 'Room not found or has expired']);
-    exit;
+    Http::error('Room not found or has expired', 404);
 }
 
 if (isset($detail['error']) && $detail['error'] === 'invalid_passcode') {
-    http_response_code(403);
-    echo json_encode(['error' => 'invalid_passcode', 'message' => 'Passcode room salah.', 'room' => $detail['room']]);
-    exit;
+    Http::json(['success' => false, 'error' => 'invalid_passcode', 'message' => 'Passcode room salah.', 'room' => $detail['room']], 403);
 }
 
-echo json_encode(['success' => true, 'data' => $detail]);
+Http::json(['success' => true, 'data' => $detail]);
