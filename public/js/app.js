@@ -103,7 +103,7 @@ function updateThemeButton(theme) {
    ========================================================================== */
 function switchView(viewName) {
     window.JAMRI_APP.currentView = viewName;
-    const views = ['lobby-view', 'room-view', 'solo-view'];
+    const views = ['lobby-view', 'room-view', 'solo-view', 'world-view'];
     views.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = 'none';
@@ -117,8 +117,8 @@ function switchView(viewName) {
         btn.classList.toggle('active', btn.dataset.view === viewName);
     });
 
-    // Rigid viewport lock untuk jamming room di desktop
-    if (viewName === 'room') {
+    // Rigid viewport lock untuk jamming room / world di desktop
+    if (viewName === 'room' || viewName === 'world') {
         document.body.classList.add('in-room');
     } else {
         document.body.classList.remove('in-room');
@@ -233,6 +233,7 @@ async function refreshLobbyRooms(searchQuery = '') {
             const card = document.createElement('div');
             card.className = 'room-card';
             const isPlaying = room.playback_state === 'playing';
+            const isWorld = room.mode === 'world';
 
             card.innerHTML = `
                 <div class="room-card-top">
@@ -244,27 +245,35 @@ async function refreshLobbyRooms(searchQuery = '') {
                             <span>${escapeHtml(room.host_nickname || 'Member')}</span>
                         </div>
                     </div>
-                    <span class="badge ${room.is_private ? 'badge-private' : 'badge-primary'}" style="display:inline-flex; align-items:center; gap:4px;">
-                        ${room.is_private ? `
+                    <span class="badge ${isWorld ? 'badge-primary' : (room.is_private ? 'badge-private' : 'badge-primary')}" style="display:inline-flex; align-items:center; gap:4px;">
+                        ${isWorld ? `
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+                                <path d="M3 9h18M9 21V9"></path>
+                            </svg>
+                            World
+                        ` : (room.is_private ? `
                             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                                 <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
                                 <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
                             </svg>
                             Private
-                        ` : 'Public'}
+                        ` : 'Public')}
                     </span>
                 </div>
                 <div class="room-card-meta">
                     <div class="room-card-status">
                         <span class="status-dot ${isPlaying ? 'playing' : ''}"></span>
-                        <span>${isPlaying ? 'Sedang Memutar' : 'Standby'}</span>
+                        <span>${isWorld ? 'Peta Pixel' : (isPlaying ? 'Sedang Memutar' : 'Standby')}</span>
                     </div>
-                    <div>${room.queue_count || 0} lagu di antrean</div>
+                    <div>${isWorld ? 'Jalan & gelar tikar' : (room.queue_count || 0) + ' lagu di antrean'}</div>
                 </div>
             `;
 
             card.addEventListener('click', () => {
-                if (room.is_private) {
+                if (isWorld) {
+                    enterWorld(room.id);
+                } else if (room.is_private) {
                     promptPasscodeModal(room.name, (enteredPasscode) => {
                         joinRoom(room.id, true, enteredPasscode);
                     });
@@ -366,6 +375,18 @@ function showCreateRoomModal() {
                         <input type="text" id="new-room-name" class="form-input" placeholder="contoh: Jamming Santai Sore" required maxlength="50" autocomplete="off" />
                     </div>
                     <div class="form-group">
+                        <label class="form-label">Mode Room</label>
+                        <div style="display:flex; gap:16px; margin-top:6px; flex-wrap:wrap;">
+                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                                <input type="radio" name="room_mode" value="legacy" checked /> Legacy (Room musik biasa)
+                            </label>
+                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                                <input type="radio" name="room_mode" value="world" /> World (Peta pixel + avatar)
+                            </label>
+                        </div>
+                        <div class="input-hint" id="mode-hint" style="margin-top:6px;">Room musik klasik: antrean lagu, chat, dan Bank Musik seperti biasa.</div>
+                    </div>
+                    <div class="form-group" id="room-access-group">
                         <label class="form-label">Tipe Akses Room</label>
                         <div style="display:flex; gap:16px; margin-top:6px;">
                             <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
@@ -423,11 +444,30 @@ function showCreateRoomModal() {
         });
     });
 
+    // Room mode (legacy vs world) toggles access options and hint text.
+    const modeRadios = modal.querySelectorAll('input[name="room_mode"]');
+    const accessGroup = modal.querySelector('#room-access-group');
+    const modeHint = modal.querySelector('#mode-hint');
+    modeRadios.forEach(r => {
+        r.addEventListener('change', () => {
+            const isWorld = r.value === 'world';
+            accessGroup.style.display = isWorld ? 'none' : 'block';
+            if (isWorld) passGroup.style.display = 'none';
+            if (modeHint) {
+                modeHint.textContent = isWorld
+                    ? 'World pixel-game: avatar jalan bebas. Musik dimainkan lewat "tikar" yang digelar pemain (fitur musik tikar menyusul).'
+                    : 'Room musik klasik: antrean lagu, chat, dan Bank Musik seperti biasa.';
+            }
+        });
+    });
+
     const form = modal.querySelector('#create-room-form');
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const name = modal.querySelector('#new-room-name').value.trim();
-        const isPrivate = modal.querySelector('input[name="room_access"]:checked').value === 'private';
+        const roomMode = modal.querySelector('input[name="room_mode"]:checked').value;
+        const isWorld = roomMode === 'world';
+        const isPrivate = !isWorld && modal.querySelector('input[name="room_access"]:checked').value === 'private';
         const passcode = modal.querySelector('#new-room-passcode').value.trim();
 
         const deviceId = window.JAMRI_USER ? window.JAMRI_USER.device_id : JamriAuth.getOrCreateDeviceId();
@@ -437,6 +477,24 @@ function showCreateRoomModal() {
         submitBtn.textContent = 'Membuat...';
 
         try {
+            if (isWorld) {
+                const res = await fetch('api/worlds.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, device_id: deviceId })
+                });
+                const data = await res.json();
+                if (data.success && data.world) {
+                    closeModal();
+                    enterWorld(data.world.id);
+                } else {
+                    alert(data.error || 'Gagal membuat world.');
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'Buat Room';
+                }
+                return;
+            }
+
             const res = await fetch('api/rooms.php', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -536,6 +594,31 @@ async function joinRoom(roomId, isPrivate = false, passcode = '') {
         console.error('Join room error:', err);
         alert('Gagal menghubungi server room.');
     }
+}
+
+function enterWorld(worldId) {
+    const player = window.JAMRI_APP.player;
+    const ws = window.JAMRI_APP.wsClient;
+
+    // World has no global music; playback stays with the player engine.
+    player.setMode('solo', null);
+    if (window.JAMRI_APP.searchModule) window.JAMRI_APP.searchModule.setWebSocket(null);
+
+    window.JAMRI_APP.activeWorldId = worldId;
+
+    if (!window.JAMRI_APP.world) {
+        window.JAMRI_APP.world = new JamriWorld(player);
+    }
+    window.JAMRI_APP.world.enter(worldId, window.JAMRI_USER);
+    switchView('world');
+}
+
+function leaveWorld() {
+    if (window.JAMRI_APP.world) {
+        window.JAMRI_APP.world.leave();
+    }
+    window.JAMRI_APP.activeWorldId = null;
+    switchView('lobby');
 }
 
 function renderRoomShell(roomDetail) {

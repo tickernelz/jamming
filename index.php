@@ -46,6 +46,7 @@ $assetVersion = static function (string $relativePath): string {
     <!-- Stylesheets -->
     <link rel="stylesheet" href="public/css/main.css?v=<?= $assetVersion('public/css/main.css') ?>" />
     <link rel="stylesheet" href="public/css/components.css?v=<?= $assetVersion('public/css/components.css') ?>" />
+    <link rel="stylesheet" href="public/css/world.css?v=<?= $assetVersion('public/css/world.css') ?>" />
 </head>
 <body>
 
@@ -136,6 +137,9 @@ $assetVersion = static function (string $relativePath): string {
 
         <!-- VIEW 3: SOLO INDIVIDUAL PLAYER VIEW -->
         <section id="solo-view" style="display:none;"></section>
+
+        <!-- VIEW 4: PIXEL WORLD (WORLD MODE) -->
+        <section id="world-view" style="display:none;"></section>
 
     </main>
 
@@ -313,6 +317,7 @@ $assetVersion = static function (string $relativePath): string {
     <script src="public/js/voice-ptt.js?v=<?= $assetVersion('public/js/voice-ptt.js') ?>"></script>
     <script src="public/js/games.js?v=<?= $assetVersion('public/js/games.js') ?>"></script>
     <script src="public/js/lyrics.js?v=<?= $assetVersion('public/js/lyrics.js') ?>"></script>
+    <script src="public/js/world.js?v=<?= $assetVersion('public/js/world.js') ?>"></script>
     <script src="public/js/app.js?v=<?= $assetVersion('public/js/app.js') ?>"></script>
 </body>
 </html>

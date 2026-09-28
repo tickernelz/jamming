@@ -140,5 +140,52 @@ class Database
         ";
 
         $pdo->exec($sql);
+
+        self::migrate($pdo);
+    }
+
+    /**
+     * Additive migrations for existing databases. Safe to run repeatedly:
+     * every statement is guarded so older installs upgrade transparently.
+     */
+    private static function migrate(PDO $pdo): void
+    {
+        $columns = [];
+        foreach ($pdo->query('PRAGMA table_info(rooms)')->fetchAll() as $row) {
+            $columns[$row['name']] = true;
+        }
+
+        $addColumn = static function (string $name, string $definition) use ($pdo, &$columns): void {
+            if (!isset($columns[$name])) {
+                $pdo->exec("ALTER TABLE rooms ADD COLUMN {$name} {$definition}");
+                $columns[$name] = true;
+            }
+        };
+
+        // World mode support (additive; legacy rooms keep working unchanged).
+        $addColumn('mode', "TEXT DEFAULT 'legacy'");
+        $addColumn('parent_world_id', 'TEXT NULL');
+        $addColumn('map_json', 'TEXT NULL');
+        $addColumn('box_control', "TEXT DEFAULT 'everyone'");
+
+        $pdo->exec('CREATE INDEX IF NOT EXISTS idx_rooms_mode ON rooms(mode, parent_world_id)');
+
+        $pdo->exec("
+        CREATE TABLE IF NOT EXISTS world_boxes (
+            id TEXT PRIMARY KEY,
+            world_id TEXT NOT NULL,
+            room_id TEXT NOT NULL UNIQUE,
+            owner_device_id TEXT NOT NULL,
+            label TEXT NOT NULL,
+            x REAL NOT NULL,
+            y REAL NOT NULL,
+            radius REAL NOT NULL DEFAULT 120,
+            control_mode TEXT NOT NULL DEFAULT 'everyone',
+            empty_since DATETIME NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (world_id) REFERENCES rooms(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_boxes_world ON world_boxes(world_id);
+        ");
     }
 }

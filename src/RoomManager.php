@@ -16,14 +16,30 @@ class RoomManager
         $this->pdo = $pdo;
     }
 
-    public function createRoom(string $name, bool $isPrivate, ?string $passcode, string $hostDeviceId): array
+    /** Expose the shared PDO so sibling managers (e.g. WorldManager) can use it. */
+    public function pdo(): PDO
     {
+        return $this->pdo;
+    }
+
+    public function createRoom(
+        string $name,
+        bool $isPrivate,
+        ?string $passcode,
+        string $hostDeviceId,
+        string $mode = 'legacy',
+        ?string $parentWorldId = null,
+        ?string $mapJson = null,
+        string $boxControl = 'everyone'
+    ): array {
         $name = Validator::roomName($name);
         if ($name === '') {
             $name = 'Room Jamming';
         }
 
         $passcode = $passcode !== null ? Validator::passcode($passcode) : '';
+        $mode = in_array($mode, ['legacy', 'world', 'box'], true) ? $mode : 'legacy';
+        $boxControl = in_array($boxControl, ['owner', 'everyone'], true) ? $boxControl : 'everyone';
 
         $id = $this->generateUuid();
         $slugBase = preg_replace('/[^a-z0-9]+/i', '-', strtolower($name));
@@ -41,8 +57,8 @@ class RoomManager
             : null;
 
         $stmt = $this->pdo->prepare('
-            INSERT INTO rooms (id, name, slug, is_private, passcode, host_device_id, playback_state, empty_since)
-            VALUES (:id, :name, :slug, :is_private, :passcode, :host_device_id, "stopped", CURRENT_TIMESTAMP)
+            INSERT INTO rooms (id, name, slug, is_private, passcode, host_device_id, playback_state, empty_since, mode, parent_world_id, map_json, box_control)
+            VALUES (:id, :name, :slug, :is_private, :passcode, :host_device_id, "stopped", CURRENT_TIMESTAMP, :mode, :parent_world_id, :map_json, :box_control)
         ');
 
         $stmt->execute([
@@ -52,6 +68,10 @@ class RoomManager
             ':is_private' => $isPrivate ? 1 : 0,
             ':passcode' => $passcodeHash,
             ':host_device_id' => $hostDeviceId,
+            ':mode' => $mode,
+            ':parent_world_id' => $parentWorldId,
+            ':map_json' => $mapJson,
+            ':box_control' => $boxControl,
         ]);
 
         return $this->getRoomSummary($id) ?? ['id' => $id, 'name' => $name, 'slug' => $slug];
@@ -61,19 +81,20 @@ class RoomManager
     {
         $this->purgeInactiveRooms(600);
 
-        $sql = '
-            SELECT r.id, r.name, r.slug, r.is_private, r.host_device_id, r.playback_state, r.playback_position, r.current_track_id, r.created_at,
+        $sql = "
+            SELECT r.id, r.name, r.slug, r.is_private, r.host_device_id, r.playback_state, r.playback_position, r.current_track_id, r.created_at, r.mode,
                    u.nickname AS host_nickname, u.emoji AS host_emoji,
                    (SELECT COUNT(*) FROM room_queue q WHERE q.room_id = r.id AND q.is_played = 0) AS queue_count
             FROM rooms r
             LEFT JOIN users u ON u.device_id = r.host_device_id
-        ';
+            WHERE COALESCE(r.mode, 'legacy') != 'box'
+        ";
 
         $params = [];
         if (trim($search) !== '') {
             // Escape LIKE wildcards so user input cannot broaden the query.
             $needle = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], trim($search));
-            $sql .= " WHERE (r.name LIKE :search ESCAPE '\\' OR r.slug LIKE :search ESCAPE '\\')";
+            $sql .= " AND (r.name LIKE :search ESCAPE '\\' OR r.slug LIKE :search ESCAPE '\\')";
             $params[':search'] = '%' . $needle . '%';
         }
 
@@ -91,6 +112,7 @@ class RoomManager
             SELECT r.id, r.name, r.slug, r.is_private, r.host_device_id,
                    r.current_track_id, r.playback_position, r.playback_state,
                    r.last_state_change, r.empty_since, r.created_at,
+                   r.mode, r.parent_world_id, r.map_json, r.box_control,
                    u.nickname AS host_nickname, u.emoji AS host_emoji
             FROM rooms r
             LEFT JOIN users u ON u.device_id = r.host_device_id

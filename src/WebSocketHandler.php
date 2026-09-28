@@ -22,6 +22,7 @@ class WebSocketHandler implements MessageComponentInterface
     private RoomManager $roomManager;
     private YouTubeService $ytService;
     private RateLimiter $rateLimiter;
+    private WorldManager $worldManager;
 
     /**
      * Structure:
@@ -42,13 +43,20 @@ class WebSocketHandler implements MessageComponentInterface
     /**
      * Map resourceId => ['room_id', 'device_id', 'nickname', 'emoji']
      */
+    /**
+     * Map resourceId => ['mode' => 'room'|'world', 'room_id', 'device_id', 'nickname', 'emoji']
+     */
     private array $clientMeta = [];
 
-    public function __construct(RoomManager $roomManager, YouTubeService $ytService)
+    /** resourceId => ConnectionInterface for world-mode clients only. */
+    private array $worldConnections = [];
+
+    public function __construct(RoomManager $roomManager, YouTubeService $ytService, ?WorldManager $worldManager = null)
     {
         $this->roomManager = $roomManager;
         $this->ytService = $ytService;
         $this->rateLimiter = new RateLimiter();
+        $this->worldManager = $worldManager ?? new WorldManager($roomManager->pdo());
         $this->restoreRuntimeState();
         register_shutdown_function([$this, 'persistRuntimeState']);
     }
@@ -63,6 +71,7 @@ class WebSocketHandler implements MessageComponentInterface
         $deviceId = Validator::deviceId($params['device_id'] ?? '');
         $nickname = Validator::nickname($params['nickname'] ?? 'Guest', 'Guest');
         $emoji = Validator::emoji($params['emoji'] ?? '');
+        $worldMode = ($params['mode'] ?? '') === 'world';
 
         if ($roomId === '' || $deviceId === '') {
             $conn->send(json_encode(['type' => 'error', 'message' => 'room_id and device_id are required']));
@@ -77,8 +86,14 @@ class WebSocketHandler implements MessageComponentInterface
             return;
         }
 
+        if ($worldMode) {
+            $this->openWorld($conn, $roomId, $deviceId, $nickname, $emoji);
+            return;
+        }
+
         $resId = $conn->resourceId;
         $this->clientMeta[$resId] = [
+            'mode' => 'room',
             'room_id' => $roomId,
             'device_id' => $deviceId,
             'nickname' => $nickname,
@@ -169,7 +184,6 @@ class WebSocketHandler implements MessageComponentInterface
         }
 
         $meta = $this->clientMeta[$resId];
-        $roomId = $meta['room_id'];
 
         // Cheap guard before any decoding: reject oversized frames outright so a
         // single client cannot exhaust daemon memory with a huge JSON blob.
@@ -191,6 +205,14 @@ class WebSocketHandler implements MessageComponentInterface
         }
 
         $type = $data['type'];
+
+        // World presence has its own (short) protocol.
+        if (($meta['mode'] ?? 'room') === 'world') {
+            $this->handleWorldMessage($from, $meta, $type, $data);
+            return;
+        }
+
+        $roomId = $meta['room_id'];
 
         // Guard: Check if music control action is attempted by a currently punished user
         $musicControlActions = [
@@ -662,6 +684,19 @@ class WebSocketHandler implements MessageComponentInterface
 
         $meta = $this->clientMeta[$resId];
         $roomId = $meta['room_id'];
+
+        // World presence: drop the avatar and tell the others.
+        if (($meta['mode'] ?? 'room') === 'world') {
+            unset($this->clientMeta[$resId]);
+            unset($this->worldConnections[$resId]);
+            $this->worldManager->leave($roomId, $resId);
+            $this->broadcastWorld($roomId, [
+                'type' => 'world.leave',
+                'id' => $resId,
+                'online' => $this->worldManager->count($roomId),
+            ]);
+            return;
+        }
 
         unset($this->rooms[$roomId]['clients'][$resId]);
         unset($this->clientMeta[$resId]);
@@ -1244,6 +1279,160 @@ class WebSocketHandler implements MessageComponentInterface
                 'punishments' => $saved['punishments'] ?? [],
                 'host_device_id' => '',
             ];
+        }
+    }
+
+    // =====================================================================
+    // WORLD MODE (Phase 1: presence only)
+    // =====================================================================
+
+    /** Handle a WS connection that joined a world (pixel map) instead of a room. */
+    private function openWorld(ConnectionInterface $conn, string $worldId, string $deviceId, string $nickname, string $emoji): void
+    {
+        $summary = $this->roomManager->getRoomSummary($worldId);
+        if (!$summary || ($summary['mode'] ?? 'legacy') !== 'world') {
+            $conn->send(json_encode([
+                'type' => 'world_not_found',
+                'message' => 'World ini tidak ditemukan atau sudah kedaluwarsa.',
+            ]));
+            $conn->close();
+            return;
+        }
+
+        if ($this->worldManager->isFull($worldId)) {
+            $conn->send(json_encode([
+                'type' => 'world_full',
+                'message' => 'World sudah penuh (' . WorldManager::MAX_USERS_PER_WORLD . ' pemain). Coba world lain.',
+            ]));
+            $conn->close();
+            return;
+        }
+
+        $resId = $conn->resourceId;
+        $map = $this->worldManager->ensureMap($worldId);
+        $spawn = $this->worldManager->spawnPoint($map);
+
+        $this->clientMeta[$resId] = [
+            'mode' => 'world',
+            'room_id' => $worldId,
+            'device_id' => $deviceId,
+            'nickname' => $nickname,
+            'emoji' => $emoji,
+        ];
+        $this->worldConnections[$resId] = $conn;
+
+        $this->worldManager->join($worldId, $resId, [
+            'x' => $spawn['x'],
+            'y' => $spawn['y'],
+            'dir' => 0,
+            'emoji' => $emoji,
+            'nickname' => $nickname,
+            'device_id' => $deviceId,
+        ]);
+
+        $conn->send(json_encode([
+            'type' => 'world_init',
+            'world_id' => $worldId,
+            'name' => $summary['name'] ?? 'Jamming World',
+            'map' => $map,
+            'you' => ['id' => $resId, 'x' => $spawn['x'], 'y' => $spawn['y'], 'emoji' => $emoji, 'nickname' => $nickname],
+            'avatars' => $this->worldManager->snapshot($worldId),
+            'online' => $this->worldManager->count($worldId),
+            'max_users' => WorldManager::MAX_USERS_PER_WORLD,
+            'server_time' => (int)(microtime(true) * 1000),
+        ]));
+    }
+
+    /** Route world-protocol messages (world.move / world.chat). */
+    private function handleWorldMessage(ConnectionInterface $from, array $meta, string $type, array $data): void
+    {
+        $worldId = $meta['room_id'];
+        $resId = $from->resourceId;
+
+        switch ($type) {
+            case 'world.move':
+                // Movement is high-frequency: separate, generous limit.
+                if (!$this->rateLimiter->allow(RateLimiter::key('world_move', $meta['device_id']), 90, 3)) {
+                    break;
+                }
+                $map = $this->worldManager->getMap($worldId);
+                $x = Validator::position($data['x'] ?? 0);
+                $y = Validator::position($data['y'] ?? 0);
+                $dir = max(0, min(3, (int)($data['dir'] ?? 0)));
+                if ($this->worldManager->move($worldId, $resId, $map, $x, $y)) {
+                    if (isset($this->clientMeta[$resId])) {
+                        $this->clientMeta[$resId]['dir'] = $dir;
+                    }
+                }
+                break;
+
+            case 'ping':
+                $from->send(json_encode([
+                    'type' => 'pong',
+                    'server_time' => (int)(microtime(true) * 1000),
+                ]));
+                break;
+        }
+    }
+
+    /**
+     * Broadcast a single compact snapshot of every world to all their clients.
+     * Called on a 15 Hz timer from the daemon.
+     */
+    public function tickWorlds(): void
+    {
+        foreach ($this->worldManager->allWorldIds() as $worldId) {
+            $avatars = $this->worldManager->snapshot($worldId);
+            $payload = json_encode([
+                'type' => 'world.snapshot',
+                't' => (int)(microtime(true) * 1000),
+                'avatars' => $avatars,
+            ]);
+
+            foreach ($this->clientMeta as $resId => $meta) {
+                if (($meta['mode'] ?? 'room') !== 'world' || $meta['room_id'] !== $worldId) {
+                    continue;
+                }
+                $conn = $this->findConnection($resId);
+                if ($conn !== null) {
+                    try {
+                        $conn->send($payload);
+                    } catch (\Throwable $e) {
+                        // Connection dropped mid-broadcast; ignore.
+                    }
+                }
+            }
+        }
+    }
+
+    /** Resolve a live connection by resource id (world clients are not in $rooms). */
+    private function findConnection(int $resId): ?ConnectionInterface
+    {
+        if (isset($this->worldConnections[$resId])) {
+            return $this->worldConnections[$resId];
+        }
+        foreach ($this->rooms as $room) {
+            if (isset($room['clients'][$resId])) {
+                return $room['clients'][$resId];
+            }
+        }
+        return null;
+    }
+
+    private function broadcastWorld(string $worldId, array $payload): void
+    {
+        $json = json_encode($payload);
+        foreach ($this->clientMeta as $resId => $meta) {
+            if (($meta['mode'] ?? 'room') !== 'world' || $meta['room_id'] !== $worldId) {
+                continue;
+            }
+            $conn = $this->findConnection($resId);
+            if ($conn !== null) {
+                try {
+                    $conn->send($json);
+                } catch (\Throwable $e) {
+                }
+            }
         }
     }
 }

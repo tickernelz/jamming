@@ -14,6 +14,7 @@ const SHELL_ASSETS = [
     './js/voice-ptt.js',
     './js/games.js',
     './js/lyrics.js',
+    './js/world.js',
     './js/app.js',
     './manifest.json',
     './icon-192.svg',
