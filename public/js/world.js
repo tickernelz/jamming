@@ -90,8 +90,16 @@ class JamriWorld {
 
         // Room/mat panel events (same protocol as the legacy room flow).
         ws.on('connection_change', (data) => {
+            const dot = document.getElementById('world-conn-dot');
+            if (dot) {
+                dot.style.background = (data && data.connected) ? 'var(--success)' : 'var(--danger)';
+                dot.title = (data && data.connected) ? 'Terhubung' : 'Terputus';
+            }
             const loading = document.getElementById('world-loading');
-            if (loading && data && !data.connected) {
+            if (loading && data && data.connected) {
+                loading.style.display = 'none';
+            }
+            if (loading && data && !data.connected && this.map) {
                 loading.style.display = 'flex';
                 loading.innerHTML = '<span>Koneksi terputus. Menghubungkan ulang...</span>';
             }
@@ -272,9 +280,10 @@ class JamriWorld {
                         <span>Keluar World</span>
                     </button>
                     <div class="world-hud-info">
+                        <span id="world-conn-dot" title="Status koneksi" style="display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--text-muted); flex-shrink:0;"></span>
                         <span id="world-name-label" class="world-name-label">World</span>
                         <span id="world-online-badge" class="world-online-badge">0 online</span>
-                        <span id="world-debug-badge" class="world-online-badge" title="Versi antarmuka & ukuran peta" style="background:var(--bg-surface-elevated);color:var(--text-muted);">v3</span>
+                        <span id="world-debug-badge" class="world-online-badge" title="Versi antarmuka & ukuran peta" style="background:var(--bg-surface-elevated);color:var(--text-muted);">v4</span>
                     </div>
                     <div class="world-hud-actions">
                         <button type="button" id="btn-place-mat" class="btn btn-primary btn-sm" title="Gelar tikar jamming di posisi Anda">
@@ -514,6 +523,14 @@ class JamriWorld {
     send(type, payload = {}) {
         const client = window.JAMRI_APP && window.JAMRI_APP.wsClient;
         if (!client) return false;
+        // Make a silent failure visible: if the socket is not open the action
+        // would otherwise just vanish.
+        if (!client.isConnected || !client.ws || client.ws.readyState !== 1) {
+            if (window.showToast) {
+                window.showToast('Koneksi belum siap. Tunggu sebentar lalu coba lagi.', 'warning');
+            }
+            return false;
+        }
         return client.send(type, payload);
     }
 
@@ -535,7 +552,9 @@ class JamriWorld {
                 this.online = data.online || 0;
                 this.updateHud(data.name, this.online, data.max_users);
                 const dbg = document.getElementById('world-debug-badge');
-                if (dbg) dbg.textContent = `v3 · ${this.map.w}×${this.map.h}`;
+                if (dbg) dbg.textContent = `v4 · ${this.map.w}×${this.map.h}`;
+                const connDot = document.getElementById('world-conn-dot');
+                if (connDot) connDot.style.background = 'var(--success)';
                 const loading = document.getElementById('world-loading');
                 if (loading) loading.style.display = 'none';
                 this.resize();
