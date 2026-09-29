@@ -46,11 +46,15 @@ class JamriWebSocket {
         const protocol = isHttps ? 'wss:' : 'ws:';
         let endpoint;
         if (isHttps) {
+            // Through a tunnel (ngrok) the gateway proxies /ws to the daemon.
             endpoint = `${protocol}//${window.location.host}/ws`;
         } else if (window.location.port === '3000') {
             endpoint = `${protocol}//${window.location.host}/ws`;
+        } else if (window.JAMRI_WS_URL) {
+            endpoint = window.JAMRI_WS_URL;
         } else {
-            endpoint = `${protocol}//${window.location.hostname || 'localhost'}:8080/`;
+            // Local direct connection. Keep in sync with config/app.php ws_port.
+            endpoint = `${protocol}//${window.location.hostname || 'localhost'}:8081/`;
         }
 
         const url = `${endpoint}?room_id=${encodeURIComponent(roomId)}&device_id=${encodeURIComponent(user.device_id)}&nickname=${encodeURIComponent(user.nickname)}&emoji=${encodeURIComponent(user.emoji)}`;

@@ -430,14 +430,31 @@ class JamriWorld {
         `;
         document.body.appendChild(modal);
 
+        // Guard against stacked dialogs (e.g. a modal left open on top).
+        const topModal = document.querySelector('.modal-backdrop.active');
+        if (topModal && topModal !== modal) {
+            topModal.remove();
+        }
+
+        const labelInput = modal.querySelector('#mat-label-input');
         const close = () => modal.remove();
         modal.querySelector('#btn-mat-cancel').addEventListener('click', close);
         modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
         modal.querySelector('#btn-mat-confirm').addEventListener('click', () => {
-            const label = modal.querySelector('#mat-label-input').value.trim();
+            const label = labelInput.value.trim();
             const control = modal.querySelector('input[name="mat_control"]:checked').value;
             window.JAMRI_APP.wsClient.send('mat.place', { label, control_mode: control });
             close();
+        });
+
+        // Focus the name input and submit on Enter so the dialog is usable
+        // immediately (previously keystrokes leaked to the avatar movement).
+        setTimeout(() => { if (labelInput) labelInput.focus(); }, 50);
+        labelInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                modal.querySelector('#btn-mat-confirm').click();
+            }
         });
     }
 
@@ -462,8 +479,11 @@ class JamriWorld {
             endpoint = `${protocol}//${window.location.host}/ws`;
         } else if (window.location.port === '3000') {
             endpoint = `${protocol}//${window.location.host}/ws`;
+        } else if (window.JAMRI_WS_URL) {
+            endpoint = window.JAMRI_WS_URL;
         } else {
-            endpoint = `${protocol}//${window.location.hostname || 'localhost'}:8080/`;
+            // Local direct connection. Keep in sync with config/app.php ws_port.
+            endpoint = `${protocol}//${window.location.hostname || 'localhost'}:8081/`;
         }
 
         const url = `${endpoint}?mode=world&room_id=${encodeURIComponent(this.worldId)}`
@@ -684,6 +704,16 @@ class JamriWorld {
     // ------------------------------------------------------------------
     bindInput() {
         this._bound.keydown = (e) => {
+            // Never let movement keys hijack typing in any input, textarea or
+            // contenteditable — including the "gelar tikar" dialog fields.
+            const t = e.target;
+            if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) {
+                return;
+            }
+            // Also ignore movement while any modal/backdrop is open.
+            if (document.querySelector('.modal-backdrop.active, .jamri-insecure-guide-backdrop')) {
+                return;
+            }
             const k = e.key.toLowerCase();
             if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) {
                 this.keys[k] = true;

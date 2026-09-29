@@ -18,7 +18,11 @@ use Ratchet\WebSocket\WsServer;
 use React\EventLoop\Loop;
 use React\Socket\SocketServer;
 
-$port = 8080;
+$port = 8081;
+$appConfig = require dirname(__DIR__) . '/config/app.php';
+if (is_array($appConfig) && isset($appConfig['ws_port'])) {
+    $port = (int)$appConfig['ws_port'];
+}
 if (isset($argv[1]) && is_numeric($argv[1])) {
     $port = (int)$argv[1];
 }

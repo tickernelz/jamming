@@ -1403,7 +1403,7 @@ class WebSocketHandler implements MessageComponentInterface
 
         $resId = $conn->resourceId;
         $map = $this->worldManager->ensureMap($worldId);
-        $spawn = $this->worldManager->spawnPoint($map);
+        $spawn = $this->worldManager->spawnPointFor($map, $this->worldManager->count($worldId));
 
         $this->clientMeta[$resId] = [
             'mode' => 'world',

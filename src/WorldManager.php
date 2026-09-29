@@ -21,6 +21,9 @@ class WorldManager
     public const MAX_USERS_PER_WORLD = 20;
     public const MAX_BOXES_PER_WORLD = 8;
 
+    /** Bump when the map generator changes so stored maps regenerate. */
+    private const MAP_VERSION = 2;
+
     private PDO $pdo;
     private ?RoomManager $roomManager;
 
@@ -65,7 +68,8 @@ class WorldManager
 
         if (is_string($existing) && $existing !== '') {
             $decoded = json_decode($existing, true);
-            if (is_array($decoded) && isset($decoded['w'], $decoded['h'])) {
+            if (is_array($decoded) && isset($decoded['w'], $decoded['h'])
+                && ($decoded['v'] ?? 0) === self::MAP_VERSION) {
                 $this->maps[$worldId] = $decoded;
                 return $decoded;
             }
@@ -90,13 +94,17 @@ class WorldManager
     }
 
     /**
-     * Procedural but deterministic map: a hollow rectangular room with a few
-     * interior wall blocks. Same world id always yields the same map.
+     * Procedural but deterministic map: a hollow rectangular room with interior
+     * wall blocks and a couple of "rooms" for variety. Same world id always
+     * yields the same map.
      */
     private function generateMap(string $worldId): array
     {
-        $w = 40;
-        $h = 26;
+        // 80x50 tiles at 32px = 2560x1600 world, comfortably larger than any
+        // viewport so walking around actually feels like exploring.
+        $w = 80;
+        $h = 50;
+        $tile = 32;
         $colliders = [];
 
         // Border walls, 1 tile thick.
@@ -109,24 +117,61 @@ class WorldManager
         $seed = crc32($worldId);
         mt_srand($seed);
 
-        $blocks = 5;
+        // Interior pillars / blocks, spread across the whole map.
+        $blocks = 12;
         for ($i = 0; $i < $blocks; $i++) {
-            $bw = mt_rand(3, 6);
+            $bw = mt_rand(3, 7);
             $bh = mt_rand(2, 4);
-            $bx = mt_rand(3, max(3, $w - $bw - 3));
-            $by = mt_rand(3, max(3, $h - $bh - 3));
+            $bx = mt_rand(4, max(4, $w - $bw - 4));
+            $by = mt_rand(4, max(4, $h - $bh - 4));
             $colliders[] = ['x' => $bx, 'y' => $by, 'w' => $bw, 'h' => $bh];
         }
+
+        // A few L-shaped "room corners" for visual interest.
+        for ($i = 0; $i < 4; $i++) {
+            $cx = mt_rand(8, $w - 20);
+            $cy = mt_rand(6, $h - 12);
+            $len = mt_rand(5, 9);
+            $colliders[] = ['x' => $cx, 'y' => $cy, 'w' => $len, 'h' => 1];
+            $colliders[] = ['x' => $cx, 'y' => $cy, 'w' => 1, 'h' => $len];
+        }
+
         // Restore a clean RNG state for other callers.
         mt_srand();
 
         return [
+            'v' => self::MAP_VERSION,
             'w' => $w,
             'h' => $h,
-            'tile' => 32,
+            'tile' => $tile,
             'colliders' => $colliders,
-            'spawn' => ['x' => intdiv($w, 2) * 32 + 16, 'y' => intdiv($h, 2) * 32 + 16],
+            'spawn' => ['x' => intdiv($w, 2) * $tile + 16, 'y' => intdiv($h, 2) * $tile + 16],
         ];
+    }
+
+    /**
+     * Deterministic free spawn near the map centre, offset by index so several
+     * players joining at once do not stack on the exact same tile.
+     */
+    public function spawnPointFor(array $map, int $index = 0): array
+    {
+        $base = $this->spawnPoint($map);
+        if ($index === 0) {
+            return $base;
+        }
+        $tile = (int)($map['tile'] ?? 32);
+        // Golden-angle spiral keeps offsets spread out and deterministic.
+        $angle = $index * 2.399963;
+        $radius = $tile * (1 + floor($index / 6) * 1.5);
+        for ($attempt = 0; $attempt < 12; $attempt++) {
+            $x = $base['x'] + cos($angle) * $radius;
+            $y = $base['y'] + sin($angle) * $radius;
+            if (!$this->isBlocked($map, $x, $y)) {
+                return ['x' => $x, 'y' => $y];
+            }
+            $radius += $tile;
+        }
+        return $base;
     }
 
     /** Find a free spawn tile (avoid colliders), near the map centre. */
