@@ -254,6 +254,7 @@ class JamriWorld {
                     <div class="world-hud-info">
                         <span id="world-name-label" class="world-name-label">World</span>
                         <span id="world-online-badge" class="world-online-badge">0 online</span>
+                        <span id="world-debug-badge" class="world-online-badge" title="Versi antarmuka & ukuran peta" style="background:var(--bg-surface-elevated);color:var(--text-muted);">v3</span>
                     </div>
                     <div class="world-hud-actions">
                         <button type="button" id="btn-place-mat" class="btn btn-primary btn-sm" title="Gelar tikar jamming di posisi Anda">
@@ -527,6 +528,8 @@ class JamriWorld {
                 this.boxes = data.boxes || [];
                 this.online = data.online || 0;
                 this.updateHud(data.name, this.online, data.max_users);
+                const dbg = document.getElementById('world-debug-badge');
+                if (dbg) dbg.textContent = `v3 · ${this.map.w}×${this.map.h}`;
                 const loading = document.getElementById('world-loading');
                 if (loading) loading.style.display = 'none';
                 this.resize();

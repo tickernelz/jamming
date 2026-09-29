@@ -1,32 +1,28 @@
 /* ==========================================================================
-   JAMRI PIXEL WORLD (Phase 1 — presence)
+   JAMRI PIXEL WORLD
    Pixel-art look is enforced with image-rendering + no smoothing.
    ========================================================================== */
 
+/* The world view is positioned fixed to the viewport (between the navbar and
+   the player dock). This makes its size completely independent of any parent
+   flex/height chain, so the map & chat panel always fill the screen. */
 #world-view {
-    width: 100%;
-    /* Grow to fill the available area regardless of the body-level `in-room`
-       class, so the layout never collapses to a tiny strip even if a stale
-       cached stylesheet/script is in play. */
-    flex: 1 1 auto;
-    min-height: 320px;
-    position: relative;
+    position: fixed !important;
+    top: 58px;
+    left: 0;
+    right: 0;
+    bottom: var(--player-dock-height, 84px);
+    padding: 10px 16px;
+    box-sizing: border-box;
     overflow: hidden;
-}
-
-body.in-room #world-view {
-    position: relative !important;
-    flex: 1 1 auto !important;
-    min-height: 320px !important;
-    height: auto !important;
-    overflow: hidden !important;
+    z-index: 50;
 }
 
 .world-shell {
-    position: absolute;
-    inset: 0;
+    position: relative;
     display: flex;
     flex-direction: column;
+    height: 100%;
     min-height: 0;
     gap: 8px;
 }

@@ -11,7 +11,10 @@ Options -Indexes
 RedirectMatch 404 ^/(vendor|src|config|bin|scratch|tests|data)(/|$)
 
 # Block composer files, archives, sqlite databases and runtime state.
-<FilesMatch "\.(sqlite|sqlite3|db|sqlite-shm|sqlite-wal|zip|tar|gz|rar|json|log|sh|bat|md|lock|pem|ini)$">
+# NOTE: .json is intentionally NOT blanket-denied here — the PWA needs
+# public/manifest.json. Sensitive JSON (data/*.json) is denied by the folder
+# rules below and by data/.htaccess.
+<FilesMatch "\.(sqlite|sqlite3|db|sqlite-shm|sqlite-wal|zip|tar|gz|rar|log|sh|bat|md|lock|pem|ini)$">
     <IfModule mod_authz_core.c>
         Require all denied
     </IfModule>
@@ -20,6 +23,17 @@ RedirectMatch 404 ^/(vendor|src|config|bin|scratch|tests|data)(/|$)
         Deny from all
     </IfModule>
 </FilesMatch>
+
+# Always allow the PWA manifest (must be publicly fetchable).
+<Files "manifest.json">
+    <IfModule mod_authz_core.c>
+        Require all granted
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Allow from all
+    </IfModule>
+</Files>
 
 # Never serve dotfiles (.git, .env, .htaccess ...).
 <FilesMatch "^\.">
