@@ -190,7 +190,8 @@ body.in-room #world-view {
 
 .mat-chat-list {
     flex: 1;
-    min-height: 60px;
+    min-height: 56px;
+    max-height: 110px;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
@@ -284,6 +285,52 @@ body.in-room #world-view {
     image-rendering: -moz-crisp-edges;
     image-rendering: crisp-edges;
     touch-action: none;
+}
+
+/* --- Minimap --- */
+.world-minimap {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 150px;
+    height: 100px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: rgba(11, 15, 26, 0.75);
+    image-rendering: pixelated;
+    z-index: 3;
+    pointer-events: none;
+}
+
+/* --- Emote bar --- */
+.world-emote-bar {
+    position: absolute;
+    bottom: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 6px;
+    padding: 6px 10px;
+    background: rgba(11, 15, 26, 0.7);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-full);
+    z-index: 3;
+}
+
+.world-emote-btn {
+    background: transparent;
+    border: none;
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: var(--radius-sm);
+    transition: transform 0.1s ease;
+}
+
+.world-emote-btn:hover {
+    transform: scale(1.25);
+    background: rgba(255, 255, 255, 0.1);
 }
 
 .world-loading {

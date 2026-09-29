@@ -36,6 +36,9 @@ class WorldManager
     /** worldId => [ resId => boxId|null ] authoritative active mat per user. */
     private array $activeBox = [];
 
+    /** worldId => host device id (for owner crown indicator). */
+    private array $hostDevice = [];
+
     public function __construct(PDO $pdo, ?RoomManager $roomManager = null)
     {
         $this->pdo = $pdo;
@@ -229,8 +232,10 @@ class WorldManager
     /** Compact snapshot of all avatars for broadcast. */
     public function snapshot(string $worldId): array
     {
+        $owners = $this->ownerDevices($worldId);
         $out = [];
         foreach ($this->worlds[$worldId] ?? [] as $resId => $a) {
+            $dev = (string)($a['device_id'] ?? '');
             $out[] = [
                 'i' => $resId,
                 'x' => round((float)$a['x'], 1),
@@ -238,9 +243,31 @@ class WorldManager
                 'd' => (int)($a['dir'] ?? 0),
                 'e' => (string)($a['emoji'] ?? '🎧'),
                 'n' => (string)($a['nickname'] ?? 'Guest'),
+                'o' => ($dev !== '' && isset($owners[$dev])) ? 1 : 0,
             ];
         }
         return $out;
+    }
+
+    public function setWorldHost(string $worldId, string $deviceId): void
+    {
+        $this->hostDevice[$worldId] = $deviceId;
+    }
+
+    /** Device ids considered "owners" (world host + mat owners) in a world. */
+    private function ownerDevices(string $worldId): array
+    {
+        $set = [];
+        $host = $this->hostDevice[$worldId] ?? '';
+        if ($host !== '') {
+            $set[$host] = true;
+        }
+        foreach ($this->getBoxes($worldId) as $b) {
+            if (!empty($b['owner_device_id'])) {
+                $set[$b['owner_device_id']] = true;
+            }
+        }
+        return $set;
     }
 
     public function getAvatars(string $worldId): array
@@ -486,6 +513,60 @@ class WorldManager
     public function getActiveBox(string $worldId, int $resId): ?string
     {
         return $this->activeBox[$worldId][$resId] ?? null;
+    }
+
+    /** How many avatars are actively attached (not merely near) a given mat. */
+    public function activeUsersInBox(string $worldId, string $boxId): int
+    {
+        $n = 0;
+        foreach ($this->activeBox[$worldId] ?? [] as $assigned) {
+            if ($assigned === $boxId) {
+                $n++;
+            }
+        }
+        return $n;
+    }
+
+    /** Mark a mat as empty (nobody attached) so it can be recycled later. */
+    public function markBoxEmpty(string $boxId, bool $isEmpty): void
+    {
+        if ($isEmpty) {
+            $stmt = $this->pdo->prepare('UPDATE world_boxes SET empty_since = CURRENT_TIMESTAMP WHERE id = :id AND empty_since IS NULL');
+        } else {
+            $stmt = $this->pdo->prepare('UPDATE world_boxes SET empty_since = NULL WHERE id = :id');
+        }
+        $stmt->execute([':id' => $boxId]);
+    }
+
+    /**
+     * Remove mats that have had nobody on them for a while. Frees both the mat
+     * and its backing audio room, and returns the removed mat ids so the world
+     * can broadcast a mat.removed event.
+     */
+    public function purgeEmptyBoxes(string $worldId, int $idleSeconds = 120): array
+    {
+        $stmt = $this->pdo->prepare("
+            SELECT id, room_id FROM world_boxes
+            WHERE world_id = :world_id
+              AND empty_since IS NOT NULL
+              AND empty_since <= datetime('now', '-' || :seconds || ' seconds')
+        ");
+        $stmt->execute([':world_id' => $worldId, ':seconds' => $idleSeconds]);
+        $rows = $stmt->fetchAll();
+
+        if (empty($rows)) {
+            return [];
+        }
+
+        $removed = [];
+        foreach ($rows as $row) {
+            $this->pdo->prepare('DELETE FROM world_boxes WHERE id = :id')->execute([':id' => $row['id']]);
+            $this->pdo->prepare('DELETE FROM rooms WHERE id = :room_id')->execute([':room_id' => $row['room_id']]);
+            $removed[] = $row['id'];
+        }
+
+        $this->invalidateBoxes($worldId);
+        return $removed;
     }
 
     private function generateUuid(): string

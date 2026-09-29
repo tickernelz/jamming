@@ -44,6 +44,12 @@ class JamriWorld {
         this.activeBox = null;
         this.roomEventsBound = false;
         this.choiceOpen = false;
+
+        // Phase 3/4 polish
+        this.emotes = [];            // floating emote bubbles {id, emote, t}
+        this.worldChat = [];         // global world chat log
+        this.minimap = null;
+        this.minimapCtx = null;
     }
 
     // ------------------------------------------------------------------
@@ -194,6 +200,26 @@ class JamriWorld {
         info.textContent = `${this.activeBox.label} • ${controlLabel}`;
     }
 
+    appendWorldChat(message) {
+        if (!message) return;
+        this.worldChat.push(message);
+        if (this.worldChat.length > 100) this.worldChat.shift();
+        const list = document.getElementById('world-chat-list');
+        if (!list) return;
+        const row = document.createElement('div');
+        row.className = 'mat-chat-row';
+        row.innerHTML = `<span class="mat-chat-nick">${safeEmoji(message.sender_emoji)} ${escapeHtml(message.sender_nickname)}</span>
+            <span class="mat-chat-text">${escapeHtml(message.message)}</span>`;
+        list.appendChild(row);
+        list.scrollTop = list.scrollHeight;
+    }
+
+    sendEmote(emote) {
+        window.JAMRI_APP.wsClient.send('world.emote', { emote });
+        // Show it locally right away for instant feedback.
+        this.emotes.push({ id: this.myId, emote, t: performance.now() });
+    }
+
     leave() {
         this.unbindInput();
         if (this.rafId) {
@@ -254,6 +280,15 @@ class JamriWorld {
                 <div class="world-body">
                     <div class="world-stage" id="world-stage">
                         <canvas id="world-canvas"></canvas>
+                        <canvas id="world-minimap" class="world-minimap" width="150" height="100"></canvas>
+                        <div class="world-emote-bar" id="world-emote-bar">
+                            <button type="button" class="world-emote-btn" data-emote="😂">😂</button>
+                            <button type="button" class="world-emote-btn" data-emote="🔥">🔥</button>
+                            <button type="button" class="world-emote-btn" data-emote="👏">👏</button>
+                            <button type="button" class="world-emote-btn" data-emote="❤️">❤️</button>
+                            <button type="button" class="world-emote-btn" data-emote="👍">👍</button>
+                            <button type="button" class="world-emote-btn" data-emote="🎵">🎵</button>
+                        </div>
                         <div class="world-loading" id="world-loading">
                             <div class="spinner"></div>
                             <span>Memasuki world...</span>
@@ -273,8 +308,15 @@ class JamriWorld {
                         <div class="mat-chat-title-label">Chat Tikar</div>
                         <div class="mat-chat-list" id="mat-chat-list"></div>
                         <form class="mat-chat-form" id="mat-chat-form">
-                            <input type="text" id="mat-chat-input" class="mat-chat-input" placeholder="Tulis pesan..." maxlength="300" autocomplete="off" />
+                            <input type="text" id="mat-chat-input" class="mat-chat-input" placeholder="Chat tikar..." maxlength="300" autocomplete="off" />
                             <button type="submit" class="btn btn-primary btn-sm">Kirim</button>
+                        </form>
+
+                        <div class="mat-chat-title-label">Chat World</div>
+                        <div class="mat-chat-list" id="world-chat-list"></div>
+                        <form class="mat-chat-form" id="world-chat-form">
+                            <input type="text" id="world-chat-input" class="mat-chat-input" placeholder="Chat world..." maxlength="300" autocomplete="off" />
+                            <button type="submit" class="btn btn-outline btn-sm">Kirim</button>
                         </form>
                     </aside>
                 </div>
@@ -287,6 +329,12 @@ class JamriWorld {
 
         this.canvas = container.querySelector('#world-canvas');
         this.ctx = this.canvas.getContext('2d');
+        this.minimap = container.querySelector('#world-minimap');
+        this.minimapCtx = this.minimap ? this.minimap.getContext('2d') : null;
+
+        container.querySelectorAll('.world-emote-btn').forEach(btn => {
+            btn.addEventListener('click', () => this.sendEmote(btn.dataset.emote));
+        });
 
         const leaveBtn = container.querySelector('#btn-leave-world');
         if (leaveBtn) leaveBtn.addEventListener('click', () => leaveWorld());
@@ -323,6 +371,18 @@ class JamriWorld {
                     return;
                 }
                 window.JAMRI_APP.wsClient.sendChatMessage(text);
+                input.value = '';
+            });
+        }
+
+        const worldChatForm = container.querySelector('#world-chat-form');
+        if (worldChatForm) {
+            worldChatForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const input = document.getElementById('world-chat-input');
+                const text = input.value.trim();
+                if (!text) return;
+                window.JAMRI_APP.wsClient.send('world.chat', { message: text });
                 input.value = '';
             });
         }
@@ -441,6 +501,7 @@ class JamriWorld {
                 this.myId = data.you.id;
                 this.me = { x: data.you.x, y: data.you.y, dir: 0 };
                 this.cam = { x: data.you.x, y: data.you.y };
+                this.iAmOwner = !!(data.you && data.you.is_owner);
                 (data.avatars || []).forEach(a => this.upsertAvatar(a, true));
                 this.boxes = data.boxes || [];
                 this.online = data.online || 0;
@@ -479,6 +540,19 @@ class JamriWorld {
 
             case 'mat.removed':
                 this.boxes = this.boxes.filter(b => b.id !== data.box_id);
+                if (this.activeBox && this.activeBox.id === data.box_id) {
+                    this.activeBox = null;
+                    this.updatePanelRoomInfo();
+                }
+                break;
+
+            case 'world.chat':
+                this.appendWorldChat(data.message);
+                break;
+
+            case 'world.emote':
+                this.emotes.push({ id: data.id, emote: data.emote || '😄', t: performance.now() });
+                if (this.emotes.length > 40) this.emotes.shift();
                 break;
 
             case 'zone.enter':
@@ -520,7 +594,7 @@ class JamriWorld {
         if (id === this.myId) return; // never override local prediction
         let av = this.avatars.get(id);
         if (!av) {
-            av = { x: a.x, y: a.y, rx: a.x, ry: a.y, dir: a.d, emoji: a.e, nick: a.n };
+            av = { x: a.x, y: a.y, rx: a.x, ry: a.y, dir: a.d, emoji: a.e, nick: a.n, owner: !!a.o };
             this.avatars.set(id, av);
         } else {
             av.x = a.x;
@@ -528,6 +602,7 @@ class JamriWorld {
             av.dir = a.d;
             av.emoji = a.e;
             av.nick = a.n;
+            av.owner = !!a.o;
             if (immediate) { av.rx = a.x; av.ry = a.y; }
         }
     }
@@ -834,14 +909,15 @@ class JamriWorld {
 
         // Draw entities sorted by Y (painter's algorithm).
         const entities = [];
-        for (const av of this.avatars.values()) {
-            entities.push({ x: av.rx, y: av.ry, emoji: av.emoji, nick: av.nick, me: false });
+        for (const [id, av] of this.avatars.entries()) {
+            entities.push({ id, x: av.rx, y: av.ry, emoji: av.emoji, nick: av.nick, me: false, owner: av.owner });
         }
-        entities.push({ x: this.me.x, y: this.me.y, emoji: this.user.emoji, nick: this.user.nickname, me: true });
+        entities.push({ id: this.myId, x: this.me.x, y: this.me.y, emoji: this.user.emoji, nick: this.user.nickname, me: true, owner: !!this.iAmOwner });
         entities.sort((a, b) => a.y - b.y);
 
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
+        const now = performance.now();
         for (const e of entities) {
             const sx = Math.round(e.x - camX);
             const sy = Math.round(e.y - camY);
@@ -862,7 +938,77 @@ class JamriWorld {
             ctx.fillRect(sx - tw / 2 - 4, sy - 30, tw + 8, 14);
             ctx.fillStyle = e.me ? '#8ab4ff' : '#e5e7eb';
             ctx.fillText(label, sx, sy - 23);
+
+            // Owner crown: the world host / mat owner is highlighted.
+            if (e.owner) {
+                ctx.font = '13px serif';
+                ctx.fillText('👑', sx + tw / 2 + 10, sy - 23);
+            }
+
+            // Floating emote above the avatar (fades + rises).
+            const em = this.emotes.find(x => x.id === e.id);
+            if (em) {
+                const age = (now - em.t) / 1000;
+                if (age < 2.2) {
+                    ctx.globalAlpha = Math.max(0, 1 - age / 2.2);
+                    ctx.font = '24px serif';
+                    ctx.fillText(em.emote, sx, sy - 44 - age * 18);
+                    ctx.globalAlpha = 1;
+                }
+            }
         }
+
+        // Drop expired emotes.
+        this.emotes = this.emotes.filter(x => (now - x.t) < 2200);
+
+        this.renderMinimap(camX, camY, W, H);
+    }
+
+    /** Small corner minimap: world bounds, walls, mats and every avatar. */
+    renderMinimap(camX, camY, W, H) {
+        const m = this.minimap;
+        const mctx = this.minimapCtx;
+        if (!m || !mctx || !this.map) return;
+
+        const mw = m.width;
+        const mh = m.height;
+        const mapW = this.map.w * (this.map.tile || JamriWorld.TILE);
+        const mapH = this.map.h * (this.map.tile || JamriWorld.TILE);
+        const sx = mw / mapW;
+        const sy = mh / mapH;
+
+        mctx.clearRect(0, 0, mw, mh);
+        mctx.fillStyle = 'rgba(11,15,26,0.75)';
+        mctx.fillRect(0, 0, mw, mh);
+
+        // Walls.
+        mctx.fillStyle = 'rgba(120,110,90,0.8)';
+        for (const c of this.map.colliders || []) {
+            mctx.fillRect(c.x * (this.map.tile || 32) * sx, c.y * (this.map.tile || 32) * sy,
+                c.w * (this.map.tile || 32) * sx, c.h * (this.map.tile || 32) * sy);
+        }
+
+        // Mats.
+        for (const b of this.boxes) {
+            mctx.beginPath();
+            mctx.arc(b.x * sx, b.y * sy, Math.max(3, (b.r || 96) * sx), 0, Math.PI * 2);
+            mctx.strokeStyle = (this.activeBox && this.activeBox.id === b.id) ? '#818cf8' : 'rgba(148,163,184,0.7)';
+            mctx.lineWidth = 1.5;
+            mctx.stroke();
+        }
+
+        // Avatars.
+        for (const av of this.avatars.values()) {
+            mctx.fillStyle = '#94a3b8';
+            mctx.fillRect(av.rx * sx - 1.5, av.ry * sy - 1.5, 3, 3);
+        }
+        mctx.fillStyle = '#8ab4ff';
+        mctx.fillRect(this.me.x * sx - 2.5, this.me.y * sy - 2.5, 5, 5);
+
+        // Camera viewport rectangle.
+        mctx.strokeStyle = 'rgba(255,255,255,0.25)';
+        mctx.lineWidth = 1;
+        mctx.strokeRect(camX * sx, camY * sy, W * sx, H * sy);
     }
 }
 
