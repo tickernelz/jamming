@@ -56,7 +56,7 @@ class WebSocketHandler implements MessageComponentInterface
         $this->roomManager = $roomManager;
         $this->ytService = $ytService;
         $this->rateLimiter = new RateLimiter();
-        $this->worldManager = $worldManager ?? new WorldManager($roomManager->pdo());
+        $this->worldManager = $worldManager ?? new WorldManager($roomManager->pdo(), $roomManager);
         $this->restoreRuntimeState();
         register_shutdown_function([$this, 'persistRuntimeState']);
     }
@@ -100,16 +100,35 @@ class WebSocketHandler implements MessageComponentInterface
             'emoji' => $emoji,
         ];
 
+        if (!$this->attachToRoom($conn, $roomId)) {
+            $conn->send(json_encode([
+                'type' => 'room_not_found',
+                'message' => 'Room ini sudah kedaluwarsa atau telah dihapus karena tidak ada aktivitas.'
+            ]));
+            $conn->close();
+        }
+    }
+
+    /**
+     * Attach a connection to a room's live audio session: load state from DB on
+     * first join, register the client, send room_init and announce the join.
+     * Shared by the legacy flow and world "mat" joins.
+     *
+     * @return bool false when the room does not exist.
+     */
+    private function attachToRoom(ConnectionInterface $conn, string $roomId): bool
+    {
+        $resId = $conn->resourceId;
+        $meta = $this->clientMeta[$resId] ?? [];
+        $nickname = $meta['nickname'] ?? 'Guest';
+        $emoji = $meta['emoji'] ?? '🎧';
+        $deviceId = $meta['device_id'] ?? '';
+
         if (!isset($this->rooms[$roomId])) {
             // Load state from DB
             $roomSummary = $this->roomManager->getRoomSummary($roomId);
             if (!$roomSummary) {
-                $conn->send(json_encode([
-                    'type' => 'room_not_found',
-                    'message' => 'Room ini sudah kedaluwarsa atau telah dihapus karena tidak ada aktivitas.'
-                ]));
-                $conn->close();
-                return;
+                return false;
             }
             $queue = $this->roomManager->getQueue($roomId);
             $initialTrack = null;
@@ -138,6 +157,7 @@ class WebSocketHandler implements MessageComponentInterface
                 'is_shuffled' => false,
                 'punishments' => [],
                 'host_device_id' => (string)($roomSummary['host_device_id'] ?? ''),
+                'control_mode' => (string)($roomSummary['box_control'] ?? 'everyone'),
             ];
         }
 
@@ -145,7 +165,6 @@ class WebSocketHandler implements MessageComponentInterface
         $this->rooms[$roomId]['empty_since'] = null;
         $this->roomManager->markEmptySince($roomId, false);
 
-        // Send current room state to joining client
         $currentPos = $this->getCurrentPosition($roomId);
         $queue = $this->roomManager->getQueue($roomId);
 
@@ -161,6 +180,7 @@ class WebSocketHandler implements MessageComponentInterface
             'server_time' => (int)(microtime(true) * 1000),
             'online_users' => $this->getOnlineUsers($roomId),
             'punishments' => $this->getActivePunishments($roomId),
+            'control_mode' => $this->rooms[$roomId]['control_mode'] ?? 'everyone',
         ]));
 
         // Broadcast to others that a user joined
@@ -174,6 +194,38 @@ class WebSocketHandler implements MessageComponentInterface
             'online_users' => $this->getOnlineUsers($roomId),
             'punishments' => $this->getActivePunishments($roomId),
         ], $conn);
+
+        return true;
+    }
+
+    /**
+     * Detach a connection from a room's audio session. When the last client
+     * leaves, pause playback and mark the room empty for auto-purge.
+     */
+    private function detachFromRoom(string $roomId, int $resId, array $meta): void
+    {
+        if (!isset($this->rooms[$roomId])) {
+            return;
+        }
+
+        unset($this->rooms[$roomId]['clients'][$resId]);
+
+        if (count($this->rooms[$roomId]['clients']) === 0) {
+            $this->rooms[$roomId]['empty_since'] = time();
+            $this->rooms[$roomId]['playback_state'] = 'paused';
+            $currentPos = $this->getCurrentPosition($roomId);
+            $this->roomManager->updatePlaybackState($roomId, 'paused', $currentPos);
+            $this->roomManager->markEmptySince($roomId, true);
+        } else {
+            $this->broadcastToRoom($roomId, [
+                'type' => 'user_left',
+                'user' => [
+                    'nickname' => $meta['nickname'] ?? 'Guest',
+                    'emoji' => $meta['emoji'] ?? '🎧',
+                ],
+                'online_users' => $this->getOnlineUsers($roomId),
+            ]);
+        }
     }
 
     public function onMessage(ConnectionInterface $from, $msg): void
@@ -206,13 +258,25 @@ class WebSocketHandler implements MessageComponentInterface
 
         $type = $data['type'];
 
-        // World presence has its own (short) protocol.
+        // World protocol owns movement + mat management. Any OTHER message from a
+        // world client is a room-bound action (play/pause/chat/queue...) and is
+        // only valid while the avatar is standing on a mat.
         if (($meta['mode'] ?? 'room') === 'world') {
-            $this->handleWorldMessage($from, $meta, $type, $data);
-            return;
-        }
+            if (in_array($type, ['world.move', 'zone.select', 'mat.place', 'mat.pickup', 'ping'], true)) {
+                $this->handleWorldMessage($from, $meta, $type, $data);
+                return;
+            }
 
-        $roomId = $meta['room_id'];
+            $activeBoxId = $this->worldManager->getActiveBox($meta['room_id'], $resId);
+            $activeBox = $activeBoxId !== null ? $this->worldManager->getBox($meta['room_id'], $activeBoxId) : null;
+            if ($activeBox === null) {
+                // Not on a mat: room actions have no target.
+                return;
+            }
+            $roomId = $activeBox['room_id'];
+        } else {
+            $roomId = $meta['room_id'];
+        }
 
         // Guard: Check if music control action is attempted by a currently punished user
         $musicControlActions = [
@@ -220,6 +284,24 @@ class WebSocketHandler implements MessageComponentInterface
             'set_loop', 'queue_add', 'queue_reorder', 'queue_remove',
             'queue_shuffle', 'playlist_add', 'playlist_remove'
         ];
+
+        // Mat control policy: when a mat is set to 'owner', only the mat owner
+        // may drive playback. Enforced server-side (never trust the client).
+        if (in_array($type, $musicControlActions, true) && ($meta['mode'] ?? 'room') === 'world') {
+            $control = $this->rooms[$roomId]['control_mode'] ?? 'everyone';
+            if ($control === 'owner') {
+                $summary = $this->roomManager->getRoomSummary($roomId);
+                $owner = $summary['host_device_id'] ?? '';
+                if ($owner !== '' && $owner !== $meta['device_id']) {
+                    $from->send(json_encode([
+                        'type' => 'notice',
+                        'message' => 'Tikar ini hanya bisa dikontrol oleh pemiliknya.',
+                        'level' => 'warning',
+                    ]));
+                    return;
+                }
+            }
+        }
 
         if (in_array($type, $musicControlActions, true)) {
             if ($this->isUserPunished($roomId, $meta['device_id'], $meta['nickname'])) {
@@ -685,8 +767,13 @@ class WebSocketHandler implements MessageComponentInterface
         $meta = $this->clientMeta[$resId];
         $roomId = $meta['room_id'];
 
-        // World presence: drop the avatar and tell the others.
+        // World presence: detach from any active mat, then drop the avatar.
         if (($meta['mode'] ?? 'room') === 'world') {
+            $activeBox = $this->worldManager->getActiveBox($roomId, $resId);
+            if ($activeBox !== null) {
+                $this->detachFromRoom($roomId, $resId, $meta);
+                $this->worldManager->setActiveBox($roomId, $resId, null);
+            }
             unset($this->clientMeta[$resId]);
             unset($this->worldConnections[$resId]);
             $this->worldManager->leave($roomId, $resId);
@@ -1337,13 +1424,14 @@ class WebSocketHandler implements MessageComponentInterface
             'map' => $map,
             'you' => ['id' => $resId, 'x' => $spawn['x'], 'y' => $spawn['y'], 'emoji' => $emoji, 'nickname' => $nickname],
             'avatars' => $this->worldManager->snapshot($worldId),
+            'boxes' => $this->worldManager->boxesPayload($worldId),
             'online' => $this->worldManager->count($worldId),
             'max_users' => WorldManager::MAX_USERS_PER_WORLD,
             'server_time' => (int)(microtime(true) * 1000),
         ]));
     }
 
-    /** Route world-protocol messages (world.move / world.chat). */
+    /** Route world-protocol messages (movement + mats + zone selection). */
     private function handleWorldMessage(ConnectionInterface $from, array $meta, string $type, array $data): void
     {
         $worldId = $meta['room_id'];
@@ -1366,6 +1454,93 @@ class WebSocketHandler implements MessageComponentInterface
                 }
                 break;
 
+            case 'zone.select':
+                // User answered the overlap dialog. Verify they are actually
+                // inside the chosen mat's radius (anti-spoof).
+                $boxId = is_string($data['box_id'] ?? null) ? $data['box_id'] : '';
+                $me = $this->worldManager->getAvatar($worldId, $resId);
+                if ($me === null || $boxId === '') {
+                    break;
+                }
+                $box = $this->worldManager->getBox($worldId, $boxId);
+                if ($box === null) {
+                    break;
+                }
+                if (hypot($me['x'] - $box['x'], $me['y'] - $box['y']) > (float)$box['radius']) {
+                    break;
+                }
+                $this->applyZone($from, $worldId, $resId, $box, true);
+                break;
+
+            case 'mat.place':
+                if (!$this->rateLimiter->allow(RateLimiter::key('mat_place', $meta['device_id']), 5, 60)) {
+                    break;
+                }
+                $me = $this->worldManager->getAvatar($worldId, $resId);
+                if ($me === null) {
+                    break;
+                }
+                $label = Validator::clean($data['label'] ?? ($meta['nickname'] . "'s Tikar"), 40);
+                $control = in_array($data['control_mode'] ?? '', ['owner', 'everyone'], true) ? $data['control_mode'] : 'everyone';
+                $box = $this->worldManager->placeBox(
+                    $worldId,
+                    $meta['device_id'],
+                    $meta['nickname'],
+                    (float)$me['x'],
+                    (float)$me['y'],
+                    $label,
+                    $control
+                );
+                if ($box === null) {
+                    $from->send(json_encode([
+                        'type' => 'notice',
+                        'message' => 'Tidak bisa gelar tikar di sini (nabrak tembok, terlalu dekat tikar lain, atau world penuh).',
+                        'level' => 'warning',
+                    ]));
+                    break;
+                }
+                $this->broadcastWorld($worldId, [
+                    'type' => 'mat.placed',
+                    'box' => $this->boxPublicPayload($box, $worldId),
+                ]);
+                // Placer immediately joins their own mat.
+                $this->applyZone($from, $worldId, $resId, $box, true);
+                break;
+
+            case 'mat.pickup':
+                $boxId = is_string($data['box_id'] ?? null) ? $data['box_id'] : '';
+                $box = $boxId !== '' ? $this->worldManager->getBox($worldId, $boxId) : null;
+                if ($box === null || $box['owner_device_id'] !== $meta['device_id']) {
+                    $from->send(json_encode([
+                        'type' => 'notice',
+                        'message' => 'Hanya pemilik tikar yang bisa mengangkatnya.',
+                        'level' => 'warning',
+                    ]));
+                    break;
+                }
+                // Anyone currently on this mat must be detached first.
+                foreach ($this->clientMeta as $rid => $cm) {
+                    if (($cm['mode'] ?? '') === 'world' && $cm['room_id'] === $worldId
+                        && $this->worldManager->getActiveBox($worldId, $rid) === $boxId) {
+                        $conn = $this->findConnection($rid);
+                        if ($conn !== null) {
+                            $this->detachFromRoom($box['room_id'], $rid, $cm);
+                            $conn->send(json_encode([
+                                'type' => 'zone.exit',
+                                'box_id' => $boxId,
+                                'reason' => 'picked_up',
+                            ]));
+                        }
+                        $this->worldManager->setActiveBox($worldId, $rid, null);
+                    }
+                }
+                $this->worldManager->removeBox($worldId, $boxId);
+                $this->broadcastWorld($worldId, [
+                    'type' => 'mat.removed',
+                    'box_id' => $boxId,
+                ]);
+                break;
+
             case 'ping':
                 $from->send(json_encode([
                     'type' => 'pong',
@@ -1375,6 +1550,67 @@ class WebSocketHandler implements MessageComponentInterface
         }
     }
 
+    /** Broadcast the current mat list for a world (after a change). */
+    private function broadcastWorldBoxes(string $worldId): void
+    {
+        $this->broadcastWorld($worldId, [
+            'type' => 'world.boxes',
+            'boxes' => $this->worldManager->boxesPayload($worldId),
+        ]);
+    }
+
+    private function boxPublicPayload(array $box, string $worldId): array
+    {
+        return [
+            'id' => $box['id'],
+            'room_id' => $box['room_id'],
+            'label' => $box['label'],
+            'x' => (float)$box['x'],
+            'y' => (float)$box['y'],
+            'r' => (float)$box['radius'],
+            'owner' => $box['owner_device_id'],
+            'control' => $box['control_mode'],
+            'users' => $this->worldManager->countInBox($worldId, (string)$box['id']),
+        ];
+    }
+
+    /**
+     * Switch a world client's active mat: detach from the previous room, attach
+     * to the new one, and tell the client which room it is now listening to.
+     */
+    private function applyZone(ConnectionInterface $conn, string $worldId, int $resId, array $box, bool $explicit): void
+    {
+        $current = $this->worldManager->getActiveBox($worldId, $resId);
+        if ($current === $box['id']) {
+            return;
+        }
+
+        $meta = $this->clientMeta[$resId] ?? [];
+
+        if ($current !== null) {
+            $prev = $this->worldManager->getBox($worldId, $current);
+            if ($prev !== null) {
+                $this->detachFromRoom($prev['room_id'], $resId, $meta);
+            }
+            $conn->send(json_encode([
+                'type' => 'zone.exit',
+                'box_id' => $current,
+            ]));
+        }
+
+        $this->worldManager->setActiveBox($worldId, $resId, $box['id']);
+        $this->attachToRoom($conn, $box['room_id']);
+        $conn->send(json_encode([
+            'type' => 'zone.enter',
+            'box_id' => $box['id'],
+            'room_id' => $box['room_id'],
+            'label' => $box['label'],
+            'control' => $box['control_mode'],
+        ]));
+
+        $this->broadcastWorldBoxes($worldId);
+    }
+
     /**
      * Broadcast a single compact snapshot of every world to all their clients.
      * Called on a 15 Hz timer from the daemon.
@@ -1382,6 +1618,9 @@ class WebSocketHandler implements MessageComponentInterface
     public function tickWorlds(): void
     {
         foreach ($this->worldManager->allWorldIds() as $worldId) {
+            // Resolve automatic zone membership from server-authoritative positions.
+            $this->resolveZones($worldId);
+
             $avatars = $this->worldManager->snapshot($worldId);
             $payload = json_encode([
                 'type' => 'world.snapshot',
@@ -1402,6 +1641,76 @@ class WebSocketHandler implements MessageComponentInterface
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * Automatic mat membership each tick:
+     *  - 0 mats in range  -> leave current mat (zone.exit)
+     *  - 1 mat in range   -> auto-enter
+     *  - 2+ mats in range -> ask the client to choose (zone.choice_required)
+     * Server decides everything; the client only answers the choice.
+     */
+    private function resolveZones(string $worldId): void
+    {
+        foreach (array_keys($this->worldManager->avatarsByResId($worldId)) as $resId) {
+            $meta = $this->clientMeta[$resId] ?? null;
+            if ($meta === null || ($meta['mode'] ?? '') !== 'world' || $meta['room_id'] !== $worldId) {
+                continue;
+            }
+            $avatar = $this->worldManager->getAvatar($worldId, $resId);
+            if ($avatar === null) {
+                continue;
+            }
+
+            $hits = $this->worldManager->boxesContaining($worldId, (float)$avatar['x'], (float)$avatar['y']);
+            $conn = $this->findConnection($resId);
+            if ($conn === null) {
+                continue;
+            }
+
+            $current = $this->worldManager->getActiveBox($worldId, $resId);
+
+            if (count($hits) === 0) {
+                if ($current !== null) {
+                    $prev = $this->worldManager->getBox($worldId, $current);
+                    if ($prev !== null) {
+                        $this->detachFromRoom($prev['room_id'], $resId, $meta);
+                    }
+                    $this->worldManager->setActiveBox($worldId, $resId, null);
+                    $conn->send(json_encode(['type' => 'zone.exit', 'box_id' => $current]));
+                    $this->broadcastWorldBoxes($worldId);
+                }
+                continue;
+            }
+
+            if (count($hits) === 1) {
+                if ($current !== $hits[0]['id']) {
+                    $this->applyZone($conn, $worldId, $resId, $hits[0], false);
+                }
+                continue;
+            }
+
+            // 2+ mats: if the user is already on one of them, stay put; otherwise
+            // ask which mat they want to join.
+            $ids = array_column($hits, 'id');
+            if ($current !== null && in_array($current, $ids, true)) {
+                continue;
+            }
+
+            $choices = [];
+            foreach ($hits as $b) {
+                $choices[] = [
+                    'id' => $b['id'],
+                    'label' => $b['label'],
+                    'owner' => $b['owner_device_id'],
+                    'users' => $this->worldManager->countInBox($worldId, (string)$b['id']),
+                ];
+            }
+            $conn->send(json_encode([
+                'type' => 'zone.choice_required',
+                'boxes' => $choices,
+            ]));
         }
     }
 

@@ -67,6 +67,204 @@ body.in-room #world-view {
     color: var(--text-muted);
 }
 
+.world-hud-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.world-hud-sub {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-shrink: 0;
+}
+
+.mat-room-info {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--primary);
+}
+
+.world-body {
+    display: flex;
+    gap: 10px;
+    flex: 1;
+    min-height: 0;
+}
+
+/* --- Mat side panel --- */
+.mat-panel {
+    width: 280px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 10px;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.mat-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-weight: 700;
+    font-size: 13px;
+    color: var(--text-primary);
+    flex-shrink: 0;
+}
+
+.mat-users-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.mat-user-chip {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+    background: var(--bg-surface-elevated);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+}
+
+.mat-queue-title-label,
+.mat-chat-title-label {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    margin-top: 4px;
+    flex-shrink: 0;
+}
+
+.mat-queue-list {
+    max-height: 130px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    flex-shrink: 0;
+}
+
+.mat-queue-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 6px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface-elevated);
+    font-size: 12px;
+}
+
+.mat-queue-idx {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    width: 14px;
+    flex-shrink: 0;
+}
+
+.mat-queue-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-primary);
+}
+
+.mat-empty {
+    font-size: 11px;
+    color: var(--text-muted);
+    padding: 6px 2px;
+}
+
+.mat-chat-list {
+    flex: 1;
+    min-height: 60px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 4px;
+    background: var(--bg-surface-elevated);
+    border-radius: var(--radius-sm);
+}
+
+.mat-chat-row {
+    font-size: 12px;
+    line-height: 1.35;
+    word-break: break-word;
+}
+
+.mat-chat-nick {
+    font-weight: 700;
+    color: var(--text-secondary);
+    margin-right: 4px;
+}
+
+.mat-chat-text {
+    color: var(--text-primary);
+}
+
+.mat-chat-form {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.mat-chat-input {
+    flex: 1;
+    min-width: 0;
+    font-size: 12px;
+    padding: 6px 8px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
+    background: var(--bg-surface-elevated);
+    color: var(--text-primary);
+    outline: none;
+}
+
+/* --- Mat choice / place dialogs --- */
+.mat-choice-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 12px 14px;
+    margin-bottom: 8px;
+    background: var(--bg-surface-elevated);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    color: var(--text-primary);
+    text-align: left;
+}
+
+.mat-choice-row:hover {
+    border-color: var(--primary);
+    background: var(--primary-light);
+}
+
+.mat-choice-name {
+    font-weight: 600;
+    font-size: 13px;
+}
+
+.mat-choice-meta {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
 .world-stage {
     position: relative;
     flex: 1;
@@ -142,5 +340,14 @@ body.in-room #world-view {
 
     .world-joystick {
         display: block;
+    }
+
+    .world-body {
+        flex-direction: column;
+    }
+
+    .mat-panel {
+        width: 100%;
+        max-height: 40vh;
     }
 }

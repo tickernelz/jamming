@@ -38,6 +38,12 @@ class JamriWorld {
         this.ctx = null;
         this._bound = {};
         this.online = 0;
+
+        // Mats (jamming boxes)
+        this.boxes = [];
+        this.activeBox = null;
+        this.roomEventsBound = false;
+        this.choiceOpen = false;
     }
 
     // ------------------------------------------------------------------
@@ -48,7 +54,144 @@ class JamriWorld {
         this.user = user;
         this.buildDom();
         this.bindInput();
+        this.bindRoomEvents();
         this.connect();
+    }
+
+    /**
+     * Reuse the room WebSocket event handlers while standing on a mat. The room
+     * protocol is identical to the legacy flow, so we simply delegate to the
+     * existing app-level helpers and hydrate the mat's music panel.
+     */
+    bindRoomEvents() {
+        if (this.roomEventsBound) return;
+        const ws = window.JAMRI_APP && window.JAMRI_APP.wsClient;
+        if (!ws) return;
+        this.roomEventsBound = true;
+
+        ws.on('room_init', (data) => this.onRoomInit(data));
+        ws.on('chat_message', (data) => {
+            if (data.message) this.appendRoomChat(data.message);
+        });
+        ws.on('queue_updated', (data) => {
+            if (data.queue) this.renderQueue(data.queue);
+        });
+        ws.on('user_joined', (data) => {
+            if (data.online_users) this.renderUsers(data.online_users);
+        });
+        ws.on('user_left', (data) => {
+            if (data.online_users) this.renderUsers(data.online_users);
+        });
+
+        // Playback events for the mat we are standing on. The room WebSocket is
+        // shared with the legacy flow, so these must be handled here too.
+        ws.on('play', (data) => this.player.syncJammingState(data.track || null, 'playing', data.position, data.server_time, true));
+        ws.on('pause', (data) => this.player.syncJammingState(data.track || null, 'paused', data.position, data.server_time, true));
+        ws.on('seek', (data) => this.player.syncJammingState(data.track || null, data.state, data.position, data.server_time, true));
+        ws.on('track_change', (data) => {
+            if (data.track) {
+                this.player.playTrack(data.track, data.position || 0);
+            }
+        });
+        ws.on('playback_stopped', () => this.player.stop());
+        ws.on('loop_changed', (data) => {
+            if (data.loop_mode) this.player.setLoopMode(data.loop_mode);
+        });
+        ws.on('notice', (data) => {
+            if (data.message && window.showToast) window.showToast(data.message, data.level || 'info');
+        });
+    }
+
+    onRoomInit(data) {
+        this.roomState = {
+            roomId: data.room_id,
+            control: data.control_mode || 'everyone',
+        };
+        if (data.queue) this.renderQueue(data.queue);
+        if (data.online_users) this.renderUsers(data.online_users);
+        if (data.current_track) {
+            const player = this.player;
+            const isSame = player.currentTrack && player.currentTrack.youtube_id === data.current_track.youtube_id;
+            if (isSame) {
+                player.syncJammingState(data.current_track, data.state, data.position, data.server_time, true);
+            } else {
+                player.playTrack(data.current_track, data.position || 0);
+                if (data.state === 'paused') player.pause();
+            }
+        } else {
+            this.player.stop();
+        }
+        this.updatePanelRoomInfo();
+    }
+
+    appendRoomChat(msg) {
+        const list = document.getElementById('mat-chat-list');
+        if (!list) return;
+        const row = document.createElement('div');
+        row.className = 'mat-chat-row';
+        const isMe = window.JAMRI_USER && window.JAMRI_USER.nickname === msg.sender_nickname;
+        row.innerHTML = `<span class="mat-chat-nick">${safeEmoji(msg.sender_emoji)} ${escapeHtml(msg.sender_nickname)}</span>
+            <span class="mat-chat-text" style="${isMe ? 'color:var(--primary)' : ''}">${escapeHtml(msg.message)}</span>`;
+        list.appendChild(row);
+        list.scrollTop = list.scrollHeight;
+    }
+
+    renderUsers(users) {
+        const el = document.getElementById('mat-users-list');
+        if (!el) return;
+        el.innerHTML = (users || []).map(u =>
+            `<span class="mat-user-chip">${safeEmoji(u.emoji)} ${escapeHtml(u.nickname)}</span>`
+        ).join('');
+    }
+
+    renderQueue(queue) {
+        this._queue = queue || [];
+        const el = document.getElementById('mat-queue-list');
+        if (!el) return;
+        if (this._queue.length === 0) {
+            el.innerHTML = '<div class="mat-empty">Antrean kosong. Klik "Cari Musik" untuk menambah lagu.</div>';
+            return;
+        }
+        el.innerHTML = this._queue.map((t, i) => `
+            <div class="mat-queue-row">
+                <span class="mat-queue-idx">${i + 1}</span>
+                <span class="mat-queue-title" title="${escapeHtml(t.title)}">${escapeHtml(t.title)}</span>
+                <button type="button" class="btn btn-ghost btn-icon btn-xs mat-queue-play" data-id="${t.id}" title="Putar sekarang">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                </button>
+                <button type="button" class="btn btn-ghost btn-icon btn-xs mat-queue-remove" data-id="${t.id}" title="Hapus">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+            </div>
+        `).join('');
+
+        el.querySelectorAll('.mat-queue-play').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const id = parseInt(btn.dataset.id, 10);
+                const track = this._queue.find(t => t.id === id);
+                if (track) {
+                    window.JAMRI_APP.wsClient.sendSetTrack(track);
+                }
+            });
+        });
+        el.querySelectorAll('.mat-queue-remove').forEach(btn => {
+            btn.addEventListener('click', () => {
+                window.JAMRI_APP.wsClient.sendQueueRemove(parseInt(btn.dataset.id, 10));
+            });
+        });
+    }
+
+    updatePanelRoomInfo() {
+        const info = document.getElementById('mat-room-info');
+        if (!info) return;
+        if (!this.activeBox) {
+            info.textContent = 'Belum bergabung ke tikar mana pun.';
+            return;
+        }
+        const controlLabel = (this.roomState && this.roomState.control === 'owner')
+            ? 'Hanya pemilik yang bisa kontrol'
+            : 'Semua peserta bisa kontrol';
+        info.textContent = `${this.activeBox.label} • ${controlLabel}`;
     }
 
     leave() {
@@ -85,15 +228,55 @@ class JamriWorld {
                         <span id="world-name-label" class="world-name-label">World</span>
                         <span id="world-online-badge" class="world-online-badge">0 online</span>
                     </div>
-                    <div class="world-hint">Gerak: WASD / panah</div>
+                    <div class="world-hud-actions">
+                        <button type="button" id="btn-place-mat" class="btn btn-primary btn-sm" title="Gelar tikar jamming di posisi Anda">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+                                <path d="M3 15h18"></path>
+                            </svg>
+                            <span>Gelar Tikar</span>
+                        </button>
+                        <button type="button" id="btn-mat-search" class="btn btn-outline btn-sm" title="Cari musik untuk tikar Anda">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="11" cy="11" r="8"></circle>
+                                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                            </svg>
+                            <span>Cari Musik</span>
+                        </button>
+                    </div>
                 </div>
 
-                <div class="world-stage" id="world-stage">
-                    <canvas id="world-canvas"></canvas>
-                    <div class="world-loading" id="world-loading">
-                        <div class="spinner"></div>
-                        <span>Memasuki world...</span>
+                <div class="world-hud-sub">
+                    <span id="mat-room-info" class="mat-room-info">Belum bergabung ke tikar mana pun.</span>
+                    <span class="world-hint">Gerak: WASD / panah</span>
+                </div>
+
+                <div class="world-body">
+                    <div class="world-stage" id="world-stage">
+                        <canvas id="world-canvas"></canvas>
+                        <div class="world-loading" id="world-loading">
+                            <div class="spinner"></div>
+                            <span>Memasuki world...</span>
+                        </div>
                     </div>
+
+                    <aside class="mat-panel" id="mat-panel">
+                        <div class="mat-panel-head">
+                            <span>Tikar Saya</span>
+                            <button type="button" class="btn btn-ghost btn-icon btn-xs" id="btn-mat-pickup" title="Angkat tikar (hanya pemilik)">✕</button>
+                        </div>
+                        <div class="mat-users-list" id="mat-users-list"></div>
+                        <div class="mat-queue-title-label">Antrean Tikar</div>
+                        <div class="mat-queue-list" id="mat-queue-list">
+                            <div class="mat-empty">Belum bergabung ke tikar.</div>
+                        </div>
+                        <div class="mat-chat-title-label">Chat Tikar</div>
+                        <div class="mat-chat-list" id="mat-chat-list"></div>
+                        <form class="mat-chat-form" id="mat-chat-form">
+                            <input type="text" id="mat-chat-input" class="mat-chat-input" placeholder="Tulis pesan..." maxlength="300" autocomplete="off" />
+                            <button type="submit" class="btn btn-primary btn-sm">Kirim</button>
+                        </form>
+                    </aside>
                 </div>
 
                 <div class="world-joystick" id="world-joystick">
@@ -108,8 +291,93 @@ class JamriWorld {
         const leaveBtn = container.querySelector('#btn-leave-world');
         if (leaveBtn) leaveBtn.addEventListener('click', () => leaveWorld());
 
+        const placeBtn = container.querySelector('#btn-place-mat');
+        if (placeBtn) placeBtn.addEventListener('click', () => this.openPlaceMatDialog());
+
+        const searchBtn = container.querySelector('#btn-mat-search');
+        if (searchBtn) searchBtn.addEventListener('click', () => {
+            if (window.JAMRI_APP.searchModule) {
+                window.JAMRI_APP.searchModule.setWebSocket(window.JAMRI_APP.wsClient);
+                window.JAMRI_APP.searchModule.showModal();
+            }
+        });
+
+        const pickupBtn = container.querySelector('#btn-mat-pickup');
+        if (pickupBtn) pickupBtn.addEventListener('click', () => {
+            if (!this.activeBox) {
+                if (window.showToast) window.showToast('Kamu belum berada di tikar.', 'warning');
+                return;
+            }
+            window.JAMRI_APP.wsClient.send('mat.pickup', { box_id: this.activeBox.id });
+        });
+
+        const chatForm = container.querySelector('#mat-chat-form');
+        if (chatForm) {
+            chatForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const input = document.getElementById('mat-chat-input');
+                const text = input.value.trim();
+                if (!text) return;
+                if (!this.activeBox) {
+                    if (window.showToast) window.showToast('Masuk ke tikar dulu untuk chat.', 'warning');
+                    return;
+                }
+                window.JAMRI_APP.wsClient.sendChatMessage(text);
+                input.value = '';
+            });
+        }
+
         window.addEventListener('resize', this._bound.resize = () => this.resize());
         this.resize();
+    }
+
+    openPlaceMatDialog() {
+        let modal = document.getElementById('mat-place-modal');
+        if (modal) modal.remove();
+
+        modal = document.createElement('div');
+        modal.id = 'mat-place-modal';
+        modal.className = 'modal-backdrop active';
+        modal.style.display = 'flex';
+        modal.innerHTML = `
+            <div class="modal-card" style="max-width:380px;">
+                <div class="modal-header">
+                    <h3 class="modal-title">Gelar Tikar Jamming</h3>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label class="form-label" for="mat-label-input">Nama Tikar</label>
+                        <input type="text" id="mat-label-input" class="form-input" placeholder="contoh: Tikar Lo-Fi" maxlength="40" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Siapa yang boleh kontrol musik?</label>
+                        <div style="display:flex; gap:16px; margin-top:6px;">
+                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                                <input type="radio" name="mat_control" value="everyone" checked /> Semua peserta
+                            </label>
+                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                                <input type="radio" name="mat_control" value="owner" /> Hanya saya
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline" id="btn-mat-cancel">Batal</button>
+                    <button type="button" class="btn btn-primary" id="btn-mat-confirm">Gelar Tikar</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+
+        const close = () => modal.remove();
+        modal.querySelector('#btn-mat-cancel').addEventListener('click', close);
+        modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+        modal.querySelector('#btn-mat-confirm').addEventListener('click', () => {
+            const label = modal.querySelector('#mat-label-input').value.trim();
+            const control = modal.querySelector('input[name="mat_control"]:checked').value;
+            window.JAMRI_APP.wsClient.send('mat.place', { label, control_mode: control });
+            close();
+        });
     }
 
     resize() {
@@ -174,6 +442,7 @@ class JamriWorld {
                 this.me = { x: data.you.x, y: data.you.y, dir: 0 };
                 this.cam = { x: data.you.x, y: data.you.y };
                 (data.avatars || []).forEach(a => this.upsertAvatar(a, true));
+                this.boxes = data.boxes || [];
                 this.online = data.online || 0;
                 this.updateHud(data.name, this.online, data.max_users);
                 const loading = document.getElementById('world-loading');
@@ -191,6 +460,50 @@ class JamriWorld {
                 this.avatars.delete(data.id);
                 this.online = data.online || Math.max(0, this.avatars.size);
                 this.updateOnline(this.online);
+                break;
+
+            case 'world.boxes':
+                this.boxes = data.boxes || [];
+                if (this.activeBox) {
+                    const refreshed = this.boxes.find(b => b.id === this.activeBox.id);
+                    if (refreshed) this.activeBox = refreshed;
+                }
+                this.updatePanelRoomInfo();
+                break;
+
+            case 'mat.placed':
+                if (data.box && !this.boxes.some(b => b.id === data.box.id)) {
+                    this.boxes.push(data.box);
+                }
+                break;
+
+            case 'mat.removed':
+                this.boxes = this.boxes.filter(b => b.id !== data.box_id);
+                break;
+
+            case 'zone.enter':
+                this.activeBox = this.boxes.find(b => b.id === data.box_id) || {
+                    id: data.box_id, room_id: data.room_id, label: data.label, control: data.control,
+                };
+                this.choiceOpen = false;
+                this.closeChoiceDialog();
+                this.updatePanelRoomInfo();
+                if (this.statusEl) this.statusEl.classList.add('on-mat');
+                if (window.showToast) window.showToast(`Masuk tikar: ${data.label || 'Tikar'}`, 'success');
+                break;
+
+            case 'zone.exit':
+                this.activeBox = null;
+                this.player.pause();
+                this.updatePanelRoomInfo();
+                const ql = document.getElementById('mat-queue-list');
+                if (ql) ql.innerHTML = '<div class="mat-empty">Belum bergabung ke tikar.</div>';
+                const ul = document.getElementById('mat-users-list');
+                if (ul) ul.innerHTML = '';
+                break;
+
+            case 'zone.choice_required':
+                this.openChoiceDialog(data.boxes || []);
                 break;
 
             case 'world_full':
@@ -217,6 +530,54 @@ class JamriWorld {
             av.nick = a.n;
             if (immediate) { av.rx = a.x; av.ry = a.y; }
         }
+    }
+
+    /** Ask the player which mat to join when they are inside several. */
+    openChoiceDialog(boxes) {
+        if (boxes.length === 0) return;
+        this.choiceOpen = true;
+        let modal = document.getElementById('mat-choice-modal');
+        if (modal) modal.remove();
+
+        modal = document.createElement('div');
+        modal.id = 'mat-choice-modal';
+        modal.className = 'modal-backdrop active';
+        modal.style.display = 'flex';
+        modal.innerHTML = `
+            <div class="modal-card" style="max-width:400px;">
+                <div class="modal-header">
+                    <h3 class="modal-title">Pilih Tikar</h3>
+                    <p class="modal-subtitle">Kamu berada di beberapa tikar sekaligus. Mau gabung ke yang mana?</p>
+                </div>
+                <div class="modal-body">
+                    ${boxes.map(b => `
+                        <button type="button" class="mat-choice-row" data-box="${b.id}">
+                            <span class="mat-choice-name">${escapeHtml(b.label || 'Tikar')}</span>
+                            <span class="mat-choice-meta">${b.users || 0} peserta</span>
+                        </button>
+                    `).join('')}
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline" id="btn-mat-choice-later">Nanti</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+
+        modal.querySelectorAll('.mat-choice-row').forEach(btn => {
+            btn.addEventListener('click', () => {
+                window.JAMRI_APP.wsClient.send('zone.select', { box_id: btn.dataset.box });
+                this.closeChoiceDialog();
+            });
+        });
+        const later = modal.querySelector('#btn-mat-choice-later');
+        if (later) later.addEventListener('click', () => this.closeChoiceDialog());
+    }
+
+    closeChoiceDialog() {
+        this.choiceOpen = false;
+        const modal = document.getElementById('mat-choice-modal');
+        if (modal) modal.remove();
     }
 
     reapAvatars(list) {
@@ -427,6 +788,48 @@ class JamriWorld {
             ctx.fillRect(x, y, w, 6);
             ctx.fillStyle = '#2a1f15';
             ctx.fillRect(x, y + h - 5, w, 5);
+        }
+
+        // Mats (jamming boxes) drawn on the floor, under avatars.
+        for (const b of this.boxes) {
+            const sx = b.x - camX;
+            const sy = b.y - camY;
+            const r = b.r || 96;
+            const isActive = this.activeBox && this.activeBox.id === b.id;
+
+            ctx.beginPath();
+            ctx.arc(sx, sy, r, 0, Math.PI * 2);
+            ctx.fillStyle = isActive ? 'rgba(99,102,241,0.20)' : 'rgba(148,163,184,0.12)';
+            ctx.fill();
+            ctx.lineWidth = isActive ? 4 : 2;
+            ctx.strokeStyle = isActive ? '#818cf8' : 'rgba(148,163,184,0.55)';
+            ctx.stroke();
+
+            // Checkerboard mat pattern (pixel style).
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(sx, sy, r - 3, 0, Math.PI * 2);
+            ctx.clip();
+            const cell = 16;
+            for (let gy = -r; gy < r; gy += cell) {
+                for (let gx = -r; gx < r; gx += cell) {
+                    if (((gx / cell) + (gy / cell)) % 2 === 0) {
+                        ctx.fillStyle = isActive ? 'rgba(129,140,248,0.12)' : 'rgba(148,163,184,0.07)';
+                        ctx.fillRect(Math.round(sx + gx), Math.round(sy + gy), cell, cell);
+                    }
+                }
+            }
+            ctx.restore();
+
+            // Label above the mat.
+            ctx.font = 'bold 12px sans-serif';
+            ctx.textAlign = 'center';
+            const label = `${b.label || 'Tikar'}${b.users ? ' (' + b.users + ')' : ''}`;
+            const tw = ctx.measureText(label).width;
+            ctx.fillStyle = 'rgba(0,0,0,0.6)';
+            ctx.fillRect(sx - tw / 2 - 5, sy - r - 20, tw + 10, 16);
+            ctx.fillStyle = isActive ? '#c7d2fe' : '#cbd5e1';
+            ctx.fillText(label, sx, sy - r - 8);
         }
 
         // Draw entities sorted by Y (painter's algorithm).
