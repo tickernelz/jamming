@@ -222,6 +222,7 @@ class JamriWorld {
 
     leave() {
         this.unbindInput();
+        this.player.setMatVolumeScale(1);
         if (this.rafId) {
             cancelAnimationFrame(this.rafId);
             this.rafId = null;
@@ -568,6 +569,7 @@ class JamriWorld {
 
             case 'zone.exit':
                 this.activeBox = null;
+                this.player.setMatVolumeScale(1);
                 this.player.pause();
                 this.updatePanelRoomInfo();
                 const ql = document.getElementById('mat-queue-list');
@@ -797,6 +799,15 @@ class JamriWorld {
         // Smooth camera.
         this.cam.x += (this.me.x - this.cam.x) * Math.min(1, dt * 8);
         this.cam.y += (this.me.y - this.cam.y) * Math.min(1, dt * 8);
+
+        // Proximity audio fade: volume scales by how centred you are on the mat.
+        if (this.activeBox) {
+            const d = Math.hypot(this.me.x - this.activeBox.x, this.me.y - this.activeBox.y);
+            const r = this.activeBox.r || this.activeBox.radius || 96;
+            // Full volume at the centre, fading to ~35% at the edge.
+            const t = Math.max(0, Math.min(1, 1 - (d / r)));
+            this.player.setMatVolumeScale(0.35 + 0.65 * t);
+        }
 
         // Lerp remote avatars toward their latest server position.
         const t = Math.min(1, dt * JamriWorld.LERP);

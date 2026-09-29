@@ -114,8 +114,8 @@ class JamriPlayer {
                                     this.ytPlayer.mute();
                                 } else {
                                     this.ytPlayer.unMute();
-                                    this.ytPlayer.setVolume(this.volume * 100);
                                 }
+                                this.applyEffectiveVolume();
                             } catch (e) {}
 
                             if (this.pendingTrack) {
@@ -380,7 +380,7 @@ class JamriPlayer {
             }
             this.blobAudio.src = track.stream_url;
             if (startPosition > 0) this.blobAudio.currentTime = startPosition;
-            this.blobAudio.volume = this.volume;
+            this.applyEffectiveVolume();
             this.blobAudio.play().catch(console.warn);
         } else {
             this.blobAudio.pause();
@@ -401,8 +401,8 @@ class JamriPlayer {
                     this.ytPlayer.mute();
                 } else {
                     this.ytPlayer.unMute();
-                    this.ytPlayer.setVolume(this.volume * 100);
                 }
+                this.applyEffectiveVolume();
                 this.ytPlayer.playVideo();
                 this.isPlaying = true;
                 this.emit('state_change', { isPlaying: true });
@@ -701,19 +701,38 @@ class JamriPlayer {
             localStorage.setItem('jamri_local_volume', this.volume.toString());
         } catch (e) {}
 
-        this.blobAudio.volume = this.volume;
+        this.applyEffectiveVolume();
+        this.emit('volume_change', this.volume);
+        return this.volume;
+    }
+
+    /**
+     * Proximity attenuation for world mode (0..1). The master volume the user
+     * set is preserved; this is a separate multiplier applied on top so walking
+     * away from a mat fades its music without losing the user's own setting.
+     */
+    setMatVolumeScale(scale) {
+        const s = Math.max(0, Math.min(1, parseFloat(scale)));
+        if (!isFinite(s)) return;
+        if (Math.abs(s - (this.matAttenuation ?? 1)) < 0.01) return;
+        this.matAttenuation = s;
+        this.applyEffectiveVolume();
+    }
+
+    /** Effective output volume = user master volume x proximity attenuation. */
+    applyEffectiveVolume() {
+        const eff = (this.volume) * (this.matAttenuation ?? 1);
+        this.blobAudio.volume = eff;
         if (this.isYtReady && this.ytPlayer && typeof this.ytPlayer.setVolume === 'function') {
             try {
-                if (this.volume === 0) {
-                    this.ytPlayer.mute();
+                if (eff <= 0.001) {
+                    this.ytPlayer.setVolume(0);
                 } else {
                     this.ytPlayer.unMute();
-                    this.ytPlayer.setVolume(this.volume * 100);
+                    this.ytPlayer.setVolume(eff * 100);
                 }
             } catch (e) {}
         }
-        this.emit('volume_change', this.volume);
-        return this.volume;
     }
 
     toggleMute() {
