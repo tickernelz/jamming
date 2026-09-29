@@ -1,6 +1,6 @@
 # WORLD MODE — Rencana Implementasi (Pixel Jamming World)
 
-> Status: **FASE 1–4 SELESAI** (commit `ec0a790`, `de0d56e`, `6f844ae`)
+> Status: **SEMUA FASE SELESAI (1–5)** (commit `ec0a790`, `de0d56e`, `6f844ae`, `7323794`)
 > Basis commit: `be77d8b` · Dibuat: 2026-09-28 · Diperbarui: 2026-09-29
 > Fitur ini besar. Dokumen ini adalah sumber kebenaran (source of truth) sebelum koding.
 
@@ -14,11 +14,12 @@
 | 2 | Tikar + radius + zone enter/exit + kontrol owner/everyone | ✅ Selesai | `de0d56e` |
 | 3 | Overlap dialog, pickup, auto-despawn tikar kosong | ✅ Selesai | `de0d56e`, `6f844ae` |
 | 4 | Minimap, emote, chat world, crown owner | ✅ Selesai | `6f844ae` |
-| — | Proximity audio fade | ⏸ Ditunda (opsional) | — |
+| 5 | Proximity audio fade (volume mengikuti jarak ke tikar) | ✅ Selesai | `7323794` |
+| — | Multi-world sharding & interest management | ⏸ Belum perlu (<40 user) | — |
 
-**Belum diimplementasi (sengaja):** proximity audio fade bertingkat, multi-world
-sharding/interest management, persistensi posisi & tikar antar restart,
-voice/PTT per tikar, anti-cheat gerakan lanjutan.
+**Belum diimplementasi (sengaja):** multi-world sharding/interest management,
+persistensi posisi & tikar antar restart, voice/PTT per tikar, anti-cheat
+gerakan lanjutan.
 
 ---
 
@@ -189,7 +190,7 @@ docs/WORLD_MODE_PLAN.md     # dokumen ini
 | **2** | Tikar + radius + `zone.enter/exit` → audio & chat tikar + kontrol owner/everyone. | ✅ Selesai (`de0d56e`) |
 | **3** | Overlap confirmation dialog + pickup + auto-despawn tikar kosong. | ✅ Selesai (`6f844ae`) |
 | **4** | Minimap, emote, joystick, chat world, crown owner. | ✅ Selesai (`6f844ae`) |
-| **5** | Proximity fade, interest management, multi-world (opsional, belum). | ⏸ Ditunda |
+| **5** | Proximity audio fade (makin dekat makin keras), interest management, multi-world. | ✅ Fade selesai; sharding ⏸ |
 
 ---
 
@@ -233,7 +234,6 @@ dengan skrip (tanpa dependensi art eksternal):
 
 ## 12. Yang sengaja DITUNDA
 
-- Proximity audio fade (saat ini binary: masuk radius = dengar).
 - Multi-world sharding & interest management (baru perlu >~40 user).
 - Persistensi posisi & tikar antar restart (tikar hilang saat kosong 2 menit).
 - Voice/PTT per tikar (warisan `voice_chunk` global).
