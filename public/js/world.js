@@ -60,21 +60,42 @@ class JamriWorld {
         this.user = user;
         this.buildDom();
         this.bindInput();
-        this.bindRoomEvents();
+        // connect() resets listeners and (re)binds all handlers.
         this.connect();
     }
 
     /**
-     * Reuse the room WebSocket event handlers while standing on a mat. The room
-     * protocol is identical to the legacy flow, so we simply delegate to the
-     * existing app-level helpers and hydrate the mat's music panel.
+     * Bind all websocket events on the SHARED client. World-presence events are
+     * routed to handleMessage(); room/mat events hydrate the mat panel.
      */
     bindRoomEvents() {
-        if (this.roomEventsBound) return;
         const ws = window.JAMRI_APP && window.JAMRI_APP.wsClient;
         if (!ws) return;
         this.roomEventsBound = true;
 
+        // World presence protocol.
+        ws.on('world_init', (d) => this.handleMessage(d));
+        ws.on('world.snapshot', (d) => this.handleMessage(d));
+        ws.on('world.leave', (d) => this.handleMessage(d));
+        ws.on('world.boxes', (d) => this.handleMessage(d));
+        ws.on('world.chat', (d) => this.handleMessage(d));
+        ws.on('world.emote', (d) => this.handleMessage(d));
+        ws.on('mat.placed', (d) => this.handleMessage(d));
+        ws.on('mat.removed', (d) => this.handleMessage(d));
+        ws.on('zone.enter', (d) => this.handleMessage(d));
+        ws.on('zone.exit', (d) => this.handleMessage(d));
+        ws.on('zone.choice_required', (d) => this.handleMessage(d));
+        ws.on('world_full', (d) => this.handleMessage(d));
+        ws.on('world_not_found', (d) => this.handleMessage(d));
+
+        // Room/mat panel events (same protocol as the legacy room flow).
+        ws.on('connection_change', (data) => {
+            const loading = document.getElementById('world-loading');
+            if (loading && data && !data.connected) {
+                loading.style.display = 'flex';
+                loading.innerHTML = '<span>Koneksi terputus. Menghubungkan ulang...</span>';
+            }
+        });
         ws.on('room_init', (data) => this.onRoomInit(data));
         ws.on('chat_message', (data) => {
             if (data.message) this.appendRoomChat(data.message);
@@ -89,15 +110,12 @@ class JamriWorld {
             if (data.online_users) this.renderUsers(data.online_users);
         });
 
-        // Playback events for the mat we are standing on. The room WebSocket is
-        // shared with the legacy flow, so these must be handled here too.
+        // Playback events for the mat we are standing on.
         ws.on('play', (data) => this.player.syncJammingState(data.track || null, 'playing', data.position, data.server_time, true));
         ws.on('pause', (data) => this.player.syncJammingState(data.track || null, 'paused', data.position, data.server_time, true));
         ws.on('seek', (data) => this.player.syncJammingState(data.track || null, data.state, data.position, data.server_time, true));
         ws.on('track_change', (data) => {
-            if (data.track) {
-                this.player.playTrack(data.track, data.position || 0);
-            }
+            if (data.track) this.player.playTrack(data.track, data.position || 0);
         });
         ws.on('playback_stopped', () => this.player.stop());
         ws.on('loop_changed', (data) => {
@@ -215,7 +233,7 @@ class JamriWorld {
     }
 
     sendEmote(emote) {
-        window.JAMRI_APP.wsClient.send('world.emote', { emote });
+        this.send('world.emote', { emote });
         // Show it locally right away for instant feedback.
         this.emotes.push({ id: this.myId, emote, t: performance.now() });
     }
@@ -227,10 +245,12 @@ class JamriWorld {
             cancelAnimationFrame(this.rafId);
             this.rafId = null;
         }
-        if (this.ws) {
-            try { this.ws.close(); } catch (e) {}
-            this.ws = null;
+        // Disconnect the shared client so the next room/world starts clean.
+        const client = window.JAMRI_APP && window.JAMRI_APP.wsClient;
+        if (client) {
+            try { client.disconnect(); } catch (e) {}
         }
+        this.ws = null;
         this.avatars.clear();
         const container = document.getElementById('world-view');
         if (container) container.innerHTML = '';
@@ -358,7 +378,7 @@ class JamriWorld {
                 if (window.showToast) window.showToast('Kamu belum berada di tikar.', 'warning');
                 return;
             }
-            window.JAMRI_APP.wsClient.send('mat.pickup', { box_id: this.activeBox.id });
+            this.send('mat.pickup', { box_id: this.activeBox.id });
         });
 
         const chatForm = container.querySelector('#mat-chat-form');
@@ -384,7 +404,7 @@ class JamriWorld {
                 const input = document.getElementById('world-chat-input');
                 const text = input.value.trim();
                 if (!text) return;
-                window.JAMRI_APP.wsClient.send('world.chat', { message: text });
+                this.send('world.chat', { message: text });
                 input.value = '';
             });
         }
@@ -444,7 +464,7 @@ class JamriWorld {
         modal.querySelector('#btn-mat-confirm').addEventListener('click', () => {
             const label = labelInput.value.trim();
             const control = modal.querySelector('input[name="mat_control"]:checked').value;
-            window.JAMRI_APP.wsClient.send('mat.place', { label, control_mode: control });
+            this.send('mat.place', { label, control_mode: control });
             close();
         });
 
@@ -473,42 +493,28 @@ class JamriWorld {
     // Networking
     // ------------------------------------------------------------------
     connect() {
-        const isHttps = window.location.protocol === 'https:';
-        const protocol = isHttps ? 'wss:' : 'ws:';
-        let endpoint;
-        if (isHttps) {
-            endpoint = `${protocol}//${window.location.host}/ws`;
-        } else if (window.location.port === '3000') {
-            endpoint = `${protocol}//${window.location.host}/ws`;
-        } else if (window.JAMRI_WS_URL) {
-            endpoint = window.JAMRI_WS_URL;
-        } else {
-            // Local direct connection. Keep in sync with config/app.php ws_port.
-            endpoint = `${protocol}//${window.location.hostname || 'localhost'}:8081/`;
-        }
-
-        const url = `${endpoint}?mode=world&room_id=${encodeURIComponent(this.worldId)}`
-            + `&device_id=${encodeURIComponent(this.user.device_id)}`
-            + `&nickname=${encodeURIComponent(this.user.nickname)}`
-            + `&emoji=${encodeURIComponent(this.user.emoji)}`;
-
-        try {
-            this.ws = new WebSocket(url);
-        } catch (e) {
-            console.error('[World] connect failed', e);
+        // Use the ONE shared websocket client (window.JAMRI_APP.wsClient) with
+        // mode=world. Earlier this class opened its own socket for receiving
+        // while sending actions through the (unconnected) room client, so
+        // "Gelar Tikar" and every other action silently went nowhere.
+        const client = window.JAMRI_APP && window.JAMRI_APP.wsClient;
+        if (!client) {
+            console.error('[World] shared websocket client missing');
             return;
         }
 
-        this.ws.onmessage = (ev) => {
-            let data;
-            try { data = JSON.parse(ev.data); } catch (e) { return; }
-            this.handleMessage(data);
-        };
-        this.ws.onclose = () => {
-            const loading = document.getElementById('world-loading');
-            if (loading) loading.innerHTML = '<span>Koneksi world terputus. Muat ulang halaman.</span>';
-        };
-        this.ws.onerror = () => {};
+        // Reset handlers so we do not double-bind if the world is re-entered.
+        client.listeners = {};
+        this.bindRoomEvents();
+
+        client.connect(this.worldId, this.user, 'world');
+    }
+
+    /** Send a world/room message through the shared client. */
+    send(type, payload = {}) {
+        const client = window.JAMRI_APP && window.JAMRI_APP.wsClient;
+        if (!client) return false;
+        return client.send(type, payload);
     }
 
     send(type, payload = {}) {
@@ -666,7 +672,7 @@ class JamriWorld {
 
         modal.querySelectorAll('.mat-choice-row').forEach(btn => {
             btn.addEventListener('click', () => {
-                window.JAMRI_APP.wsClient.send('zone.select', { box_id: btn.dataset.box });
+                this.send('zone.select', { box_id: btn.dataset.box });
                 this.closeChoiceDialog();
             });
         });

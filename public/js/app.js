@@ -599,6 +599,12 @@ async function joinRoom(roomId, isPrivate = false, passcode = '') {
         player.setMode('jamming', ws);
         search.setWebSocket(ws);
 
+        // Leaving world mode: drop world bindings so room events are handled by
+        // the app-level room handlers only.
+        if (window.JAMRI_APP.world) {
+            ws.listeners = {};
+        }
+
         // Render Room UI Shell
         renderRoomShell(roomDetail);
 
@@ -621,7 +627,7 @@ function enterWorld(worldId) {
 
     // World has no global music; playback stays with the player engine.
     player.setMode('solo', null);
-    if (window.JAMRI_APP.searchModule) window.JAMRI_APP.searchModule.setWebSocket(null);
+    if (window.JAMRI_APP.searchModule) window.JAMRI_APP.searchModule.setWebSocket(window.JAMRI_APP.wsClient);
 
     window.JAMRI_APP.activeWorldId = worldId;
 

@@ -33,9 +33,10 @@ class JamriWebSocket {
         }
     }
 
-    connect(roomId, user) {
+    connect(roomId, user, mode = 'room') {
         this.roomId = roomId;
         this.user = user;
+        this.mode = mode;
 
         if (this.reconnectTimeout) {
             clearTimeout(this.reconnectTimeout);
@@ -57,7 +58,7 @@ class JamriWebSocket {
             endpoint = `${protocol}//${window.location.hostname || 'localhost'}:8081/`;
         }
 
-        const url = `${endpoint}?room_id=${encodeURIComponent(roomId)}&device_id=${encodeURIComponent(user.device_id)}&nickname=${encodeURIComponent(user.nickname)}&emoji=${encodeURIComponent(user.emoji)}`;
+        const url = `${endpoint}?mode=${encodeURIComponent(mode)}&room_id=${encodeURIComponent(roomId)}&device_id=${encodeURIComponent(user.device_id)}&nickname=${encodeURIComponent(user.nickname)}&emoji=${encodeURIComponent(user.emoji)}`;
 
         try {
             if (this.ws) {
@@ -118,7 +119,7 @@ class JamriWebSocket {
 
         this.reconnectTimeout = setTimeout(() => {
             if (!this.isConnected && this.roomId && this.user) {
-                this.connect(this.roomId, this.user);
+                this.connect(this.roomId, this.user, this.mode || 'room');
             }
         }, delay);
     }
