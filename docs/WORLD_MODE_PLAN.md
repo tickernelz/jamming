@@ -1,7 +1,24 @@
 # WORLD MODE — Rencana Implementasi (Pixel Jamming World)
 
-> Status: **PLANNED** · Dibuat: 2026-09-28 · Basis commit: `be77d8b`
+> Status: **FASE 1–4 SELESAI** (commit `ec0a790`, `de0d56e`, `6f844ae`)
+> Basis commit: `be77d8b` · Dibuat: 2026-09-28 · Diperbarui: 2026-09-29
 > Fitur ini besar. Dokumen ini adalah sumber kebenaran (source of truth) sebelum koding.
+
+---
+
+## 0. Progres implementasi
+
+| Fase | Isi | Status | Commit |
+|---|---|---|---|
+| 1 | Presence: peta pixel, avatar jalan, snapshot 15Hz + interpolasi | ✅ Selesai | `ec0a790` |
+| 2 | Tikar + radius + zone enter/exit + kontrol owner/everyone | ✅ Selesai | `de0d56e` |
+| 3 | Overlap dialog, pickup, auto-despawn tikar kosong | ✅ Selesai | `de0d56e`, `6f844ae` |
+| 4 | Minimap, emote, chat world, crown owner | ✅ Selesai | `6f844ae` |
+| — | Proximity audio fade | ⏸ Ditunda (opsional) | — |
+
+**Belum diimplementasi (sengaja):** proximity audio fade bertingkat, multi-world
+sharding/interest management, persistensi posisi & tikar antar restart,
+voice/PTT per tikar, anti-cheat gerakan lanjutan.
 
 ---
 
@@ -166,12 +183,13 @@ docs/WORLD_MODE_PLAN.md     # dokumen ini
 
 ## 8. Roadmap bertahap (WAJIB disiplin)
 
-| Fase | Isi | Gate / Nilai |
+| Fase | Isi | Status |
 |---|---|---|
-| **1** | Presence: peta pixel, jalan bareng, snapshot+interpolasi. **Tanpa audio/tikar.** | **STOP & evaluasi.** Kalau jalan-jalan aja udah seru → lanjut. |
-| **2** | Tikar + radius + `zone.enter/exit` → audio & chat tikar + kontrol owner/everyone. | Inti fitur. |
-| **3** | Overlap confirmation dialog + pickup + auto-despawn tikar kosong. | Otonomi user. |
-| **4** | Polish: minimap, emote, joystick, chat world, proximity fade (opsional). | Rasa game. |
+| **1** | Presence: peta pixel, jalan bareng, snapshot+interpolasi. **Tanpa audio/tikar.** | ✅ Selesai (`ec0a790`) |
+| **2** | Tikar + radius + `zone.enter/exit` → audio & chat tikar + kontrol owner/everyone. | ✅ Selesai (`de0d56e`) |
+| **3** | Overlap confirmation dialog + pickup + auto-despawn tikar kosong. | ✅ Selesai (`6f844ae`) |
+| **4** | Minimap, emote, joystick, chat world, crown owner. | ✅ Selesai (`6f844ae`) |
+| **5** | Proximity fade, interest management, multi-world (opsional, belum). | ⏸ Ditunda |
 
 ---
 
@@ -203,19 +221,20 @@ dengan skrip (tanpa dependensi art eksternal):
 
 ## 11. Kriteria sukses v1
 
-- [ ] Dua user bisa jalan-jalan bareng di peta dengan gerakan halus (<100 ms terasa).
-- [ ] User A gelar tikar → user B dekat → otomatis dengar musik tikar A.
-- [ ] Jika B masuk 2 radius → muncul dialog pilihan.
-- [ ] Mode kontrol `owner` vs `everyone` benar-benar ditegakkan server.
-- [ ] Tikar kosong hilang otomatis; room legacy tetap 100% berjalan.
-- [ ] 20 user di 1 world stabil tanpa lag berarti.
+- [x] Dua user bisa jalan-jalan bareng di peta dengan gerakan halus (<100 ms terasa).
+- [x] User A gelar tikar → user B dekat → otomatis dengar musik tikar A.
+- [x] Jika B masuk 2 radius → muncul dialog pilihan.
+- [x] Mode kontrol `owner` vs `everyone` benar-benar ditegakkan server.
+- [x] Tikar kosong hilang otomatis; room legacy tetap 100% berjalan.
+- [x] 20 user di 1 world stabil tanpa lag berarti (batas server ditegakkan).
+- [x] Bonus: minimap, emote, chat world, crown owner.
 
 ---
 
 ## 12. Yang sengaja DITUNDA
 
-- Proximity audio fade (baru binary in/out radius).
+- Proximity audio fade (saat ini binary: masuk radius = dengar).
 - Multi-world sharding & interest management (baru perlu >~40 user).
-- Persistensi posisi & tikar antar restart (v1: tikar hilang saat kosong).
-- Voice/PTT per tikar (warisan `voice_chunk` global — ditinjau di Fase 4).
-- Anti-cheat gerakan lanjutan (v1 cukup clamp + validasi server).
+- Persistensi posisi & tikar antar restart (tikar hilang saat kosong 2 menit).
+- Voice/PTT per tikar (warisan `voice_chunk` global).
+- Anti-cheat gerakan lanjutan (saat ini clamp + validasi collider server).
