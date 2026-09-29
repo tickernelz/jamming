@@ -5,18 +5,20 @@
 
 #world-view {
     width: 100%;
-    height: 100%;
+    /* Grow to fill the available area regardless of the body-level `in-room`
+       class, so the layout never collapses to a tiny strip even if a stale
+       cached stylesheet/script is in play. */
+    flex: 1 1 auto;
+    min-height: 320px;
+    position: relative;
+    overflow: hidden;
 }
 
-/* Robust full-height layout: the shell is absolutely positioned to fill the
-   view, so it never depends on a fragile percentage/flex height chain (which
-   previously left a large empty gap and a tiny map + chat panel). */
 body.in-room #world-view {
     position: relative !important;
     flex: 1 1 auto !important;
-    min-height: 0 !important;
+    min-height: 320px !important;
     height: auto !important;
-    display: block !important;
     overflow: hidden !important;
 }
 

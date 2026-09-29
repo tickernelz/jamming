@@ -5,6 +5,19 @@
  */
 
 document.addEventListener('DOMContentLoaded', async () => {
+    // 0. Service-worker self-heal: if a controller change happens (a new SW
+    //    activated), reload once so the page never runs against mixed versions
+    //    of cached/new JS. Guarded so it can never loop.
+    if (!window.__jamriSwBound && 'serviceWorker' in navigator) {
+        window.__jamriSwBound = true;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+            if (!window.__jamriReloading) {
+                window.__jamriReloading = true;
+                window.location.reload();
+            }
+        });
+    }
+
     // 1. Inisialisasi Tema (Dark / Light)
     initTheme();
 
@@ -34,7 +47,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 4. Setup PWA Service Worker
     if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('./public/sw.js').catch(console.warn);
+        navigator.serviceWorker.register('./public/sw.js')
+            .then((reg) => {
+                // Ask the browser to check for an updated service worker each load
+                // so stale caches are replaced promptly.
+                if (reg.update) reg.update();
+            })
+            .catch(console.warn);
     }
 
     // 5. Setup Player Dock Listeners & UI Binding

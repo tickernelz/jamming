@@ -1,9 +1,10 @@
 // sw.js - Jamri Service Worker for Offline PWA Capabilities
 
-const CACHE_NAME = 'jamri-shell-v11';
+const CACHE_NAME = 'jamri-shell-v12';
 const SHELL_ASSETS = [
     './css/main.css',
     './css/components.css',
+    './css/world.css',
     './js/jamri-format.js',
     './js/fingerprint.js',
     './js/websocket.js',
@@ -54,23 +55,29 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
     const url = new URL(e.request.url);
 
-    // Only handle same-origin GET requests. Bypass API, WebSocket and the
-    // dynamic HTML shell entirely so the app never serves a stale index.php.
+    // Only handle same-origin GET requests. API, WebSocket and dynamic PHP are
+    // always passed straight through to the network.
     if (e.request.method !== 'GET' || url.origin !== self.location.origin) {
         return;
     }
-    if (url.pathname.includes('/api/') || url.port === '8080' || url.pathname.endsWith('.php') || url.pathname.endsWith('/')) {
+    if (url.pathname.includes('/api/') || url.port === '8080' || url.port === '8081'
+        || url.pathname.endsWith('.php') || url.pathname.endsWith('/')) {
         return;
     }
 
+    // NETWORK-FIRST: always try to fetch the latest asset so code/CSS updates
+    // are picked up on a normal reload. Fall back to cache only when offline.
+    // (The previous cache-first strategy kept serving stale JS/CSS after
+    // updates, which caused confusing "nothing changed" bugs.)
     e.respondWith(
-        caches.match(e.request).then((cachedResponse) => {
-            if (cachedResponse) {
-                return cachedResponse;
-            }
-            return fetch(e.request).catch(() => {
-                return new Response('', { status: 504, statusText: 'Offline' });
-            });
-        })
+        fetch(e.request)
+            .then((response) => {
+                if (response && response.ok) {
+                    const copy = response.clone();
+                    caches.open(CACHE_NAME).then((cache) => cache.put(e.request, copy)).catch(() => {});
+                }
+                return response;
+            })
+            .catch(() => caches.match(e.request).then((cached) => cached || Response.error()))
     );
 });
