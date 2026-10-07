@@ -534,11 +534,6 @@ class JamriWorld {
         return client.send(type, payload);
     }
 
-    send(type, payload = {}) {
-        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-        this.ws.send(JSON.stringify({ type, ...payload }));
-    }
-
     handleMessage(data) {
         switch (data.type) {
             case 'world_init':
