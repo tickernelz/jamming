@@ -54,6 +54,9 @@ class WebSocketHandler implements MessageComponentInterface
     /** Counts world ticks so periodic mat maintenance can run less often. */
     private int $worldTickCounter = 0;
 
+    /** worldId => [resId => true]: mats whose choice dialog is already open client-side. */
+    private array $pendingChoice = [];
+
     public function __construct(RoomManager $roomManager, YouTubeService $ytService, ?WorldManager $worldManager = null)
     {
         $this->roomManager = $roomManager;
@@ -774,7 +777,12 @@ class WebSocketHandler implements MessageComponentInterface
         if (($meta['mode'] ?? 'room') === 'world') {
             $activeBox = $this->worldManager->getActiveBox($roomId, $resId);
             if ($activeBox !== null) {
-                $this->detachFromRoom($roomId, $resId, $meta);
+                // Detach the mat's backing audio room, NOT the world id: passing the
+                // world id here left the real room's client list stale.
+                $box = $this->worldManager->getBox($roomId, $activeBox);
+                if ($box !== null) {
+                    $this->detachFromRoom($box['room_id'], $resId, $meta);
+                }
                 if ($this->worldManager->activeUsersInBox($roomId, $activeBox) <= 1) {
                     $this->worldManager->markBoxEmpty($activeBox, true);
                 }
@@ -782,6 +790,7 @@ class WebSocketHandler implements MessageComponentInterface
             }
             unset($this->clientMeta[$resId]);
             unset($this->worldConnections[$resId]);
+            unset($this->pendingChoice[$roomId][$resId]);
             $this->worldManager->leave($roomId, $resId);
             $this->broadcastWorld($roomId, [
                 'type' => 'world.leave',
@@ -1477,6 +1486,7 @@ class WebSocketHandler implements MessageComponentInterface
                 if (hypot($me['x'] - $box['x'], $me['y'] - $box['y']) > (float)$box['radius']) {
                     break;
                 }
+                unset($this->pendingChoice[$worldId][$resId]);
                 $this->applyZone($from, $worldId, $resId, $box, true);
                 break;
 
@@ -1637,6 +1647,7 @@ class WebSocketHandler implements MessageComponentInterface
             ]));
         }
 
+        unset($this->pendingChoice[$worldId][$resId]);
         $this->worldManager->setActiveBox($worldId, $resId, $box['id']);
         $this->worldManager->markBoxEmpty($box['id'], false);
         $this->attachToRoom($conn, $box['room_id']);
@@ -1735,6 +1746,7 @@ class WebSocketHandler implements MessageComponentInterface
             $current = $this->worldManager->getActiveBox($worldId, $resId);
 
             if (count($hits) === 0) {
+                unset($this->pendingChoice[$worldId][$resId]);
                 if ($current !== null) {
                     $prev = $this->worldManager->getBox($worldId, $current);
                     if ($prev !== null) {
@@ -1751,6 +1763,7 @@ class WebSocketHandler implements MessageComponentInterface
             }
 
             if (count($hits) === 1) {
+                unset($this->pendingChoice[$worldId][$resId]);
                 if ($current !== $hits[0]['id']) {
                     $this->applyZone($conn, $worldId, $resId, $hits[0], false);
                 }
@@ -1763,6 +1776,13 @@ class WebSocketHandler implements MessageComponentInterface
             if ($current !== null && in_array($current, $ids, true)) {
                 continue;
             }
+
+            // Ask only once: resolveZones runs at 15 Hz, so re-sending every tick
+            // spammed the dialog and made it impossible to answer.
+            if (isset($this->pendingChoice[$worldId][$resId])) {
+                continue;
+            }
+            $this->pendingChoice[$worldId][$resId] = true;
 
             $choices = [];
             foreach ($hits as $b) {
