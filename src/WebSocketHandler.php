@@ -792,10 +792,14 @@ class WebSocketHandler implements MessageComponentInterface
             unset($this->worldConnections[$resId]);
             unset($this->pendingChoice[$roomId][$resId]);
             $this->worldManager->leave($roomId, $resId);
+            $online = $this->worldManager->count($roomId);
+            if ($online === 0) {
+                $this->roomManager->markEmptySince($roomId, true);
+            }
             $this->broadcastWorld($roomId, [
                 'type' => 'world.leave',
                 'id' => $resId,
-                'online' => $this->worldManager->count($roomId),
+                'online' => $online,
             ]);
             return;
         }
@@ -1441,6 +1445,12 @@ class WebSocketHandler implements MessageComponentInterface
             'device_id' => $deviceId,
         ]);
         $this->worldManager->setWorldHost($worldId, (string)($summary['host_device_id'] ?? ''));
+
+        // World rooms are created with empty_since = now and nothing else clears
+        // it, so purgeInactiveRooms(600) used to delete a world (and its mats)
+        // 10 minutes after creation even with players inside. Occupancy is
+        // in-memory for worlds, so mark it here and in onClose.
+        $this->roomManager->markEmptySince($worldId, false);
 
         $conn->send(json_encode([
             'type' => 'world_init',
