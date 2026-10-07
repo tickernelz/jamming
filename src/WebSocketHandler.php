@@ -800,6 +800,15 @@ class WebSocketHandler implements MessageComponentInterface
             return;
         }
 
+        // A client that failed to attach (unknown/purged room) closed already, but
+        // its meta is still set. Without this guard count() runs on a missing room
+        // and throws a TypeError, which Ratchet's catch(\Exception) does not catch,
+        // taking the whole daemon down.
+        if (!isset($this->rooms[$roomId])) {
+            unset($this->clientMeta[$resId]);
+            return;
+        }
+
         unset($this->rooms[$roomId]['clients'][$resId]);
         unset($this->clientMeta[$resId]);
 
