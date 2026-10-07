@@ -544,15 +544,19 @@ function showCreateRoomModal() {
 // socket and render loop running hidden, and re-entering stacked another one.
 // Returns true when a session was left.
 function leaveActiveSession() {
+    // Clear both ids (no early return): world and room share one socket whose
+    // ?mode= is fixed at connect time, so a leftover id from either side would
+    // let the next entry overlap the previous session.
+    let left = false;
     if (window.JAMRI_APP.activeWorldId) {
         leaveWorld();
-        return true;
+        left = true;
     }
     if (window.JAMRI_APP.activeRoomId) {
         leaveRoom();
-        return true;
+        left = true;
     }
-    return false;
+    return left;
 }
 
 function leaveRoom() {
@@ -565,6 +569,10 @@ function leaveRoom() {
     }
     if (window.JAMRI_APP.voicePTT) {
         window.JAMRI_APP.voicePTT.detach();
+    }
+    // Release the lyrics PiP/modal listeners and timers for this session.
+    if (window.JAMRI_APP.lyrics) {
+        window.JAMRI_APP.lyrics.teardown();
     }
     const player = window.JAMRI_APP.player;
     // Hentikan musik di device saat keluar dari room jamming
@@ -600,6 +608,13 @@ async function joinRoom(roomId, isPrivate = false, passcode = '') {
         }
 
         const roomDetail = data.data;
+
+        // Entering a room must end any live world session: the shared socket is
+        // connected with a single ?mode=, so room and world cannot both be live.
+        if (window.JAMRI_APP.activeWorldId) {
+            leaveWorld();
+        }
+
         window.JAMRI_APP.activeRoomId = roomId;
 
         const player = window.JAMRI_APP.player;
@@ -632,6 +647,13 @@ async function joinRoom(roomId, isPrivate = false, passcode = '') {
 }
 
 function enterWorld(worldId) {
+    // Entering a world must end any live room session for the same reason as
+    // joinRoom(): one shared socket, one mode. Prevents the two views from
+    // overwriting each other's active id and leaving a hidden socket behind.
+    if (window.JAMRI_APP.activeRoomId) {
+        leaveRoom();
+    }
+
     const player = window.JAMRI_APP.player;
     const ws = window.JAMRI_APP.wsClient;
 
@@ -649,6 +671,9 @@ function enterWorld(worldId) {
 }
 
 function leaveWorld() {
+    if (window.JAMRI_APP.lyrics) {
+        window.JAMRI_APP.lyrics.teardown();
+    }
     if (window.JAMRI_APP.world) {
         window.JAMRI_APP.world.leave();
     }
