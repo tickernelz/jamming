@@ -155,16 +155,12 @@ function bindNavigation(player, wsClient, searchModule) {
         btn.addEventListener('click', () => {
             const target = btn.dataset.view;
             if (target === 'lobby') {
-                if (window.JAMRI_APP.activeRoomId) {
-                    leaveRoom();
-                } else {
+                if (!leaveActiveSession()) {
                     player.setMode('solo', null);
                     switchView('lobby');
                 }
             } else if (target === 'solo') {
-                if (window.JAMRI_APP.activeRoomId) {
-                    leaveRoom();
-                }
+                leaveActiveSession();
                 player.setMode('solo', null);
                 searchModule.setWebSocket(null);
                 switchView('solo');
@@ -174,9 +170,7 @@ function bindNavigation(player, wsClient, searchModule) {
 
     // Logo brand click -> Lobby
     document.querySelector('.brand-logo').addEventListener('click', () => {
-        if (window.JAMRI_APP.activeRoomId) {
-            leaveRoom();
-        } else {
+        if (!leaveActiveSession()) {
             player.setMode('solo', null);
             switchView('lobby');
         }
@@ -545,6 +539,22 @@ function showCreateRoomModal() {
 /* ==========================================================================
    JOIN & MANAGE JAMMING ROOM
    ========================================================================== */
+// End whichever live session (world or room) is active. Navigation used to
+// only check activeRoomId, so leaving a world via the nav tabs/logo left its
+// socket and render loop running hidden, and re-entering stacked another one.
+// Returns true when a session was left.
+function leaveActiveSession() {
+    if (window.JAMRI_APP.activeWorldId) {
+        leaveWorld();
+        return true;
+    }
+    if (window.JAMRI_APP.activeRoomId) {
+        leaveRoom();
+        return true;
+    }
+    return false;
+}
+
 function leaveRoom() {
     if (window.JAMRI_APP.activeRoomId) {
         window.JAMRI_APP.wsClient.disconnect();
