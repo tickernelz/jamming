@@ -23,6 +23,7 @@ class JamriLyricsManager {
 
         // Picture-in-Picture state
         this.pipWindow = null;
+        this.pipCloseHandler = null;
         this.pipMode = localStorage.getItem('jamri_pip_mode') || 'full'; // 'full' (Lengkap) | 'lyrics' (Lirik Saja)
         this.pipIsDraggingSeek = false;
 
@@ -283,7 +284,13 @@ class JamriLyricsManager {
         }
         this.embeddedContainers.forEach(id => {
             const el = document.getElementById(id);
-            if (el) this.renderEmbedded(el);
+            if (el) {
+                this.renderEmbedded(el);
+            } else {
+                // Container was removed by a room/solo re-render: forget it so
+                // the registry does not grow without bound.
+                this.embeddedContainers.delete(id);
+            }
         });
         if (this.pipWindow && !this.pipWindow.closed) {
             this.renderPiPContent();
@@ -1067,9 +1074,45 @@ class JamriLyricsManager {
             this.pipWindow = null;
             this.updatePiPButtonState();
         };
+        this.pipCloseHandler = handleClose;
         this.pipWindow.addEventListener('pagehide', handleClose);
         this.pipWindow.addEventListener('unload', handleClose);
 
+        this.updatePiPButtonState();
+    }
+
+    /**
+     * Release every listener/timer the lyrics engine holds for the PiP window
+     * and the modal. Called when a room/solo session is torn down so the
+     * pagehide/unload handlers, the scroll debounce timer and the embedded
+     * container registry do not accumulate across re-renders.
+     */
+    teardown() {
+        if (this.pipWindow) {
+            if (this.pipCloseHandler) {
+                try {
+                    this.pipWindow.removeEventListener('pagehide', this.pipCloseHandler);
+                    this.pipWindow.removeEventListener('unload', this.pipCloseHandler);
+                } catch (e) {}
+            }
+            try {
+                if (!this.pipWindow.closed) this.pipWindow.close();
+            } catch (e) {}
+        }
+        this.pipWindow = null;
+        this.pipCloseHandler = null;
+
+        if (this.scrollDebounceTimer) {
+            clearTimeout(this.scrollDebounceTimer);
+            this.scrollDebounceTimer = null;
+        }
+        this.isUserScrolling = false;
+
+        this.embeddedContainers.clear();
+
+        if (this.isOpen) {
+            this.closeModal();
+        }
         this.updatePiPButtonState();
     }
 
