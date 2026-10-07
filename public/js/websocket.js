@@ -60,10 +60,18 @@ class JamriWebSocket {
 
         const url = `${endpoint}?mode=${encodeURIComponent(mode)}&room_id=${encodeURIComponent(roomId)}&device_id=${encodeURIComponent(user.device_id)}&nickname=${encodeURIComponent(user.nickname)}&emoji=${encodeURIComponent(user.emoji)}`;
 
+        // Detach handlers from any previous socket before replacing it. Otherwise
+        // the old socket's onclose fires later and re-enters attemptReconnect(),
+        // causing reconnect flapping and phantom "disconnected" states.
+        if (this.ws) {
+            try {
+                this.ws.onopen = this.ws.onmessage = this.ws.onclose = this.ws.onerror = null;
+                this.ws.close();
+            } catch (e) {}
+            this.ws = null;
+        }
+
         try {
-            if (this.ws) {
-                try { this.ws.close(); } catch (e) {}
-            }
             this.ws = new WebSocket(url);
         } catch (e) {
             console.error('WS Connection initiation error:', e);
@@ -71,7 +79,10 @@ class JamriWebSocket {
             return;
         }
 
-        this.ws.onopen = () => {
+        const socket = this.ws;
+
+        socket.onopen = () => {
+            if (socket !== this.ws) return;
             this.isConnected = true;
             this.reconnectAttempts = 0;
             this.emit('connection_change', { connected: true });
@@ -84,7 +95,8 @@ class JamriWebSocket {
             }, 5000);
         };
 
-        this.ws.onmessage = (event) => {
+        socket.onmessage = (event) => {
+            if (socket !== this.ws) return;
             try {
                 const data = JSON.parse(event.data);
                 this.emit(data.type, data);
@@ -93,13 +105,15 @@ class JamriWebSocket {
             }
         };
 
-        this.ws.onclose = () => {
+        socket.onclose = () => {
+            if (socket !== this.ws) return;
             this.isConnected = false;
             this.emit('connection_change', { connected: false });
             this.attemptReconnect();
         };
 
-        this.ws.onerror = (err) => {
+        socket.onerror = (err) => {
+            if (socket !== this.ws) return;
             console.error('WS Error:', err);
             this.emit('error', err);
         };
@@ -249,7 +263,10 @@ class JamriWebSocket {
             this.pingInterval = null;
         }
         if (this.ws) {
-            try { this.ws.close(); } catch (e) {}
+            try {
+                this.ws.onopen = this.ws.onmessage = this.ws.onclose = this.ws.onerror = null;
+                this.ws.close();
+            } catch (e) {}
             this.ws = null;
         }
         this.isConnected = false;
