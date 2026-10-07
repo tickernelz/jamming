@@ -22,6 +22,26 @@ class RoomManager
         return $this->pdo;
     }
 
+    /**
+     * Run a multi-statement mutation in one SQLite transaction. Without this the
+     * read-then-write sequences (duplicate check, MAX(queue_order)+1, reorder
+     * loops) race with concurrent HTTP/daemon writers, producing duplicate rows
+     * or partially-applied reorders. Rolls back on any failure.
+     */
+    private function runAtomically(callable $work): void
+    {
+        $this->pdo->beginTransaction();
+        try {
+            $work();
+            $this->pdo->commit();
+        } catch (\Throwable $e) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $e;
+        }
+    }
+
     public function createRoom(
         string $name,
         bool $isPrivate,
@@ -195,48 +215,53 @@ class RoomManager
         $ytId = $track['youtube_id'];
         $addedBy = Validator::nickname($addedBy, 'Jamri');
 
-        // Check if track is already in the active/unplayed queue
-        $checkStmt = $this->pdo->prepare('
-            SELECT id FROM room_queue
-            WHERE room_id = :room_id AND youtube_id = :youtube_id AND is_played = 0
-            LIMIT 1
-        ');
-        $checkStmt->execute([
-            ':room_id' => $roomId,
-            ':youtube_id' => $ytId,
-        ]);
-        if ($checkStmt->fetchColumn()) {
-            return null;
-        }
+        $result = null;
+        $this->runAtomically(function () use ($roomId, $track, $addedBy, $ytId, &$result) {
+            // Check if track is already in the active/unplayed queue
+            $checkStmt = $this->pdo->prepare('
+                SELECT id FROM room_queue
+                WHERE room_id = :room_id AND youtube_id = :youtube_id AND is_played = 0
+                LIMIT 1
+            ');
+            $checkStmt->execute([
+                ':room_id' => $roomId,
+                ':youtube_id' => $ytId,
+            ]);
+            if ($checkStmt->fetchColumn()) {
+                return;
+            }
 
-        // Get max queue order
-        $orderStmt = $this->pdo->prepare('SELECT COALESCE(MAX(queue_order), 0) + 1 AS next_order FROM room_queue WHERE room_id = :room_id');
-        $orderStmt->execute([':room_id' => $roomId]);
-        $nextOrder = (int)$orderStmt->fetchColumn();
+            // Get max queue order
+            $orderStmt = $this->pdo->prepare('SELECT COALESCE(MAX(queue_order), 0) + 1 AS next_order FROM room_queue WHERE room_id = :room_id');
+            $orderStmt->execute([':room_id' => $roomId]);
+            $nextOrder = (int)$orderStmt->fetchColumn();
 
-        $stmt = $this->pdo->prepare('
-            INSERT INTO room_queue (room_id, youtube_id, title, channel, duration_seconds, thumbnail_url, added_by_nickname, queue_order)
-            VALUES (:room_id, :youtube_id, :title, :channel, :duration, :thumbnail, :added_by, :order)
-        ');
-        $stmt->execute([
-            ':room_id' => $roomId,
-            ':youtube_id' => $ytId,
-            ':title' => $track['title'],
-            ':channel' => $track['channel'],
-            ':duration' => $track['duration_seconds'],
-            ':thumbnail' => $track['thumbnail_url'],
-            ':added_by' => $addedBy,
-            ':order' => $nextOrder,
-        ]);
+            $stmt = $this->pdo->prepare('
+                INSERT INTO room_queue (room_id, youtube_id, title, channel, duration_seconds, thumbnail_url, added_by_nickname, queue_order)
+                VALUES (:room_id, :youtube_id, :title, :channel, :duration, :thumbnail, :added_by, :order)
+            ');
+            $stmt->execute([
+                ':room_id' => $roomId,
+                ':youtube_id' => $ytId,
+                ':title' => $track['title'],
+                ':channel' => $track['channel'],
+                ':duration' => $track['duration_seconds'],
+                ':thumbnail' => $track['thumbnail_url'],
+                ':added_by' => $addedBy,
+                ':order' => $nextOrder,
+            ]);
 
-        $newId = (int)$this->pdo->lastInsertId();
-        return array_merge($track, [
-            'id' => $newId,
-            'room_id' => $roomId,
-            'added_by_nickname' => $addedBy,
-            'queue_order' => $nextOrder,
-            'is_played' => 0,
-        ]);
+            $newId = (int)$this->pdo->lastInsertId();
+            $result = array_merge($track, [
+                'id' => $newId,
+                'room_id' => $roomId,
+                'added_by_nickname' => $addedBy,
+                'queue_order' => $nextOrder,
+                'is_played' => 0,
+            ]);
+        });
+
+        return $result;
     }
 
     public function addTrackToPlaylist(string $roomId, array $track, string $addedBy): ?array
@@ -248,40 +273,45 @@ class RoomManager
         $ytId = $track['youtube_id'];
         $addedBy = Validator::nickname($addedBy, 'Jamri');
 
-        // Check if track is already in room playlist (Bank Musik)
-        $checkStmt = $this->pdo->prepare('
-            SELECT id FROM room_playlist
-            WHERE room_id = :room_id AND youtube_id = :youtube_id
-            LIMIT 1
-        ');
-        $checkStmt->execute([
-            ':room_id' => $roomId,
-            ':youtube_id' => $ytId,
-        ]);
-        if ($checkStmt->fetchColumn()) {
-            return null;
-        }
+        $result = null;
+        $this->runAtomically(function () use ($roomId, $track, $addedBy, $ytId, &$result) {
+            // Check if track is already in room playlist (Bank Musik)
+            $checkStmt = $this->pdo->prepare('
+                SELECT id FROM room_playlist
+                WHERE room_id = :room_id AND youtube_id = :youtube_id
+                LIMIT 1
+            ');
+            $checkStmt->execute([
+                ':room_id' => $roomId,
+                ':youtube_id' => $ytId,
+            ]);
+            if ($checkStmt->fetchColumn()) {
+                return;
+            }
 
-        $stmt = $this->pdo->prepare('
-            INSERT INTO room_playlist (room_id, youtube_id, title, channel, duration_seconds, thumbnail_url, added_by_nickname)
-            VALUES (:room_id, :youtube_id, :title, :channel, :duration, :thumbnail, :added_by)
-        ');
-        $stmt->execute([
-            ':room_id' => $roomId,
-            ':youtube_id' => $ytId,
-            ':title' => $track['title'],
-            ':channel' => $track['channel'],
-            ':duration' => $track['duration_seconds'],
-            ':thumbnail' => $track['thumbnail_url'],
-            ':added_by' => $addedBy,
-        ]);
+            $stmt = $this->pdo->prepare('
+                INSERT INTO room_playlist (room_id, youtube_id, title, channel, duration_seconds, thumbnail_url, added_by_nickname)
+                VALUES (:room_id, :youtube_id, :title, :channel, :duration, :thumbnail, :added_by)
+            ');
+            $stmt->execute([
+                ':room_id' => $roomId,
+                ':youtube_id' => $ytId,
+                ':title' => $track['title'],
+                ':channel' => $track['channel'],
+                ':duration' => $track['duration_seconds'],
+                ':thumbnail' => $track['thumbnail_url'],
+                ':added_by' => $addedBy,
+            ]);
 
-        $newId = (int)$this->pdo->lastInsertId();
-        return array_merge($track, [
-            'id' => $newId,
-            'room_id' => $roomId,
-            'added_by_nickname' => $addedBy,
-        ]);
+            $newId = (int)$this->pdo->lastInsertId();
+            $result = array_merge($track, [
+                'id' => $newId,
+                'room_id' => $roomId,
+                'added_by_nickname' => $addedBy,
+            ]);
+        });
+
+        return $result;
     }
 
     public function getPlaylist(string $roomId): array
@@ -313,14 +343,16 @@ class RoomManager
             return $this->getQueue($roomId);
         }
 
-        $updateStmt = $this->pdo->prepare('UPDATE room_queue SET queue_order = :order WHERE id = :id AND room_id = :room_id');
-        foreach ($orderedIds as $index => $id) {
-            $updateStmt->execute([
-                ':order' => $index + 1,
-                ':id' => (int)$id,
-                ':room_id' => $roomId,
-            ]);
-        }
+        $this->runAtomically(function () use ($roomId, $orderedIds) {
+            $updateStmt = $this->pdo->prepare('UPDATE room_queue SET queue_order = :order WHERE id = :id AND room_id = :room_id');
+            foreach ($orderedIds as $index => $id) {
+                $updateStmt->execute([
+                    ':order' => $index + 1,
+                    ':id' => (int)$id,
+                    ':room_id' => $roomId,
+                ]);
+            }
+        });
 
         return $this->getQueue($roomId);
     }
@@ -352,10 +384,12 @@ class RoomManager
         }
 
         shuffle($ids);
-        $updateStmt = $this->pdo->prepare('UPDATE room_queue SET queue_order = :order WHERE id = :id');
-        foreach ($ids as $index => $id) {
-            $updateStmt->execute([':order' => $index + 1, ':id' => $id]);
-        }
+        $this->runAtomically(function () use ($ids) {
+            $updateStmt = $this->pdo->prepare('UPDATE room_queue SET queue_order = :order WHERE id = :id');
+            foreach ($ids as $index => $id) {
+                $updateStmt->execute([':order' => $index + 1, ':id' => $id]);
+            }
+        });
 
         return $this->getQueue($roomId);
     }
@@ -375,56 +409,64 @@ class RoomManager
 
     public function prependTrackToQueue(string $roomId, array $track): array
     {
-        $orderStmt = $this->pdo->prepare('SELECT COALESCE(MIN(queue_order), 1) - 1 FROM room_queue WHERE room_id = :room_id AND is_played = 0');
-        $orderStmt->execute([':room_id' => $roomId]);
-        $minOrder = (int)$orderStmt->fetchColumn();
+        $result = $track;
+        $this->runAtomically(function () use ($roomId, $track, &$result) {
+            $orderStmt = $this->pdo->prepare('SELECT COALESCE(MIN(queue_order), 1) - 1 FROM room_queue WHERE room_id = :room_id AND is_played = 0');
+            $orderStmt->execute([':room_id' => $roomId]);
+            $minOrder = (int)$orderStmt->fetchColumn();
 
-        if (isset($track['id']) && (int)$track['id'] > 0) {
-            $stmt = $this->pdo->prepare('UPDATE room_queue SET is_played = 0, queue_order = :order WHERE room_id = :room_id AND id = :id');
-            $stmt->execute([':order' => $minOrder, ':room_id' => $roomId, ':id' => (int)$track['id']]);
-            $track['queue_order'] = $minOrder;
-            $track['is_played'] = 0;
-            return $track;
-        }
+            if (isset($track['id']) && (int)$track['id'] > 0) {
+                $stmt = $this->pdo->prepare('UPDATE room_queue SET is_played = 0, queue_order = :order WHERE room_id = :room_id AND id = :id');
+                $stmt->execute([':order' => $minOrder, ':room_id' => $roomId, ':id' => (int)$track['id']]);
+                $track['queue_order'] = $minOrder;
+                $track['is_played'] = 0;
+                $result = $track;
+                return;
+            }
 
-        $clean = Validator::track($track);
-        if ($clean === null) {
-            return $track;
-        }
+            $clean = Validator::track($track);
+            if ($clean === null) {
+                return;
+            }
 
-        $stmt = $this->pdo->prepare('
-            INSERT INTO room_queue (room_id, youtube_id, title, channel, duration_seconds, thumbnail_url, added_by_nickname, queue_order, is_played)
-            VALUES (:room_id, :youtube_id, :title, :channel, :duration, :thumbnail, :added_by, :order, 0)
-        ');
-        $stmt->execute([
-            ':room_id' => $roomId,
-            ':youtube_id' => $clean['youtube_id'],
-            ':title' => $clean['title'],
-            ':channel' => $clean['channel'],
-            ':duration' => $clean['duration_seconds'],
-            ':thumbnail' => $clean['thumbnail_url'],
-            ':added_by' => Validator::nickname($track['added_by_nickname'] ?? $track['added_by'] ?? 'Jamri', 'Jamri'),
-            ':order' => $minOrder,
-        ]);
+            $stmt = $this->pdo->prepare('
+                INSERT INTO room_queue (room_id, youtube_id, title, channel, duration_seconds, thumbnail_url, added_by_nickname, queue_order, is_played)
+                VALUES (:room_id, :youtube_id, :title, :channel, :duration, :thumbnail, :added_by, :order, 0)
+            ');
+            $stmt->execute([
+                ':room_id' => $roomId,
+                ':youtube_id' => $clean['youtube_id'],
+                ':title' => $clean['title'],
+                ':channel' => $clean['channel'],
+                ':duration' => $clean['duration_seconds'],
+                ':thumbnail' => $clean['thumbnail_url'],
+                ':added_by' => Validator::nickname($track['added_by_nickname'] ?? $track['added_by'] ?? 'Jamri', 'Jamri'),
+                ':order' => $minOrder,
+            ]);
 
-        $newId = (int)$this->pdo->lastInsertId();
-        return array_merge($clean, [
-            'id' => $newId,
-            'room_id' => $roomId,
-            'added_by_nickname' => $track['added_by_nickname'] ?? $track['added_by'] ?? 'Jamri',
-            'queue_order' => $minOrder,
-            'is_played' => 0,
-        ]);
+            $newId = (int)$this->pdo->lastInsertId();
+            $result = array_merge($clean, [
+                'id' => $newId,
+                'room_id' => $roomId,
+                'added_by_nickname' => $track['added_by_nickname'] ?? $track['added_by'] ?? 'Jamri',
+                'queue_order' => $minOrder,
+                'is_played' => 0,
+            ]);
+        });
+
+        return $result;
     }
 
     public function moveTrackToEndOfQueue(string $roomId, int $queueId): void
     {
-        $orderStmt = $this->pdo->prepare('SELECT COALESCE(MAX(queue_order), 0) + 1 FROM room_queue WHERE room_id = :room_id');
-        $orderStmt->execute([':room_id' => $roomId]);
-        $nextOrder = (int)$orderStmt->fetchColumn();
+        $this->runAtomically(function () use ($roomId, $queueId) {
+            $orderStmt = $this->pdo->prepare('SELECT COALESCE(MAX(queue_order), 0) + 1 FROM room_queue WHERE room_id = :room_id');
+            $orderStmt->execute([':room_id' => $roomId]);
+            $nextOrder = (int)$orderStmt->fetchColumn();
 
-        $stmt = $this->pdo->prepare('UPDATE room_queue SET is_played = 0, queue_order = :order WHERE room_id = :room_id AND id = :id');
-        $stmt->execute([':order' => $nextOrder, ':room_id' => $roomId, ':id' => $queueId]);
+            $stmt = $this->pdo->prepare('UPDATE room_queue SET is_played = 0, queue_order = :order WHERE room_id = :room_id AND id = :id');
+            $stmt->execute([':order' => $nextOrder, ':room_id' => $roomId, ':id' => $queueId]);
+        });
     }
 
     public function updatePlaybackState(string $roomId, string $state, float $position, ?string $trackId = null): void
