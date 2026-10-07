@@ -30,14 +30,18 @@ class RoomManager
      */
     private function runAtomically(callable $work): void
     {
-        $this->pdo->beginTransaction();
+        // BEGIN IMMEDIATE grabs the write lock up front. A plain (deferred)
+        // BEGIN reads first and upgrades on the first write; if another process
+        // (HTTP api/rooms.php vs the Ratchet daemon, same SQLite file) already
+        // holds the write lock, that upgrade fails at once with
+        // SQLITE_BUSY_SNAPSHOT -- which bypasses busy_timeout -- so the write is
+        // lost instead of waiting. IMMEDIATE makes the loser wait its turn.
+        $this->pdo->exec('BEGIN IMMEDIATE');
         try {
             $work();
-            $this->pdo->commit();
+            $this->pdo->exec('COMMIT');
         } catch (\Throwable $e) {
-            if ($this->pdo->inTransaction()) {
-                $this->pdo->rollBack();
-            }
+            $this->pdo->exec('ROLLBACK');
             throw $e;
         }
     }
