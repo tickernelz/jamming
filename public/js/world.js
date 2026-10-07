@@ -752,6 +752,9 @@ class JamriWorld {
 
         const joy = document.getElementById('world-joystick');
         const knob = document.getElementById('world-joystick-knob');
+        // Named handlers stored on _bound so unbindInput() can remove them. The
+        // joystick listeners are on window/document-level targets that survive the
+        // world DOM being torn down, so leaking them stacked a new set each enter.
         if (joy && knob) {
             const setFromEvent = (t) => {
                 const rect = joy.getBoundingClientRect();
@@ -775,12 +778,19 @@ class JamriWorld {
                 this.joystick.y = 0;
                 this.joystick.active = false;
             };
-            joy.addEventListener('touchstart', (e) => { e.preventDefault(); setFromEvent(e.touches[0]); }, { passive: false });
-            joy.addEventListener('touchmove', (e) => { e.preventDefault(); setFromEvent(e.touches[0]); }, { passive: false });
-            joy.addEventListener('touchend', (e) => { e.preventDefault(); reset(); }, { passive: false });
-            joy.addEventListener('mousedown', (e) => setFromEvent(e));
-            window.addEventListener('mousemove', (e) => { if (this.joystick.active && !('ontouchstart' in window)) setFromEvent(e); });
-            window.addEventListener('mouseup', () => { if (!('ontouchstart' in window)) reset(); });
+            this._bound.joyTouchStart = (e) => { e.preventDefault(); setFromEvent(e.touches[0]); };
+            this._bound.joyTouchMove = (e) => { e.preventDefault(); setFromEvent(e.touches[0]); };
+            this._bound.joyTouchEnd = (e) => { e.preventDefault(); reset(); };
+            this._bound.joyMouseDown = (e) => setFromEvent(e);
+            this._bound.joyMouseMove = (e) => { if (this.joystick.active && !('ontouchstart' in window)) setFromEvent(e); };
+            this._bound.joyMouseUp = () => { if (!('ontouchstart' in window)) reset(); };
+
+            joy.addEventListener('touchstart', this._bound.joyTouchStart, { passive: false });
+            joy.addEventListener('touchmove', this._bound.joyTouchMove, { passive: false });
+            joy.addEventListener('touchend', this._bound.joyTouchEnd, { passive: false });
+            joy.addEventListener('mousedown', this._bound.joyMouseDown);
+            window.addEventListener('mousemove', this._bound.joyMouseMove);
+            window.addEventListener('mouseup', this._bound.joyMouseUp);
         }
     }
 
@@ -788,6 +798,15 @@ class JamriWorld {
         window.removeEventListener('keydown', this._bound.keydown);
         window.removeEventListener('keyup', this._bound.keyup);
         window.removeEventListener('resize', this._bound.resize);
+        window.removeEventListener('mousemove', this._bound.joyMouseMove);
+        window.removeEventListener('mouseup', this._bound.joyMouseUp);
+        const joy = document.getElementById('world-joystick');
+        if (joy) {
+            joy.removeEventListener('touchstart', this._bound.joyTouchStart);
+            joy.removeEventListener('touchmove', this._bound.joyTouchMove);
+            joy.removeEventListener('touchend', this._bound.joyTouchEnd);
+            joy.removeEventListener('mousedown', this._bound.joyMouseDown);
+        }
     }
 
     // ------------------------------------------------------------------
