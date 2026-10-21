@@ -86,6 +86,8 @@ class JamriWorld {
         this.emotes = [];            // floating emote bubbles {id, emote, t}
         this.worldChat = [];         // global world chat log
         this.chatTab = 'mat';        // active chat tab: 'mat' | 'world'
+        this._playlist = [];         // mat Bank Musik mirror
+        this._matUsers = [];
         // Deferred mat-snapshot re-applies (see onRoomInit). Tracked so a newer
         // play/pause/seek cannot be undone by a stale snapshot.
         this._matApplyTimers = [];
@@ -118,6 +120,11 @@ class JamriWorld {
         this.decor = null;
         this.camLook = { x: 0, y: 0 };
         this.walkPhase = 0;
+        // No mat is joined yet on entry: clear the shared mirrors so a world opened
+        // right after a room/mat never shows that session's queue or Bank Musik.
+        this.activeBox = null;
+        this.roomState = null;
+        this._resetMatLists();
         this.buildDom();
         this.bindInput();
         // connect() resets listeners and (re)binds all handlers.
@@ -174,6 +181,9 @@ class JamriWorld {
         ws.on('queue_updated', (data) => {
             if (data.queue) this.renderQueue(data.queue);
         });
+        ws.on('playlist_updated', (data) => {
+            if (data.playlist) this.renderPlaylist(data.playlist);
+        });
         ws.on('user_joined', (data) => {
             if (data.online_users) this.renderUsers(data.online_users);
         });
@@ -219,6 +229,10 @@ class JamriWorld {
             control: data.control_mode || 'everyone',
         };
         if (data.queue) this.renderQueue(data.queue);
+        // room_init is the authoritative snapshot for the mat we just entered, so
+        // the Bank Musik is refreshed here too (leaving/re-entering must show the
+        // current playlist, not a cached one).
+        this.renderPlaylist(data.playlist || []);
         if (data.online_users) this.renderUsers(data.online_users);
 
         // Any pending "re-apply the snapshot" timer from a previous join belongs to
@@ -342,6 +356,67 @@ class JamriWorld {
         });
     }
 
+    /**
+     * Blank every panel that belongs to the mat we just left: queue, Bank Musik,
+     * chat log and the user chips. Also drops the shared mirrors that search.js
+     * consults (`roomQueue` / `roomPlaylist`), otherwise a stale list makes the
+     * next "add to queue" look like a duplicate or silently targets the old mat.
+     */
+    _resetMatLists() {
+        this._queue = [];
+        this._playlist = [];
+        this._matUsers = [];
+        if (window.JAMRI_APP) {
+            window.JAMRI_APP.roomQueue = [];
+            window.JAMRI_APP.roomPlaylist = [];
+        }
+
+        const ql = document.getElementById('mat-queue-list');
+        if (ql) ql.innerHTML = '<div class="mat-empty">Belum bergabung ke tikar.</div>';
+        const pl = document.getElementById('mat-playlist-list');
+        if (pl) pl.innerHTML = '<div class="mat-empty">Belum bergabung ke tikar.</div>';
+        const ul = document.getElementById('mat-users-list');
+        if (ul) ul.innerHTML = '';
+        const cl = document.getElementById('mat-chat-list');
+        if (cl) cl.innerHTML = '';
+    }
+
+    /** Mirror the mat's Bank Musik (shared with the room) into the panel. */
+    renderPlaylist(playlist) {
+        this._playlist = playlist || [];
+        if (window.JAMRI_APP) window.JAMRI_APP.roomPlaylist = this._playlist;
+        const el = document.getElementById('mat-playlist-list');
+        if (!el) return;
+        if (this._playlist.length === 0) {
+            el.innerHTML = '<div class="mat-empty">Bank Musik tikar masih kosong.</div>';
+            return;
+        }
+        el.innerHTML = this._playlist.map((t) => `
+            <div class="mat-queue-row">
+                <span class="mat-queue-title" title="${escapeHtml(t.title)}">${escapeHtml(t.title)}</span>
+                <button type="button" class="btn btn-ghost btn-icon btn-xs mat-playlist-queue" data-id="${t.id}" title="Masukkan ke antrean">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                </button>
+                <button type="button" class="btn btn-ghost btn-icon btn-xs mat-playlist-remove" data-id="${t.id}" title="Hapus dari Bank Musik">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+            </div>
+        `).join('');
+
+        el.querySelectorAll('.mat-playlist-queue').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const id = parseInt(btn.dataset.id, 10);
+                const track = this._playlist.find((t) => t.id === id);
+                if (track) window.JAMRI_APP.wsClient.sendQueueAdd(track);
+            });
+        });
+        el.querySelectorAll('.mat-playlist-remove').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                window.JAMRI_APP.wsClient.sendPlaylistRemove(parseInt(btn.dataset.id, 10));
+            });
+        });
+    }
+
     updatePanelRoomInfo() {
         const info = document.getElementById('mat-room-info');
         if (!info) return;
@@ -398,11 +473,17 @@ class JamriWorld {
     leave() {
         this.unbindInput();
         this._clearMatApplyTimers();
+        // A world exit is also a shared-session exit: never leave the mat's song
+        // or its mirrors behind for the lobby/solo view.
+        this.activeBox = null;
+        this.roomState = null;
+        this.player.setMatVolumeScale(1);
+        this.player.resetSharedSession();
+        this._resetMatLists();
         if (this._resizeObserver) {
             this._resizeObserver.disconnect();
             this._resizeObserver = null;
         }
-        this.player.setMatVolumeScale(1);
         if (this.rafId) {
             cancelAnimationFrame(this.rafId);
             this.rafId = null;
@@ -491,6 +572,11 @@ class JamriWorld {
                         <div class="mat-users-list" id="mat-users-list"></div>
                         <div class="mat-queue-title-label">Antrean Tikar</div>
                         <div class="mat-queue-list" id="mat-queue-list">
+                            <div class="mat-empty">Belum bergabung ke tikar.</div>
+                        </div>
+
+                        <div class="mat-queue-title-label">Bank Musik Tikar</div>
+                        <div class="mat-queue-list" id="mat-playlist-list">
                             <div class="mat-empty">Belum bergabung ke tikar.</div>
                         </div>
 
@@ -826,17 +912,15 @@ class JamriWorld {
                 this.activeBox = null;
                 this._clearMatApplyTimers();
                 this.player.setMatVolumeScale(1);
-                this.player.pause();
+                // Leaving the mat ends the shared session completely: the current
+                // track, the timeline anchor, loop/shuffle and every mirrored list
+                // must reset, otherwise the dock keeps showing the mat's song and
+                // the next visit renders a stale snapshot instead of the live one.
+                this.player.resetSharedSession();
+                this.roomState = null;
+                this._resetMatLists();
                 this.updatePanelRoomInfo();
                 this.setChatTab(this.chatTab || 'mat');
-                // Clear the shared queue mirror too, otherwise a stale mat queue
-                // makes search.js reject songs as "already queued".
-                this._queue = [];
-                if (window.JAMRI_APP) window.JAMRI_APP.roomQueue = [];
-                const ql = document.getElementById('mat-queue-list');
-                if (ql) ql.innerHTML = '<div class="mat-empty">Belum bergabung ke tikar.</div>';
-                const ul = document.getElementById('mat-users-list');
-                if (ul) ul.innerHTML = '';
                 break;
 
             case 'zone.choice_required':

@@ -359,7 +359,6 @@ Sisa penanda: ring luar (lebih tebal saat aktif) + ring putus-putus tipis + labe
 Dijaga oleh `tests/world_visual_check.mjs` (menolak `ctx.clip()` bertile dan alpha > 0.35).
 
 ### 10.6 Snapshot join yang tertunda tidak boleh menimpa state baru
-
 `onRoomInit()` memasang `setTimeout(apply, 900)` dan `setTimeout(apply, 2200)`
 supaya posisi awal menempel setelah bridge YouTube siap. Timer itu **tidak pernah
 dibatalkan**, jadi kalau user play/pause/seek tepat setelah masuk tikar (atau
@@ -373,9 +372,41 @@ Perbaikan: timer dilacak di `this._matApplyTimers`, dibatalkan lewat
 (artinya sudah ada state yang lebih baru).
 
 Dijaga oleh `tests/world_playback_sync_check.mjs`. Verifikasi protokol
-(`scratch/qa_world_pair.mjs`, 1 browser + 2 peer WS): pause → keluar-masuk 6× →
+(`tests/e2e/qa_world_pair.mjs`, 1 browser + 2 peer WS): pause → keluar-masuk 6× →
 tetap `paused` di 88.36; resume@60 → `playing` 61.50; late joiner C masuk di
 62.10 (+2.97 s) → proyeksi 65.07 vs B 64.56.
+
+### 10.7 Keluar tikar = sesi bersama benar-benar berakhir
+
+Sebelumnya `zone.exit` hanya memanggil `player.pause()` dan mengosongkan antrean.
+Akibatnya setelah berjalan keluar dari tikar:
+
+- `currentTrack` tetap lagu tikar, jadi dock masih menampilkan judulnya
+- `getCurrentTime()` masih maju dari `serverBasePos + elapsed` (jam server basi),
+  sehingga terlihat seperti masih memutar lagu tikar
+- Bank Musik (`roomPlaylist`), daftar user, dan chat tikar tidak dibersihkan
+- `search.js` masih menganggap sesi bersama (socket hidup), jadi "Putar"/"Antrean"
+  bisa menarget room tikar yang sudah ditinggalkan
+
+Perbaikan:
+
+| Bagian | Perubahan |
+|---|---|
+| `player.resetSharedSession()` (baru) | Menghapus `currentTrack`, `serverBasePos/SyncTime`, `pendingSeekPos`, seek lock; state → `stopped`; emit `track_change(null)` + `time_update(0)` supaya dock & progress bar kosong. **Tidak** menyentuh volume user maupun `soloQueue`. |
+| `world._resetMatLists()` (baru) | Mengosongkan antrean, Bank Musik, daftar user, chat tikar, dan mirror `roomQueue`/`roomPlaylist`. |
+| `zone.exit` / `leave()` / `enter()` | Memanggil keduanya (plus `roomState = null`), sehingga masuk world selalu mulai dari kondisi bersih. |
+| `room_init` | Sekarang membawa `playlist`, dan `onRoomInit()` meng-hydrate panel Bank Musik dari snapshot itu → masuk tikar lagi menampilkan isi **terkini**. |
+| `playlist_updated` | Di-listen world.js (sebelumnya hanya jalur room legacy). |
+| `search.hasWritableSharedTarget()` (baru) | Menulis antrean/Bank Musik hanya bila benar-benar ada target (room aktif atau tikar aktif), bukan sekadar socket hidup. |
+| `detachFromRoom()` | Menghitung posisi **sebelum** mengubah state ke `paused`; `getCurrentPosition()` hanya menambah delta saat state masih `playing`, jadi urutan lama membekukan posisi di anchor terakhir dan tikar yang kosong restart dari 0:00. |
+
+Dijaga oleh `tests/world_mat_exit_reset_check.mjs`. Verifikasi UI (1 user, 1 tikar):
+`playing` di 4.01 s → keluar → dock "Tidak ada lagu yang diputar", semua panel
+kosong, `getCurrentTime()` = 0 → masuk lagi → `paused` di **4.06 s** dengan
+antrean + Bank Musik terisi ulang dari server. Verifikasi peer (user lain menambah
+lagu saat kita di luar tikar): masuk lagi menampilkan `Peer Queued` + `Peer Bank`.
+Posisi tikar kosong: `tests/e2e/qa_mat_position.mjs` → 6.00 s → keluar → masuk →
+**6.55 s** (POSITION OK).
 
 ---
 

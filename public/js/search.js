@@ -182,7 +182,9 @@ class JamriSearch {
 
     renderResults(container) {
         container.innerHTML = '';
-        const isJamming = this.isSharedSession();
+        // Labels ("Antrean" vs "Antrean Lokal") follow the writable target, so a
+        // user who walked off the mat sees local-mode actions, not mat actions.
+        const isJamming = this.hasWritableSharedTarget();
 
         this.results.forEach((track, idx) => {
             const row = document.createElement('div');
@@ -255,7 +257,7 @@ class JamriSearch {
                 this.player.stopPreview();
 
                 const activeWs = this.ws || (window.JAMRI_APP && window.JAMRI_APP.wsClient);
-                const isCurrentlyJamming = this.isSharedSession();
+                const isCurrentlyJamming = this.hasWritableSharedTarget();
 
                 if (isCurrentlyJamming && window.JAMRI_APP && window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
                     window.JAMRI_APP.games.notifyPunishedAction('memutar lagu');
@@ -274,7 +276,7 @@ class JamriSearch {
             row.querySelector('.btn-add-queue').addEventListener('click', (e) => {
                 e.stopPropagation();
                 const activeWs = this.ws || (window.JAMRI_APP && window.JAMRI_APP.wsClient);
-                const isCurrentlyJamming = this.isSharedSession();
+                const isCurrentlyJamming = this.hasWritableSharedTarget();
 
                 if (isCurrentlyJamming && window.JAMRI_APP && window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
                     window.JAMRI_APP.games.notifyPunishedAction('menambah antrean');
@@ -309,7 +311,7 @@ class JamriSearch {
             row.querySelector('.btn-add-playlist').addEventListener('click', (e) => {
                 e.stopPropagation();
                 const activeWs = this.ws || (window.JAMRI_APP && window.JAMRI_APP.wsClient);
-                const isCurrentlyJamming = this.isSharedSession();
+                const isCurrentlyJamming = this.hasWritableSharedTarget();
 
                 if (isCurrentlyJamming && window.JAMRI_APP && window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
                     window.JAMRI_APP.games.notifyPunishedAction('menambah lagu ke Bank Musik');
@@ -442,6 +444,25 @@ class JamriSearch {
     }
 
     /**
+     * True when this player currently OWNS a shared target for queue/playlist
+     * writes. isSharedSession() is broader (it also covers "socket is live"),
+     * which is not enough after walking off a mat: the world socket is still
+     * connected but there is no mat room behind it, so sending would silently
+     * target the mat we just left.
+     */
+    hasWritableSharedTarget() {
+        const app = window.JAMRI_APP || {};
+        if (app.activeRoomId) {
+            const ws = this.ws || app.wsClient;
+            return !!(ws && ws.isConnected);
+        }
+        if (app.activeWorldId) {
+            return !!(app.world && app.world.activeBox && app.wsClient && app.wsClient.isConnected);
+        }
+        return false;
+    }
+
+    /**
      * Route imported tracks to the correct Bank Musik:
      * - Jamming room -> WebSocket bulk playlist_add
      * - Solo -> local soloPlaylist
@@ -449,7 +470,7 @@ class JamriSearch {
      */
     addTracksToBankMusik(tracks) {
         const activeWs = this.ws || (window.JAMRI_APP && window.JAMRI_APP.wsClient);
-        const isCurrentlyJamming = this.isSharedSession();
+        const isCurrentlyJamming = this.hasWritableSharedTarget();
 
         if (isCurrentlyJamming && window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
             window.JAMRI_APP.games.notifyPunishedAction('menambah lagu ke Bank Musik');

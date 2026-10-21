@@ -286,7 +286,8 @@ class JamriPlayer {
      * (whose metadata duration is missing/0) produced a dead progress bar.
      */
     getDuration() {
-        if (this.currentTrack && this.currentTrack.is_blob) {
+        if (!this.currentTrack) return 0;
+        if (this.currentTrack.is_blob) {
             const d = this.blobAudio.duration;
             if (isFinite(d) && d > 0) return d;
         }
@@ -664,6 +665,54 @@ class JamriPlayer {
         this.emit('playback_stopped');
     }
 
+    /**
+     * Drop everything that belonged to a shared mat session.
+     *
+     * Leaving a mat means "I am no longer listening to that room": the current
+     * track, its timeline anchor, the loop/shuffle modes and the queue mirrors
+     * must all go. Without this the dock kept showing the mat's song and
+     * getCurrentTime() kept advancing from the stale server clock, so walking
+     * off a mat looked like you were still playing it — and re-entering showed
+     * yesterday's snapshot instead of the live one.
+     *
+     * Deliberately does NOT touch the user's own volume or the solo queue.
+     */
+    resetSharedSession() {
+        this.stopPreview();
+        // Stop audio for the mat track, but never the solo/local one.
+        if (this.currentTrack) {
+            if (this.currentTrack.is_blob) {
+                try { this.blobAudio.pause(); this.blobAudio.currentTime = 0; } catch (e) {}
+            } else if (this.isYtReady && this.ytPlayer) {
+                try {
+                    this.ytPlayer.pauseVideo();
+                    if (typeof this.ytPlayer.stopVideo === 'function') this.ytPlayer.stopVideo();
+                } catch (e) {}
+            }
+        }
+
+        this._disarmAutoUnlock();
+        this.stopSilentAudioAnchor();
+
+        this.currentTrack = null;
+        this.isPlaying = false;
+        this.serverPlaybackState = 'stopped';
+        this.serverBasePos = 0;
+        this.serverSyncTime = 0;
+        this.pendingSeekPos = null;
+        this._seekLockUntil = 0;
+        this.matAttenuation = 1;
+
+        if ('mediaSession' in navigator) {
+            try { navigator.mediaSession.playbackState = 'none'; } catch (e) {}
+        }
+
+        this.emit('state_change', { isPlaying: false });
+        this.emit('track_change', null);
+        this.emit('playback_stopped');
+        this.emit('time_update', { currentTime: 0, duration: 0, progress: 0 });
+    }
+
     _internalSeek(seconds) {
         seconds = Math.max(0, seconds);
         // Lock out periodic pong re-syncs briefly so the seek is not immediately
@@ -735,7 +784,10 @@ class JamriPlayer {
     }
 
     getCurrentTime() {
-        if (this.currentTrack && this.currentTrack.is_blob) {
+        // No track loaded means no timeline: never report the YT bridge's leftover
+        // position (after leaving a mat the dock kept counting from it).
+        if (!this.currentTrack) return 0;
+        if (this.currentTrack.is_blob) {
             return this.blobAudio.currentTime || 0;
         }
         if (this.isYtReady && this.ytPlayer && typeof this.ytPlayer.getCurrentTime === 'function') {

@@ -14,7 +14,7 @@
 | WebSocket world | 54 | ✅ 0 gagal |
 | Ketahanan (resilience) | 14 | ✅ 0 gagal |
 | Keamanan (hardening/XSS) | 58 | ✅ 0 gagal |
-| Guard statis `tests/*.mjs` | 22 file | ✅ 0 gagal |
+| Guard statis `tests/*.mjs` | 23 file | ✅ 0 gagal |
 | **Total** | **240** | **✅ 0 gagal** |
 
 Log daemon: **0 error** setelah perbaikan (`onMessage Error` = 0).
@@ -140,6 +140,36 @@ sehingga PHP membaca path dari root drive.
 
 **Fix:** `fileURLToPath()`. Suite kini 22/22 hijau (sebelumnya 1 selalu merah).
 
+### 11. 🟠 Keluar tikar tidak mengosongkan playlist / current play
+
+**Repro:** main lagu di tikar → jalan keluar → dock masih menampilkan judul lagu
+tikar, `getCurrentTime()` terus maju, Bank Musik + daftar user + chat tikar masih
+terisi, dan "Putar"/"Antrean" dari Cari Musik masih menarget room tikar lama.
+Masuk lagi menampilkan campuran data lama/baru, bukan snapshot terkini.
+
+**Akar:** `zone.exit` hanya `player.pause()` + mengosongkan antrean. `currentTrack`,
+anchor timeline, `roomPlaylist`, `roomState` dan panel lain tidak disentuh;
+`search.js` memakai `isSharedSession()` yang hanya melihat socket hidup.
+
+**Fix:** `player.resetSharedSession()` + `world._resetMatLists()` dipanggil dari
+`zone.exit`, `leave()` dan `enter()`; `room_init` sekarang membawa `playlist` dan
+`onRoomInit()` meng-hydrate panelnya; `playlist_updated` di-listen; tulis
+antrean/Bank Musik memakai `search.hasWritableSharedTarget()` baru.
+
+### 12. 🟠 Tikar yang kosong kehilangan posisi (restart 0:00)
+
+**Repro:** putar lagu 6 detik → keluar tikar sampai room kosong → masuk lagi →
+mulai dari 0:00, bukan dari 6 detik.
+
+**Akar:** `detachFromRoom()` mengubah `playback_state` ke `paused` **sebelum**
+memanggil `getCurrentPosition()`, dan fungsi itu hanya menambah delta waktu saat
+state masih `playing`. Posisi jadi membeku di anchor play/seek terakhir.
+
+**Fix:** hitung posisi dulu, baru pause, lalu simpan `position` +
+`last_sync_timestamp` di room in-memory.
+
+**Verifikasi:** `tests/e2e/qa_mat_position.mjs` → 6.00 s → keluar → masuk →
+**6.55 s** (POSITION OK).
 ## Yang diverifikasi bekerja (tanpa perubahan)
 
 - **API**: auth GET/POST, validasi & clamp nickname (25), emoji whitelist,
@@ -187,5 +217,7 @@ node tests/e2e/qa_room_ws.mjs          # 55 checks
 node tests/e2e/qa_world_ws.mjs         # 54 checks
 node tests/e2e/qa_resilience.mjs       # 14 checks
 node tests/e2e/qa_security.mjs         # 58 checks
-node tests/e2e/qa_world_pair.mjs <worldId>   # sinkronisasi mat
+node tests/e2e/qa_world_pair.mjs <worldId>    # sinkronisasi mat (1 browser + 2 peer)
+node tests/e2e/qa_mat_position.mjs <worldId>  # posisi tikar bertahan saat kosong
+node tests/e2e/qa_mat_peer.mjs <worldId> seed  # peer lain mengubah antrean/Bank Musik
 ```

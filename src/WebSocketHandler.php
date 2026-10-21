@@ -185,6 +185,10 @@ class WebSocketHandler implements MessageComponentInterface
 
         $currentPos = $this->getCurrentPosition($roomId);
         $queue = $this->roomManager->getQueue($roomId);
+        // The mat's Bank Musik belongs to the room, so a fresh snapshot has to
+        // carry it too: leaving and re-entering a mat must show the CURRENT
+        // playlist, not whatever was cached from the previous visit.
+        $playlist = $this->roomManager->getPlaylist($roomId);
 
         $conn->send(json_encode([
             'type' => 'room_init',
@@ -195,6 +199,7 @@ class WebSocketHandler implements MessageComponentInterface
             'loop_mode' => $this->rooms[$roomId]['loop_mode'] ?? 'off',
             'is_shuffled' => !empty($this->rooms[$roomId]['is_shuffled']),
             'queue' => $queue,
+            'playlist' => $playlist,
             'server_time' => (int)(microtime(true) * 1000),
             'online_users' => $this->getOnlineUsers($roomId),
             'punishments' => $this->getActivePunishments($roomId),
@@ -230,8 +235,14 @@ class WebSocketHandler implements MessageComponentInterface
 
         if (count($this->rooms[$roomId]['clients']) === 0) {
             $this->rooms[$roomId]['empty_since'] = time();
-            $this->rooms[$roomId]['playback_state'] = 'paused';
+            // Compute the live position BEFORE flipping the state: getCurrentPosition()
+            // only adds the elapsed delta while the room is still 'playing', so
+            // pausing first froze the position at its stale anchor (the last explicit
+            // play/seek) and an emptied mat resumed at 0:00 instead of where it stopped.
             $currentPos = $this->getCurrentPosition($roomId);
+            $this->rooms[$roomId]['playback_state'] = 'paused';
+            $this->rooms[$roomId]['position'] = $currentPos;
+            $this->rooms[$roomId]['last_sync_timestamp'] = microtime(true);
             $this->roomManager->updatePlaybackState($roomId, 'paused', $currentPos);
             $this->roomManager->markEmptySince($roomId, true);
         } else {
