@@ -716,6 +716,10 @@ class WebSocketHandler implements MessageComponentInterface
                         $meta['emoji'],
                         $text
                     );
+                    // Carry the sender's connection id so the world renderer can
+                    // anchor the speech bubble on the RIGHT avatar. Matching by
+                    // nickname alone picks the wrong one when two players share it.
+                    $saved['sender_res_id'] = $resId;
                     $this->broadcastToRoom($roomId, [
                         'type' => 'chat_message',
                         'message' => $saved,
@@ -1728,6 +1732,7 @@ class WebSocketHandler implements MessageComponentInterface
                     'message' => [
                         'sender_nickname' => $meta['nickname'],
                         'sender_emoji' => $meta['emoji'],
+                        'sender_res_id' => $resId,
                         'message' => $text,
                         'created_at' => date('Y-m-d H:i:s'),
                     ],

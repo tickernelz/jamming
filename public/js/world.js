@@ -50,6 +50,119 @@ function roundRect(ctx, x, y, w, h, r) {
     ctx.closePath();
 }
 
+// ---------------------------------------------------------------------------
+// Speech-bubble text hardening.
+//
+// Chat arrives from other clients, so a bubble must survive anything: control
+// characters, zero-width joiners, bidi overrides (which can visually reverse the
+// line), RTL marks, huge single "words" without spaces, or a 5000-char payload.
+// Everything is normalised to one safe line-set BEFORE it reaches the canvas:
+// canvas has no HTML escaping, so the danger here is not XSS but a broken layout
+// (infinite wrap loop) or a poisoned direction/measure.
+// ---------------------------------------------------------------------------
+const BUBBLE_MAX_CHARS = 120;   // hard cap on rendered characters
+const BUBBLE_MAX_LINES = 3;     // a bubble never grows taller than this
+const BUBBLE_MAX_WIDTH = 190;   // px, before zoom
+
+/**
+ * Normalise untrusted chat text for canvas rendering.
+ * Returns '' when nothing printable is left, which means "draw no bubble".
+ */
+function sanitizeBubbleText(raw) {
+    if (typeof raw !== 'string') {
+        if (raw === null || raw === undefined) return '';
+        try { raw = String(raw); } catch (e) { return ''; }
+    }
+    let text = raw
+        // Control chars + DEL (tabs/newlines included: a bubble is one paragraph).
+        .replace(/[\u0000-\u001F\u007F]/g, ' ')
+        // Bidi overrides/isolates + RTL/LTR marks: these reorder the drawn line.
+        .replace(/[\u202A-\u202E\u2066-\u2069\u200E\u200F\u061C]/g, '')
+        // Zero-width and invisible formatting characters.
+        .replace(/[\u200B-\u200D\u2060\uFEFF\u00AD]/g, '')
+        // Unicode line/paragraph separators.
+        .replace(/[\u2028\u2029]/g, ' ')
+        // Collapse any whitespace run.
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    if (text === '') return '';
+
+    // Cap by code point so a surrogate pair (emoji) is never split in half.
+    const chars = Array.from(text);
+    if (chars.length > BUBBLE_MAX_CHARS) {
+        text = chars.slice(0, BUBBLE_MAX_CHARS).join('').trimEnd() + '…';
+    }
+    return text;
+}
+
+/**
+ * Split sanitised text into at most BUBBLE_MAX_LINES lines that fit maxWidth.
+ * Long tokens without spaces are hard-broken character by character, otherwise
+ * the old word-based wrapper emitted a single overflowing line.
+ */
+function wrapBubbleLines(ctx, text, maxWidth) {
+    const lines = [];
+    if (!text) return lines;
+
+    let current = '';
+    const flush = () => {
+        if (current !== '') {
+            lines.push(current);
+            current = '';
+        }
+    };
+
+    for (const word of text.split(' ')) {
+        if (word === '') continue;
+
+        // Does this word fit on the current line?
+        const candidate = current === '' ? word : current + ' ' + word;
+        if (ctx.measureText(candidate).width <= maxWidth) {
+            current = candidate;
+            continue;
+        }
+
+        // Word does not fit: close the current line first.
+        flush();
+
+        // A single word wider than the bubble must be broken by character.
+        if (ctx.measureText(word).width > maxWidth) {
+            let chunk = '';
+            for (const ch of Array.from(word)) {
+                if (ctx.measureText(chunk + ch).width > maxWidth && chunk !== '') {
+                    lines.push(chunk);
+                    chunk = ch;
+                    if (lines.length === BUBBLE_MAX_LINES) break;
+                } else {
+                    chunk += ch;
+                }
+            }
+            if (lines.length === BUBBLE_MAX_LINES) {
+                current = '';
+                break;
+            }
+            current = chunk;
+        } else {
+            current = word;
+        }
+
+        if (lines.length === BUBBLE_MAX_LINES) break;
+    }
+
+    if (lines.length < BUBBLE_MAX_LINES) flush();
+
+    // Anything that did not fit is summarised, never silently dropped.
+    const rendered = lines.slice(0, BUBBLE_MAX_LINES);
+    if (lines.length > BUBBLE_MAX_LINES || rendered.join(' ').length < text.length) {
+        const last = rendered[rendered.length - 1] || '';
+        if (!last.endsWith('…')) {
+            rendered[rendered.length - 1] = (last.length > 1 ? last.slice(0, -1) : last) + '…';
+        }
+    }
+    return rendered;
+}
+
 class JamriWorld {
     static SPEED = 150;          // px per second
     static SEND_HZ = 12;         // position updates per second
@@ -447,21 +560,53 @@ class JamriWorld {
     /**
      * WorkAdventure-style speech bubble above the avatar that wrote a message.
      * Bubbles are keyed by avatar id and fade out on their own.
+     *
+     * Both chat channels funnel through here: mat chat (`chat_message`, scoped to
+     * the mat you are standing on) and world chat (`world.chat`, whole map).
      */
     showBubble(msg) {
-        if (!msg || !msg.message) return;
-        const nick = msg.sender_nickname;
-        let id = null;
-        if (this.user && nick === this.user.nickname) {
-            id = this.myId;
-        } else {
-            for (const [avId, av] of this.avatars.entries()) {
-                if (av.nick === nick) { id = avId; break; }
-            }
+        if (!msg) return;
+        const text = sanitizeBubbleText(msg.message);
+        if (text === '') return;
+
+        const id = this.resolveAvatarId(msg);
+        if (id === null || id === undefined) return;
+
+        // Newest message wins for that avatar; the layout is measured lazily on
+        // the first frame so the canvas font metrics are authoritative.
+        this.bubbles.set(id, { text, t: performance.now(), layout: null });
+
+        // Defensive cap: never keep more bubbles than there are avatars.
+        if (this.bubbles.size > 64) {
+            const oldest = Array.from(this.bubbles.entries())
+                .sort((a, b) => a[1].t - b[1].t)
+                .slice(0, this.bubbles.size - 64);
+            oldest.forEach(([key]) => this.bubbles.delete(key));
         }
-        if (id === null) return;
-        const text = String(msg.message).slice(0, 90);
-        this.bubbles.set(id, { text, t: performance.now() });
+    }
+
+    /**
+     * Map a chat payload to an avatar id.
+     *
+     * `sender_res_id` (the sender's connection id, added by the server) is the
+     * exact answer. Nickname matching is only a fallback for older payloads and
+     * for our own avatar, because two players can share a nickname.
+     */
+    resolveAvatarId(msg) {
+        const resId = Number(msg.sender_res_id);
+        if (Number.isFinite(resId) && resId > 0) {
+            if (resId === this.myId) return this.myId;
+            if (this.avatars.has(resId)) return resId;
+        }
+
+        const nick = typeof msg.sender_nickname === 'string' ? msg.sender_nickname : '';
+        if (nick === '') return null;
+        if (this.user && nick === this.user.nickname) return this.myId;
+
+        for (const [avId, av] of this.avatars.entries()) {
+            if (av.nick === nick) return avId;
+        }
+        return null;
     }
 
     sendEmote(emote) {
@@ -858,6 +1003,7 @@ class JamriWorld {
 
             case 'world.leave':
                 this.avatars.delete(data.id);
+                this.bubbles.delete(data.id);
                 this.online = data.online || Math.max(0, this.avatars.size);
                 this.updateOnline(this.online);
                 break;
@@ -1007,6 +1153,11 @@ class JamriWorld {
         present.add(this.myId);
         for (const id of Array.from(this.avatars.keys())) {
             if (!present.has(id)) this.avatars.delete(id);
+        }
+        // A departed avatar must not leave a speech bubble behind: the bubble map
+        // is keyed by avatar id, so a stale key would leak for the whole session.
+        for (const id of Array.from(this.bubbles.keys())) {
+            if (!present.has(id)) this.bubbles.delete(id);
         }
         this.online = Math.max(0, list.length);
         this.updateOnline(this.online);
@@ -1771,25 +1922,25 @@ class JamriWorld {
                     const fade = age > 5 ? Math.max(0, 1 - (age - 5)) : 1;
                     ctx.globalAlpha = fade;
                     ctx.font = '12px system-ui, sans-serif';
-                    const text = bub.text;
-                    const maxW = 190;
-                    // Wrap to at most 3 lines.
-                    const lines = [];
-                    let cur = '';
-                    for (const word of text.split(/\s+/)) {
-                        const next = cur ? cur + ' ' + word : word;
-                        if (ctx.measureText(next).width > maxW - 18 && cur) {
-                            lines.push(cur);
-                            cur = word;
-                            if (lines.length === 3) break;
-                        } else {
-                            cur = next;
-                        }
-                    }
-                    if (lines.length < 3 && cur) lines.push(cur);
+                    ctx.textAlign = 'center';
 
-                    const bw = Math.min(maxW, Math.max(...lines.map(l => ctx.measureText(l).width)) + 18);
-                    const bh = lines.length * 15 + 10;
+                    // Layout is measured once per message and cached: measuring on
+                    // every frame is both wasteful and a risk if the text ever
+                    // slipped through unsanitised.
+                    if (!bub.layout) {
+                        const lines = wrapBubbleLines(ctx, bub.text, BUBBLE_MAX_WIDTH - 18);
+                        if (lines.length === 0) {
+                            this.bubbles.delete(e.id);
+                            ctx.globalAlpha = 1;
+                            continue;
+                        }
+                        const textW = Math.max(...lines.map(l => ctx.measureText(l).width));
+                        const bw = Math.min(BUBBLE_MAX_WIDTH, Math.max(24, textW + 18));
+                        const bh = lines.length * 15 + 10;
+                        bub.layout = { lines, bw, bh };
+                    }
+
+                    const { lines, bw, bh } = bub.layout;
                     const viewRight = camX + (viewW || this.canvas.width);
                     const bx = Math.max(camX + 4, Math.min(sx - bw / 2, viewRight - bw - 4));
                     const by = sy - 56 - bob - bh;
@@ -1811,7 +1962,6 @@ class JamriWorld {
                     ctx.fill();
 
                     ctx.fillStyle = '#1f3b2a';
-                    ctx.textAlign = 'center';
                     lines.forEach((line, i) => {
                         ctx.fillText(line, bx + bw / 2, by + 13 + i * 15);
                     });

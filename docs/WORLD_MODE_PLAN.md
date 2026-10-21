@@ -222,7 +222,7 @@ mengikuti rasa WorkAdventure (tetap prosedural, tanpa file gambar):
 | Tikar | Cakram **transparan asli** (alpha 0.17–0.26, rumput tembus) + ring lingkaran + label pill; tanpa pola kotak |
 | Avatar | Emoji + **walk bob** 3px, shadow menyusut saat melompat, ring putih untuk diri sendiri, flip horizontal saat menghadap kiri |
 | Partikel | Debu kaki saat jalan, not musik (`♪ ♫ ♬`) naik dari tikar yang ada pendengarnya |
-| Chat | **Speech bubble** di atas avatar pengirim (auto-wrap, fade 6s) |
+| Chat | **Speech bubble** di atas avatar pengirim, untuk **kedua** kanal (Chat Tikar & Chat World): auto-wrap maks 3 baris, fade 6s, layout di-cache per pesan |
 | Panel chat | **Satu input + dua tab** (Chat Tikar / Chat World); tab aktif menentukan tujuan kirim |
 | Kamera | Zoom 1.15–1.8 (avatar tetap terbaca) + look-ahead 26px ke arah hadap |
 | Cahaya | Sunlight radial hangat + vignette hijau sangat tipis (bukan gelap) |
@@ -240,6 +240,11 @@ buka world lalu pastikan luminansi canvas > 150 dan tidak ada pixel gelap.
 - `zone.select` diverifikasi terhadap radius aktual.
 - Maks 20 user/world; maks N tikar/world (mis. 8) untuk cegah spam.
 - Rate limit: `world.move` (posisi), `mat.place`, `world.chat`.
+- Teks bubble chat **tidak pernah** dipercaya: `sanitizeBubbleText()` membuang
+  control char, bidi override, zero-width, dan memotong ke 120 code point;
+  `wrapBubbleLines()` membatasi 3 baris & memecah kata tanpa spasi. Diuji oleh
+  `tests/world_bubble_check.mjs` (35+ asersi) termasuk payload 10k karakter,
+  emoji, bidi, dan width mustahil.
 - Posisi **tidak pernah** ditulis ke SQLite.
 - Path aset tetap di `public/img/world/` (di-serve sebagai static, aman).
 - Legacy flow tidak berubah → regresi legacy = 0.

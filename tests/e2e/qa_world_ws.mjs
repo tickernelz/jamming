@@ -163,6 +163,24 @@ const track = (id, title) => ({ youtube_id: id, title, channel: 'QA', duration_s
     check('B receives world.chat', !!B.last('world.chat'), JSON.stringify(B.msgs.map(m => m.type)));
     check('world chat body intact', B.last('world.chat') && B.last('world.chat').message.message === 'halo world');
     check('world chat sender_nickname', B.last('world.chat') && B.last('world.chat').message.sender_nickname === 'WorldA');
+    // The speech bubble is anchored by the sender's connection id. Nickname
+    // matching alone put the bubble on the wrong avatar when two players share a
+    // nickname (and the server now always provides the id).
+    const aId = init.you.id;
+    check('world chat carries the sender connection id',
+        B.last('world.chat') && B.last('world.chat').message.sender_res_id === aId,
+        String(B.last('world.chat') && B.last('world.chat').message.sender_res_id) + ' vs ' + aId);
+
+    // A hostile bubble payload must still arrive (sanitising happens client side)
+    // but never as an unbounded string.
+    A.clear(); B.clear();
+    A.send('world.chat', { message: '\u202Ehalo\u0000 dunia ' + 'z'.repeat(400) });
+    await sleep(700);
+    const hostile = B.last('world.chat');
+    check('hostile world chat still delivered', !!hostile, JSON.stringify(B.msgs.map(m => m.type)));
+    check('hostile world chat is length-capped', hostile && hostile.message.message.length <= 300,
+        String(hostile && hostile.message.message.length));
+    check('hostile world chat keeps the sender id', hostile && hostile.message.sender_res_id === aId);
     A.clear(); B.clear();
     A.send('world.emote', { emote: '🔥' });
     await sleep(600);

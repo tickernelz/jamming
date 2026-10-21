@@ -155,6 +155,11 @@ const track = (id, title) => ({ youtube_id: id, title, channel: 'QA', duration_s
     check('B receives chat_message', !!B.last('chat_message'), JSON.stringify(B.msgs.map(m => m.type)));
     check('chat body intact', B.last('chat_message') && B.last('chat_message').message.message === 'halo dari A', JSON.stringify(B.last('chat_message')).slice(0, 200));
     check('chat has sender_nickname', B.last('chat_message') && B.last('chat_message').message.sender_nickname === 'RoomA', JSON.stringify(B.last('chat_message').message).slice(0, 150));
+    // Mat chat in world mode also draws a speech bubble, so the payload needs the
+    // sender's connection id for the bubble to land on the right avatar.
+    check('mat chat carries the sender connection id',
+        B.last('chat_message') && typeof B.last('chat_message').message.sender_res_id === 'number' && B.last('chat_message').message.sender_res_id > 0,
+        JSON.stringify(B.last('chat_message').message.sender_res_id));
     A.send('chat', { message: '' });
     await sleep(500);
     check('empty chat ignored', !B.all('chat_message').some(m => !m.message.message || !m.message.message.trim()), JSON.stringify(B.all('chat_message').map(m => m.message.message)));
