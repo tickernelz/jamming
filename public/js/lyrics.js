@@ -770,7 +770,7 @@ class JamriLyricsManager {
             return;
         }
 
-        if (this.player.mode === 'jamming' && this.ws && this.ws.isConnected) {
+        if (this.player.isSynced && this.player.isSynced() && this.ws && this.ws.isConnected) {
             this.ws.sendSeek(time);
         } else {
             this.player.seek(time);

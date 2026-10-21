@@ -654,11 +654,27 @@ function enterWorld(worldId) {
         leaveRoom();
     }
 
+    // The socket handshake sends nickname/emoji/device_id, so a world cannot be
+    // entered before the profile exists. Bail out instead of half-entering (the
+    // player used to be flipped to 'world' mode with a dead socket).
+    if (!window.JAMRI_USER) {
+        if (typeof JamriAuth !== 'undefined' && JamriAuth.showProfileModal) {
+            JamriAuth.showProfileModal(
+                { device_id: JamriAuth.getOrCreateDeviceId(), nickname: '', emoji: '🎧' },
+                false
+            );
+        }
+        return;
+    }
+
     const player = window.JAMRI_APP.player;
     const ws = window.JAMRI_APP.wsClient;
 
-    // World has no global music; playback stays with the player engine.
-    player.setMode('solo', null);
+    // Playback inside a world is server-driven (via the mat room), exactly like a
+    // legacy jamming room. This used to be setMode('solo', null), which silently
+    // disabled every sync branch in player.js (server timeline, ping resync,
+    // play/pause routing) — the mat looked like "everyone playing separately".
+    player.setMode('world', ws);
     if (window.JAMRI_APP.searchModule) window.JAMRI_APP.searchModule.setWebSocket(window.JAMRI_APP.wsClient);
 
     window.JAMRI_APP.activeWorldId = worldId;
@@ -677,6 +693,8 @@ function leaveWorld() {
     if (window.JAMRI_APP.world) {
         window.JAMRI_APP.world.leave();
     }
+    // Back to a plain local player once the world (and its mat) is gone.
+    if (window.JAMRI_APP.player) window.JAMRI_APP.player.setMode('solo', null);
     window.JAMRI_APP.activeWorldId = null;
     switchView('lobby');
 }
@@ -945,7 +963,7 @@ function bindRoomWebSocketEvents(ws, player, roomDetail) {
         player.serverSyncTime = data.server_time || Date.now();
         if (data.current_track) {
             const isSameTrack = player.currentTrack && player.currentTrack.youtube_id === data.current_track.youtube_id;
-            if (isSameTrack && (player.isPlaying || player.mode === 'jamming')) {
+            if (isSameTrack && (player.isPlaying || player.isSynced())) {
                 // Audio is ALREADY loaded/playing for this track (e.g. Server restart / reconnect)!
                 // Smoothly sync time without interrupting or reloading the video
                 player.syncJammingState(data.current_track, data.state, data.position, data.server_time);

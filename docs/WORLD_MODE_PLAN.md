@@ -10,11 +10,11 @@
 
 | Fase | Isi | Status | Commit |
 |---|---|---|---|
-| 1 | Presence: peta pixel, avatar jalan, snapshot 15Hz + interpolasi | ✅ Selesai | `ec0a790` |
-| 2 | Tikar + radius + zone enter/exit + kontrol owner/everyone | ✅ Selesai | `de0d56e` |
+| 1 | Presence: peta pixel, avatar jalan, snapshot 15Hz + interpolasi | ✅ Selesai | `ec0a790` || 2 | Tikar + radius + zone enter/exit + kontrol owner/everyone | ✅ Selesai | `de0d56e` |
 | 3 | Overlap dialog, pickup, auto-despawn tikar kosong | ✅ Selesai | `de0d56e`, `6f844ae` |
 | 4 | Minimap, emote, chat world, crown owner | ✅ Selesai | `6f844ae` |
 | 5 | Proximity audio fade (volume mengikuti jarak ke tikar) | ✅ Selesai | `7323794` |
+| 6 | Visual daylight + animasi WorkAdventure (bob, partikel, bubble, zoom, dekorasi) | ✅ Selesai | — |
 | — | Multi-world sharding & interest management | ⏸ Belum perlu (<40 user) | — |
 
 **Belum diimplementasi (sengaja):** multi-world sharding/interest management,
@@ -191,6 +191,7 @@ docs/WORLD_MODE_PLAN.md     # dokumen ini
 | **3** | Overlap confirmation dialog + pickup + auto-despawn tikar kosong. | ✅ Selesai (`6f844ae`) |
 | **4** | Minimap, emote, joystick, chat world, crown owner. | ✅ Selesai (`6f844ae`) |
 | **5** | Proximity audio fade (makin dekat makin keras), interest management, multi-world. | ✅ Fade selesai; sharding ⏸ |
+| **6** | Visual daylight + animasi WorkAdventure + perbaikan layout mobile. | ✅ Selesai |
 
 ---
 
@@ -206,6 +207,31 @@ dengan skrip (tanpa dependensi art eksternal):
 - Avatar = emoji pilihan user (`ctx.fillText`) — **gratis**, tidak perlu sprite per user.
 - Fallback aman: kalau aset gagal dimuat → peta solid berwarna + grid (tetap bisa main).
 
+### 9.1 Arah visual (v5 — terang, WorkAdventure-like)
+
+Versi awal memakai latar navy gelap (`#0b0f1a`) + dinding coklat tua, sehingga world
+terasa gelap & suram. Sejak v5 renderer memakai palet **siang hari** dan animasi yang
+mengikuti rasa WorkAdventure (tetap prosedural, tanpa file gambar):
+
+| Elemen | Perilaku |
+|---|---|
+| Lantai | Rumput 3 nada (`#8ed07a`/`#86c973`/`#96d883`) + bilah rumput & moss, bukan checkerboard gelap |
+| Plaza spawn | Lingkaran paving pasir hangat di titik spawn → area nongkrong |
+| Dinding | Hedge/kerb batu terang (`#4f9d55` + rim matahari) dengan shadow lembut |
+| Dekorasi | Bunga, rumpun rumput, semak, pohon pixel (deterministik per world id) |
+| Tikar | Cakram **transparan asli** (alpha 0.17–0.26, rumput tembus) + ring lingkaran + label pill; tanpa pola kotak |
+| Avatar | Emoji + **walk bob** 3px, shadow menyusut saat melompat, ring putih untuk diri sendiri, flip horizontal saat menghadap kiri |
+| Partikel | Debu kaki saat jalan, not musik (`♪ ♫ ♬`) naik dari tikar yang ada pendengarnya |
+| Chat | **Speech bubble** di atas avatar pengirim (auto-wrap, fade 6s) |
+| Panel chat | **Satu input + dua tab** (Chat Tikar / Chat World); tab aktif menentukan tujuan kirim |
+| Kamera | Zoom 1.15–1.8 (avatar tetap terbaca) + look-ahead 26px ke arah hadap |
+| Cahaya | Sunlight radial hangat + vignette hijau sangat tipis (bukan gelap) |
+| Minimap | Latar rumput terang, tikar berwarna, viewport rectangle |
+
+Palet & perilaku ini divalidasi oleh `tests/world_visual_check.mjs` (menolak palet gelap
+lama, memastikan hook animasi & guard render tetap ada). Verifikasi visual manual:
+buka world lalu pastikan luminansi canvas > 150 dan tidak ada pixel gelap.
+
 ---
 
 ## 10. Keamanan & batasan
@@ -217,6 +243,124 @@ dengan skrip (tanpa dependensi art eksternal):
 - Posisi **tidak pernah** ditulis ke SQLite.
 - Path aset tetap di `public/img/world/` (di-serve sebagai static, aman).
 - Legacy flow tidak berubah → regresi legacy = 0.
+
+### 10.1 Isolasi kegagalan (WAJIB)
+
+Satu aksi world **tidak boleh** bisa menutup socket pemain. Sebelumnya
+`handleWorldMessage()` dipanggil **sebelum** blok `try/catch` di `onMessage()`,
+jadi exception apa pun (FK violation saat world row sudah hilang, DB busy, payload
+aneh) merambat ke Ratchet → koneksi ditutup (close code `1000`). Gejalanya:
+"gelar tikar langsung disconnect".
+
+Aturan yang sekarang berlaku:
+
+| Lapisan | Perilaku |
+|---|---|
+| `handleWorldMessage()` | Wrapper `try/catch(\Throwable)`: log + kirim `notice`, **tidak pernah** rethrow |
+| `dispatchWorldMessage()` | Logika asli semua aksi world |
+| `tickWorlds()` | Tiap world di-tick dalam `try/catch` sendiri; `maintainMats()` juga dijaga |
+| `placeBox()` | Cek `rooms.id` ada sebelum insert; INSERT dibungkus `try/catch`; backing room dihapus kalau gagal; return `null` (bukan throw) |
+
+Dijaga oleh `tests/world_socket_resilience_check.mjs` dan `tests/world_place_box_check.mjs`.
+
+### 10.2 Antrean tikar (shared-session routing)
+
+World mode **tidak pernah** men-set `JAMRI_APP.activeRoomId` (socket id = world id),
+jadi semua pengecekan lama `player.mode === 'jamming' || activeRoomId` bernilai
+**false** di dalam world. Akibatnya tombol "Cari Musik" → *Play Now* / *Add to queue*
+memutar lagu **lokal** dan antrean tikar tetap kosong untuk semua orang — inilah
+gejala "antrean musik di tikar gak sinkron".
+
+Perbaikan:
+
+| Bagian | Perilaku |
+|---|---|
+| `search.js#isSharedSession()` | True bila mode jamming **atau** `activeRoomId` **atau** (`activeWorldId` **dan** `world.activeBox`) |
+| Semua entry point search | Memakai `isSharedSession()` (Play Now, Add to Queue, Bank Musik) |
+| `world.js#renderQueue()` | Mirror antrean tikar ke `JAMRI_APP.roomQueue` supaya cek duplikat akurat |
+| `zone.exit` | Mengosongkan mirror (`roomQueue = []`) agar lagu lama tidak dianggap duplikat |
+
+Dijaga oleh `tests/world_queue_sync_check.mjs`. Verifikasi end-to-end 2 user:
+user B menambah lagu → A dan B sama-sama melihat 1 baris di antrean tikar,
+`soloQueue` tetap 0.
+
+### 10.3 Sinkronisasi user baru masuk tikar (late join)
+
+Di room legacy, `ping` → `pong` membawa `track/state/position` sehingga pemain
+baru langsung menyusul posisi lagu. Di world mode ini **putus di dua tempat**:
+
+1. Handler `ping` world hanya menjawab `{ server_time }` → tidak ada heartbeat
+   playback untuk dikoreksi.
+2. `world.js#connect()` melakukan `client.listeners = {}` lalu **tidak pernah**
+   mem-bind `pong` → jawaban server (kalau ada) diabaikan.
+
+Akibatnya user yang masuk tikar saat lagu berjalan mulai dari 0:00 dan tidak
+pernah mengejar yang lain.
+
+Perbaikan:
+
+| Bagian | Perilaku |
+|---|---|
+| `ping` (world) | Membalas `pong` + `position`, `state`, `track`, `box_id`, `room_id` untuk tikar aktif |
+| `world.js` → `ws.on('pong')` | `syncJammingState(...)` tiap 5 detik **hanya** saat `activeBox` ada dan tab terlihat |
+| `onRoomInit()` | Seed `serverBasePos`/`serverSyncTime`, mulai lagu di `position` server, lalu re-apply di 900 ms & 2200 ms (YT bridge sering belum siap) |
+| `track_change` | Ikut menyimpan `state`/`position` server sebelum `playTrack` |
+
+Dijaga oleh `tests/world_playback_sync_check.mjs`. Verifikasi 2 user:
+A memutar lagu (8 detik berjalan) → B masuk tikar → B mulai di **10 detik**
+(ikut berjalan), dan saat A *pause* di 6 detik → B masuk → B `paused` di 6 detik,
+lalu ikut resume ketika A menekan play.
+
+### 10.4 Tikar paused tidak boleh auto-play
+
+Dua jalur membuat tikar yang sedang **paused** tiba-tiba berbunyi:
+
+| Penyebab | Perbaikan |
+|---|---|
+| `playTrack()` selalu memanggil `playVideo()` | Hanya play bila `_shouldAutoPlay()` (server state `playing`); kalau tidak → `pauseVideo()` setelah `loadVideoById` di posisi yang benar |
+| Autoplay-unlock memasang listener `keydown`/`click` | `_armAutoUnlock()` hanya dipasang bila server `playing`, di-*disarm* di `pause()`, dan handler-nya cek ulang state sebelum play — jadi WASD (jalan) tidak lagi memicu play |
+| `pendingTrack` tidak menyimpan state | `pendingTrack.state` disimpan; `onReady` re-apply paused |
+
+Dijaga oleh `tests/world_paused_state_check.mjs`. Verifikasi 2 user:
+A pause di 5 detik → A jalan-jalan (WASD) → tetap paused 5 detik; B masuk tikar →
+B `paused` di 5 detik, A tetap paused.
+
+### 10.4b AKAR UTAMA: world mode tidak pernah "synced"
+
+`enterWorld()` memanggil `player.setMode('solo', null)`. Akibatnya **seluruh** cabang
+sinkronisasi di `player.js` (15 tempat, semuanya di-guard `mode === 'jamming'`) mati:
+
+- `getCurrentTime()` mengembalikan jam YouTube lokal, bukan jam server → tiap perangkat
+  punya timeline sendiri ("play masing-masing")
+- `startTicker()` tidak memakai `serverSyncTime`, jadi timeline tidak maju walau audio
+  lokal diblokir YouTube
+- player tidak pernah mengirim `ping` sendiri (tidak ada resync periodik)
+- `togglePlay/seek/next/prev/setLoop/shuffle/trackEnded` hanya mengubah state lokal,
+  **tidak pernah** di-broadcast ke tikar
+- `visibilitychange` tidak mengirim ping → setelah tab pindah, drift menetap
+- `room_init` untuk tikar paused diperlakukan sebagai state lokal
+
+Perbaikan: helper baru `player.isSynced()` (true untuk `jamming` **atau** `world` +
+socket hidup), dipakai di semua 15 cabang. `enterWorld()` → `setMode('world', ws)`,
+`leaveWorld()` → `setMode('solo', null)`. `app.js`, `lyrics.js`, dan `search.js` juga
+memakai helper ini.
+
+Dijaga oleh `tests/world_player_mode_check.mjs` (menolak `mode === 'jamming'` mentah di
+luar helper). Verifikasi 2 user: drift `getCurrentTime()` A vs B = **0.00 detik** pada
+4 sampel, termasuk setelah B keluar-masuk tikar **8 kali**.
+
+
+### 10.5 Tampilan tikar
+
+Tikar digambar sebagai **cakram transparan asli** (alpha 0.17–0.26) sehingga rumput
+terlihat menembus, hanya sedikit lebih gelap dari ground. Pola *checkerboard* dan
+tile 16px dihapus karena terbaca sebagai "kotak-kotak / transparansi palsu".
+Sisa penanda: ring luar (lebih tebal saat aktif) + ring putus-putus tipis + label pill.
+Dijaga oleh `tests/world_visual_check.mjs` (menolak `ctx.clip()` bertile dan alpha > 0.35).
+
+
+
+
 
 ---
 

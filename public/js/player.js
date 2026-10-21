@@ -53,10 +53,20 @@ class JamriPlayer {
         this.startTicker();
     }
 
+    /**
+     * True when playback is driven by the server (a legacy jamming room OR a
+     * world mat). World mode used to run with mode='solo', so every sync branch
+     * below was dead: the timeline never advanced from the server clock, ping
+     * was never sent from the player, and the UI drifted per-device.
+     */
+    isSynced() {
+        if (this.mode === 'jamming') return true;
+        return !!(this.mode === 'world' && this.ws && this.ws.isConnected);
+    }
+
     setMode(mode, wsClient = null) {
         this.mode = mode;
         this.ws = wsClient;
-
         // Apply pending seek when tab becomes visible again (seek was received while tab was hidden)
         if (!this._visibilitySeekBound) {
             this._visibilitySeekBound = true;
@@ -121,7 +131,12 @@ class JamriPlayer {
                             if (this.pendingTrack) {
                                 const pt = this.pendingTrack;
                                 this.pendingTrack = null;
+                                // Re-apply the SERVER state: a track queued while the
+                                // mat was paused must load paused, not auto-play.
                                 this.playTrack(pt.track, pt.startPos);
+                                if (pt.state === 'paused' || !this._shouldAutoPlay()) {
+                                    this.pause();
+                                }
                             }
                         },
                         onStateChange: (e) => {
@@ -155,7 +170,7 @@ class JamriPlayer {
                                 this.stopPreview();
                                 return;
                             }
-                            if (this.mode === 'jamming') {
+                            if (this.isSynced()) {
                                 // Di Jamming Room: JANGAN PERNAH panggil next() atau ubah lagu room!
                                 // Biarkan user lain tetap menikmati lagu. User di perangkat ini tetap tersinkron dengan timeline jam server.
                                 if (err.data === 101 || err.data === 150) {
@@ -239,7 +254,7 @@ class JamriPlayer {
                 }
 
                 // Di mode jamming: timeline jam server tetap maju meskipun audio lokal dibatasi YouTube
-                if (this.mode === 'jamming') {
+                if (this.isSynced()) {
                     if (this.serverPlaybackState === 'playing') {
                         if (this.isPlaying && ytCur > 0) {
                             cur = ytCur;
@@ -327,7 +342,7 @@ class JamriPlayer {
                     }
                 }
                 // Kirim ping ke WebSocket agar UI dan playback ter-resync dengan server tanpa jitter
-                if (this.mode === 'jamming' && this.ws) {
+                if (this.isSynced() && this.ws) {
                     this.ws.send('ping');
                 }
             } else {
@@ -387,7 +402,7 @@ class JamriPlayer {
 
             if (!this.isYtReady || !this.ytPlayer) {
                 console.log('[JAMRI] Enqueuing track while player initializes:', track.title);
-                this.pendingTrack = { track, startPos: startPosition };
+                this.pendingTrack = { track, startPos: startPosition, state: this.serverPlaybackState || 'playing' };
                 this.initYouTubeBridge();
                 return;
             }
@@ -403,35 +418,39 @@ class JamriPlayer {
                     this.ytPlayer.unMute();
                 }
                 this.applyEffectiveVolume();
-                this.ytPlayer.playVideo();
-                this.isPlaying = true;
-                this.emit('state_change', { isPlaying: true });
 
-                // Deteksi jika browser menahan unmuted autoplay (misal user B baru masuk)
+                // Respect the server state: when the mat is paused we only LOAD the
+                // video at the right position. Calling playVideo() here made a
+                // paused mat start playing as soon as anyone joined or moved.
+                if (this._shouldAutoPlay()) {
+                    this.ytPlayer.playVideo();
+                    this.isPlaying = true;
+                    this.emit('state_change', { isPlaying: true });
+                } else {
+                    try { this.ytPlayer.pauseVideo(); } catch (e) {}
+                    this.isPlaying = false;
+                    this.emit('state_change', { isPlaying: false });
+                }
+
+                // Deteksi jika browser menahan unmuted autoplay (misal user B baru masuk).
+                // PENTING: hanya aktif kalau server memang meminta PLAYING. Kalau tikar
+                // sedang paused, listener ini dulu ikut terpasang dan setiap keydown
+                // (WASD untuk jalan) memicu playVideo() -> lagu auto-play sendiri.
                 setTimeout(() => {
-                    if (this.isPlaying && this.ytPlayer && typeof this.ytPlayer.getPlayerState === 'function') {
-                        try {
-                            const st = this.ytPlayer.getPlayerState();
-                            // Jika masih paused atau unstarted padahal disuruh play
-                            if (st === window.YT.PlayerState.PAUSED || st === window.YT.PlayerState.UNSTARTED || st === -1) {
-                                if (window.showToast) {
-                                    window.showToast('Klik di mana saja untuk mengaktifkan audio', 'info');
-                                }
-                                const autoUnlock = () => {
-                                    if (this.ytPlayer) {
-                                        try {
-                                            this.ytPlayer.unMute();
-                                            this.ytPlayer.playVideo();
-                                        } catch (e) {}
-                                    }
-                                    window.removeEventListener('click', autoUnlock);
-                                    window.removeEventListener('keydown', autoUnlock);
-                                };
-                                window.addEventListener('click', autoUnlock, { once: true });
-                                window.addEventListener('keydown', autoUnlock, { once: true });
-                            }
-                        } catch (e) {}
-                    }
+                    if (!this._shouldAutoPlay() || !this.isPlaying) return;
+                    if (!this.ytPlayer || typeof this.ytPlayer.getPlayerState !== 'function') return;
+                    try {
+                        const st = this.ytPlayer.getPlayerState();
+                        if (st !== window.YT.PlayerState.PAUSED
+                            && st !== window.YT.PlayerState.UNSTARTED
+                            && st !== -1) {
+                            return;
+                        }
+                        if (window.showToast) {
+                            window.showToast('Klik di mana saja untuk mengaktifkan audio', 'info');
+                        }
+                        this._armAutoUnlock();
+                    } catch (e) {}
                 }, 1200);
             } catch (err) {
                 console.error('[JAMRI] Failed to play video:', err);
@@ -459,7 +478,7 @@ class JamriPlayer {
                     if (window.showToast) {
                         window.showToast(`Beralih otomatis ke versi audio: ${altTrack.title}`, 'info');
                     }
-                    if (this.mode === 'jamming' && this.ws) {
+                    if (this.isSynced() && this.ws) {
                         this.ws.sendSetTrack(altTrack);
                     } else {
                         this.playTrack(altTrack, 0);
@@ -476,7 +495,7 @@ class JamriPlayer {
         if (window.showToast) {
             window.showToast('Versi alternatif tidak ditemukan. Melewati lagu...', 'warning');
         }
-        if (this.mode === 'jamming' && this.ws) {
+        if (this.isSynced() && this.ws) {
             this.ws.sendNext();
         } else {
             this.next();
@@ -524,7 +543,7 @@ class JamriPlayer {
         if (this.isPreviewing) {
             this.isPreviewing = false;
             this.emit('preview_stop');
-            if (this.mode === 'jamming' && this.ws && this.currentTrack) {
+            if (this.isSynced() && this.ws && this.currentTrack) {
                 // Kembalikan ke track jamming yang sedang diputar di room
                 this.playTrack(this.currentTrack, this.getCurrentTime());
             } else if (this.isYtReady && this.ytPlayer) {
@@ -535,7 +554,7 @@ class JamriPlayer {
 
     togglePlay() {
         this.stopPreview();
-        if (this.mode === 'jamming' && this.ws) {
+        if (this.isSynced() && this.ws) {
             if (this.isPlaying) {
                 // Optimistic local pause for zero perceived latency
                 this.pause();
@@ -554,6 +573,46 @@ class JamriPlayer {
         } else {
             this.resume();
         }
+    }
+
+    /**
+     * True only when the SERVER wants the current track playing. Guards the
+     * autoplay-unlock helper so a paused mat can never be resumed by a stray
+     * click/keypress (e.g. walking with WASD).
+     */
+    _shouldAutoPlay() {
+        return this.serverPlaybackState === 'playing';
+    }
+
+    /** One-shot "click anywhere to enable audio" unlock, cancelled on pause. */
+    _armAutoUnlock() {
+        if (this._autoUnlockArmed) return;
+        this._autoUnlockArmed = true;
+
+        const autoUnlock = () => {
+            this._autoUnlockArmed = false;
+            this._disarmAutoUnlock();
+            // Re-check: the mat may have been paused while waiting for the click.
+            if (!this._shouldAutoPlay() || !this.currentTrack) return;
+            if (this.ytPlayer) {
+                try {
+                    this.ytPlayer.unMute();
+                    this.ytPlayer.playVideo();
+                } catch (e) {}
+            }
+        };
+
+        this._autoUnlockHandler = autoUnlock;
+        window.addEventListener('click', autoUnlock, { once: true });
+        window.addEventListener('keydown', autoUnlock, { once: true });
+    }
+
+    _disarmAutoUnlock() {
+        if (!this._autoUnlockHandler) return;
+        window.removeEventListener('click', this._autoUnlockHandler);
+        window.removeEventListener('keydown', this._autoUnlockHandler);
+        this._autoUnlockHandler = null;
+        this._autoUnlockArmed = false;
     }
 
     resume() {
@@ -576,6 +635,7 @@ class JamriPlayer {
     }
 
     pause() {
+        this._disarmAutoUnlock();
         this.stopSilentAudioAnchor();
         if ('mediaSession' in navigator) {
             try { navigator.mediaSession.playbackState = 'paused'; } catch (e) {}
@@ -620,7 +680,7 @@ class JamriPlayer {
         this.stopPreview();
         seconds = Math.max(0, seconds);
         this._internalSeek(seconds);
-        if (this.mode === 'jamming' && this.ws) {
+        if (this.isSynced() && this.ws) {
             this.ws.sendSeek(seconds);
         }
     }
@@ -633,7 +693,7 @@ class JamriPlayer {
         }
         this._lastActionTime = now;
 
-        if (this.mode === 'jamming' && this.ws) {
+        if (this.isSynced() && this.ws) {
             this.ws.sendNext();
         } else {
             this.playNextSolo();
@@ -654,7 +714,7 @@ class JamriPlayer {
             return;
         }
 
-        if (this.mode === 'jamming' && this.ws) {
+        if (this.isSynced() && this.ws) {
             this.ws.sendPrev();
             return;
         }
@@ -685,7 +745,7 @@ class JamriPlayer {
             } catch (e) {}
         }
         // Fallback jika YouTube lokal gagal play (misal di HP): gunakan timeline server agar tetap tahu detik ke berapa
-        if (this.mode === 'jamming' && this.serverSyncTime) {
+        if (this.isSynced() && this.serverSyncTime) {
             const elapsed = (this.serverPlaybackState === 'playing') ? (Date.now() - this.serverSyncTime) / 1000 : 0;
             return Math.max(0, (this.serverBasePos || 0) + elapsed);
         }
@@ -750,7 +810,7 @@ class JamriPlayer {
         const modes = ['off', 'all', 'one'];
         const nextIdx = (modes.indexOf(this.loopMode) + 1) % modes.length;
         this.loopMode = modes[nextIdx];
-        if (this.mode === 'jamming' && this.ws) {
+        if (this.isSynced() && this.ws) {
             this.ws.sendSetLoop(this.loopMode);
         }
         this.emit('loop_change', this.loopMode);
@@ -767,7 +827,7 @@ class JamriPlayer {
     toggleShuffle() {
         this.isShuffled = !this.isShuffled;
 
-        if (this.mode === 'jamming' && this.ws) {
+        if (this.isSynced() && this.ws) {
             this.ws.sendQueueShuffle();
             this.emit('shuffle_change', this.isShuffled);
             return this.isShuffled;
@@ -797,7 +857,7 @@ class JamriPlayer {
             return;
         }
 
-        if (this.mode === 'jamming' && this.ws) {
+        if (this.isSynced() && this.ws) {
             this.ws.sendTrackEnded();
         } else {
             if (this.loopMode === 'one' && this.currentTrack) {
@@ -952,10 +1012,14 @@ class JamriPlayer {
 
         if (serverState === 'playing') {
             const cur = this.getCurrentTime();
-            // Untuk explicit seek: selalu apply. Untuk pong rutin: hanya jika deviasi > 4.5 detik.
-            // Jangan pernah timpa posisi yang baru saja di-seek user (seek lock).
+            // Untuk explicit seek: selalu apply. Untuk pong rutin: hanya jika deviasi melewati
+            // ambang. Ambang world lebih ketat karena tikar dipakai ramai-ramai (deviasi 4.5
+            // detik terasa seperti "play masing-masing"), sedangkan room legacy dibiarkan
+            // longgar agar seek tidak terlalu sering memicu stall YouTube.
+            // Jangan pernah timpa posisi yang baru di-seek user (seek lock).
+            const driftLimit = this.mode === 'world' ? 1.5 : 4.5;
             const withinSeekLock = Date.now() < (this._seekLockUntil || 0);
-            if (isExplicitSeek || (!withinSeekLock && Math.abs(cur - targetPos) > 4.5)) {
+            if (isExplicitSeek || (!withinSeekLock && Math.abs(cur - targetPos) > driftLimit)) {
                 this._internalSeek(targetPos);
             }
             if (!this.isPlaying) {

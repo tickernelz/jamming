@@ -22,7 +22,7 @@ class WorldManager
     public const MAX_BOXES_PER_WORLD = 8;
 
     /** Bump when the map generator changes so stored maps regenerate. */
-    private const MAP_VERSION = 2;
+    private const MAP_VERSION = 3;
 
     private PDO $pdo;
     private ?RoomManager $roomManager;
@@ -94,9 +94,10 @@ class WorldManager
     }
 
     /**
-     * Procedural but deterministic map: a hollow rectangular room with interior
-     * wall blocks and a couple of "rooms" for variety. Same world id always
-     * yields the same map.
+     * Procedural but deterministic map: a bright open garden with a clear
+     * central plaza (spawn / meeting spot), hedge blocks that never form
+     * sealed pockets, and a few L-shaped corners for variety. Same world id
+     * always yields the same map.
      */
     private function generateMap(string $worldId): array
     {
@@ -107,7 +108,7 @@ class WorldManager
         $tile = 32;
         $colliders = [];
 
-        // Border walls, 1 tile thick.
+        // Border hedges, 1 tile thick.
         $colliders[] = ['x' => 0, 'y' => 0, 'w' => $w, 'h' => 1];
         $colliders[] = ['x' => 0, 'y' => $h - 1, 'w' => $w, 'h' => 1];
         $colliders[] = ['x' => 0, 'y' => 0, 'w' => 1, 'h' => $h];
@@ -117,23 +118,67 @@ class WorldManager
         $seed = crc32($worldId);
         mt_srand($seed);
 
-        // Interior pillars / blocks, spread across the whole map.
-        $blocks = 12;
+        // Central plaza: nothing may be placed inside (plus a 2-tile walkway).
+        $spawnTx = intdiv($w, 2);
+        $spawnTy = intdiv($h, 2);
+        $plazaRadius = 5.5;
+        $clearOfPlaza = static function (int $bx, int $by, int $bw, int $bh) use ($spawnTx, $spawnTy, $plazaRadius): bool {
+            // Closest point of the rect to the plaza centre.
+            $cx = max($bx, min($spawnTx, $bx + $bw - 1));
+            $cy = max($by, min($spawnTy, $by + $bh - 1));
+            return hypot($cx - $spawnTx, $cy - $spawnTy) > $plazaRadius;
+        };
+
+        $overlaps = static function (array $rect, array $others, int $gap = 2): bool {
+            foreach ($others as $o) {
+                if ($rect['x'] < $o['x'] + $o['w'] + $gap
+                    && $rect['x'] + $rect['w'] + $gap > $o['x']
+                    && $rect['y'] < $o['y'] + $o['h'] + $gap
+                    && $rect['y'] + $rect['h'] + $gap > $o['y']) {
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        // Interior hedge blocks, spread out with a walkable gap between them.
+        $blocks = 14;
         for ($i = 0; $i < $blocks; $i++) {
-            $bw = mt_rand(3, 7);
-            $bh = mt_rand(2, 4);
-            $bx = mt_rand(4, max(4, $w - $bw - 4));
-            $by = mt_rand(4, max(4, $h - $bh - 4));
-            $colliders[] = ['x' => $bx, 'y' => $by, 'w' => $bw, 'h' => $bh];
+            for ($attempt = 0; $attempt < 20; $attempt++) {
+                $bw = mt_rand(3, 7);
+                $bh = mt_rand(2, 4);
+                $bx = mt_rand(4, max(4, $w - $bw - 4));
+                $by = mt_rand(4, max(4, $h - $bh - 4));
+                $rect = ['x' => $bx, 'y' => $by, 'w' => $bw, 'h' => $bh];
+                if (!$clearOfPlaza($bx, $by, $bw, $bh)) {
+                    continue;
+                }
+                if ($overlaps($rect, $colliders, 2)) {
+                    continue;
+                }
+                $colliders[] = $rect;
+                break;
+            }
         }
 
-        // A few L-shaped "room corners" for visual interest.
-        for ($i = 0; $i < 4; $i++) {
-            $cx = mt_rand(8, $w - 20);
-            $cy = mt_rand(6, $h - 12);
-            $len = mt_rand(5, 9);
-            $colliders[] = ['x' => $cx, 'y' => $cy, 'w' => $len, 'h' => 1];
-            $colliders[] = ['x' => $cx, 'y' => $cy, 'w' => 1, 'h' => $len];
+        // A few L-shaped "garden corners" for visual interest.
+        for ($i = 0; $i < 5; $i++) {
+            for ($attempt = 0; $attempt < 15; $attempt++) {
+                $cx = mt_rand(8, $w - 20);
+                $cy = mt_rand(6, $h - 12);
+                $len = mt_rand(5, 9);
+                $armA = ['x' => $cx, 'y' => $cy, 'w' => $len, 'h' => 1];
+                $armB = ['x' => $cx, 'y' => $cy, 'w' => 1, 'h' => $len];
+                if (!$clearOfPlaza($cx, $cy, $len, $len)) {
+                    continue;
+                }
+                if ($overlaps($armA, $colliders, 2) || $overlaps($armB, $colliders, 2)) {
+                    continue;
+                }
+                $colliders[] = $armA;
+                $colliders[] = $armB;
+                break;
+            }
         }
 
         // Restore a clean RNG state for other callers.
@@ -145,7 +190,7 @@ class WorldManager
             'h' => $h,
             'tile' => $tile,
             'colliders' => $colliders,
-            'spawn' => ['x' => intdiv($w, 2) * $tile + 16, 'y' => intdiv($h, 2) * $tile + 16],
+            'spawn' => ['x' => $spawnTx * $tile + 16, 'y' => $spawnTy * $tile + 16],
         ];
     }
 
@@ -481,6 +526,16 @@ class WorldManager
             return null;
         }
 
+        // The world row can disappear while a client is still connected (purge,
+        // restart, deleted from another tab). world_boxes has a FK to rooms, so
+        // inserting without this check would throw and previously killed the
+        // socket. Fail cleanly instead.
+        $exists = $this->pdo->prepare('SELECT 1 FROM rooms WHERE id = :id');
+        $exists->execute([':id' => $worldId]);
+        if ($exists->fetchColumn() === false) {
+            return null;
+        }
+
         $label = Validator::clean($label, 40) ?: ($nickname . "'s Tikar");
         $controlMode = in_array($controlMode, ['owner', 'everyone'], true) ? $controlMode : 'everyone';
 
@@ -497,21 +552,29 @@ class WorldManager
         );
 
         $id = $this->generateUuid();
-        $stmt = $this->pdo->prepare('
-            INSERT INTO world_boxes (id, world_id, room_id, owner_device_id, label, x, y, radius, control_mode)
-            VALUES (:id, :world_id, :room_id, :owner, :label, :x, :y, :radius, :control)
-        ');
-        $stmt->execute([
-            ':id' => $id,
-            ':world_id' => $worldId,
-            ':room_id' => $room['id'],
-            ':owner' => $deviceId,
-            ':label' => $label,
-            ':x' => $x,
-            ':y' => $y,
-            ':radius' => $radius,
-            ':control' => $controlMode,
-        ]);
+        try {
+            $stmt = $this->pdo->prepare('
+                INSERT INTO world_boxes (id, world_id, room_id, owner_device_id, label, x, y, radius, control_mode)
+                VALUES (:id, :world_id, :room_id, :owner, :label, :x, :y, :radius, :control)
+            ');
+            $stmt->execute([
+                ':id' => $id,
+                ':world_id' => $worldId,
+                ':room_id' => $room['id'],
+                ':owner' => $deviceId,
+                ':label' => $label,
+                ':x' => $x,
+                ':y' => $y,
+                ':radius' => $radius,
+                ':control' => $controlMode,
+            ]);
+        } catch (\Throwable $e) {
+            // Do not leave an orphaned 'box' room behind when the mat row fails
+            // (world deleted mid-flight, DB busy, constraint violation...).
+            $this->pdo->prepare('DELETE FROM rooms WHERE id = :id')->execute([':id' => $room['id']]);
+            error_log('[WorldManager placeBox] ' . $e->getMessage());
+            return null;
+        }
 
         $this->invalidateBoxes($worldId);
 

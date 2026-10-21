@@ -182,7 +182,7 @@ class JamriSearch {
 
     renderResults(container) {
         container.innerHTML = '';
-        const isJamming = this.player.mode === 'jamming';
+        const isJamming = this.isSharedSession();
 
         this.results.forEach((track, idx) => {
             const row = document.createElement('div');
@@ -255,7 +255,7 @@ class JamriSearch {
                 this.player.stopPreview();
 
                 const activeWs = this.ws || (window.JAMRI_APP && window.JAMRI_APP.wsClient);
-                const isCurrentlyJamming = this.player.mode === 'jamming' || !!(window.JAMRI_APP && window.JAMRI_APP.activeRoomId);
+                const isCurrentlyJamming = this.isSharedSession();
 
                 if (isCurrentlyJamming && window.JAMRI_APP && window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
                     window.JAMRI_APP.games.notifyPunishedAction('memutar lagu');
@@ -274,7 +274,7 @@ class JamriSearch {
             row.querySelector('.btn-add-queue').addEventListener('click', (e) => {
                 e.stopPropagation();
                 const activeWs = this.ws || (window.JAMRI_APP && window.JAMRI_APP.wsClient);
-                const isCurrentlyJamming = this.player.mode === 'jamming' || !!(window.JAMRI_APP && window.JAMRI_APP.activeRoomId);
+                const isCurrentlyJamming = this.isSharedSession();
 
                 if (isCurrentlyJamming && window.JAMRI_APP && window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
                     window.JAMRI_APP.games.notifyPunishedAction('menambah antrean');
@@ -309,7 +309,7 @@ class JamriSearch {
             row.querySelector('.btn-add-playlist').addEventListener('click', (e) => {
                 e.stopPropagation();
                 const activeWs = this.ws || (window.JAMRI_APP && window.JAMRI_APP.wsClient);
-                const isCurrentlyJamming = this.player.mode === 'jamming' || !!(window.JAMRI_APP && window.JAMRI_APP.activeRoomId);
+                const isCurrentlyJamming = this.isSharedSession();
 
                 if (isCurrentlyJamming && window.JAMRI_APP && window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
                     window.JAMRI_APP.games.notifyPunishedAction('menambah lagu ke Bank Musik');
@@ -427,6 +427,21 @@ class JamriSearch {
     }
 
     /**
+     * True when the user is listening together with other people — either a
+     * legacy jamming room OR a world mat. World mode never sets activeRoomId
+     * (the socket id is the world id), so checking only that flag silently sent
+     * every "add to queue"/"play now" into the local solo queue instead of the
+     * mat, which looked like the mat queue "not syncing".
+     */
+    isSharedSession() {
+        if (this.player && this.player.isSynced && this.player.isSynced()) return true;
+        const app = window.JAMRI_APP || {};
+        if (app.activeRoomId) return true;
+        // World mode: only a mat gives access to a shared queue.
+        return !!(app.activeWorldId && app.world && app.world.activeBox);
+    }
+
+    /**
      * Route imported tracks to the correct Bank Musik:
      * - Jamming room -> WebSocket bulk playlist_add
      * - Solo -> local soloPlaylist
@@ -434,7 +449,7 @@ class JamriSearch {
      */
     addTracksToBankMusik(tracks) {
         const activeWs = this.ws || (window.JAMRI_APP && window.JAMRI_APP.wsClient);
-        const isCurrentlyJamming = this.player.mode === 'jamming' || !!(window.JAMRI_APP && window.JAMRI_APP.activeRoomId);
+        const isCurrentlyJamming = this.isSharedSession();
 
         if (isCurrentlyJamming && window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
             window.JAMRI_APP.games.notifyPunishedAction('menambah lagu ke Bank Musik');

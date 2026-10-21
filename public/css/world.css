@@ -203,6 +203,72 @@
     border-radius: var(--radius-sm);
 }
 
+/* --- Tabbed chat (one panel, mat + world) --- */
+.world-chat-block {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1 1 auto;
+    min-height: 0;
+    margin-top: 4px;
+}
+
+.world-chat-tabs {
+    display: flex;
+    gap: 4px;
+    padding: 3px;
+    background: var(--bg-surface-elevated);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-full);
+    flex-shrink: 0;
+}
+
+.world-chat-tab {
+    flex: 1;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+    padding: 5px 10px;
+    border-radius: var(--radius-full);
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.world-chat-tab:hover {
+    color: var(--text-primary);
+}
+
+.world-chat-tab.active {
+    background: var(--primary);
+    color: #ffffff;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+}
+
+/* Mat tab dimmed while the player is not standing on a mat. */
+.world-chat-tab.needs-mat:not(.active) {
+    color: var(--text-muted);
+    opacity: 0.7;
+}
+
+.world-chat-panel {
+    display: none;
+    flex: 1 1 auto;
+    min-height: 0;
+    flex-direction: column;
+}
+
+.world-chat-panel.active {
+    display: flex;
+}
+
+.world-chat-panel .mat-chat-list {
+    flex: 1 1 auto;
+    max-height: none;
+}
+
 .mat-chat-row {
     font-size: 12px;
     line-height: 1.35;
@@ -275,7 +341,9 @@
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
     overflow: hidden;
-    background: #0b0f1a;
+    /* Bright daylight grass: the world must never look dark or murky. */
+    background: #86c973;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
 }
 
 #world-canvas {
@@ -296,9 +364,10 @@
     right: 10px;
     width: 150px;
     height: 100px;
-    border: 1px solid var(--border-color);
+    border: 2px solid rgba(255, 255, 255, 0.75);
     border-radius: var(--radius-sm);
-    background: rgba(11, 15, 26, 0.75);
+    background: rgba(134, 201, 115, 0.9);
+    box-shadow: 0 4px 12px rgba(24, 58, 30, 0.22);
     image-rendering: pixelated;
     z-index: 3;
     pointer-events: none;
@@ -313,9 +382,11 @@
     display: flex;
     gap: 6px;
     padding: 6px 10px;
-    background: rgba(11, 15, 26, 0.7);
-    border: 1px solid var(--border-subtle);
+    background: rgba(255, 255, 255, 0.88);
+    border: 1px solid rgba(46, 88, 52, 0.18);
     border-radius: var(--radius-full);
+    box-shadow: 0 6px 18px rgba(24, 58, 30, 0.18);
+    backdrop-filter: blur(4px);
     z-index: 3;
 }
 
@@ -331,8 +402,8 @@
 }
 
 .world-emote-btn:hover {
-    transform: scale(1.25);
-    background: rgba(255, 255, 255, 0.1);
+    transform: scale(1.25) translateY(-1px);
+    background: rgba(46, 88, 52, 0.1);
 }
 
 .world-loading {
@@ -343,9 +414,10 @@
     align-items: center;
     justify-content: center;
     gap: 10px;
-    color: var(--text-secondary);
+    color: #1f3b2a;
     font-size: 13px;
-    background: rgba(11, 15, 26, 0.85);
+    font-weight: 600;
+    background: rgba(240, 250, 234, 0.9);
     z-index: 2;
 }
 
@@ -379,6 +451,15 @@
 }
 
 @media (max-width: 768px) {
+    /* The mobile player dock stacks to 120px (components.css) while the global
+       --player-dock-height stays 84px, which made the world view overlap the
+       dock. Re-anchor both the view and the joystick to the real dock height. */
+    #world-view {
+        bottom: 120px;
+        padding: 8px 10px;
+        overflow-y: auto;
+    }
+
     .world-shell {
         height: 100%;
     }
@@ -389,14 +470,23 @@
 
     .world-joystick {
         display: block;
+        bottom: 144px;
     }
 
+    /* Stacked layout: the stage must keep a usable height instead of being
+       squeezed to nothing by the panel (it used to collapse to ~1px). */
     .world-body {
         flex-direction: column;
     }
 
+    .world-stage {
+        flex: 1 1 auto;
+        min-height: 220px;
+    }
+
     .mat-panel {
         width: 100%;
-        max-height: 40vh;
+        flex: 0 0 auto;
+        max-height: 34vh;
     }
 }

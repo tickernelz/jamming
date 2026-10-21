@@ -1468,7 +1468,34 @@ class WebSocketHandler implements MessageComponentInterface
     }
 
     /** Route world-protocol messages (movement + mats + zone selection). */
+    /**
+     * Entry point for world messages.
+     *
+     * The world branch in onMessage() runs BEFORE its try/catch, so any
+     * exception here (DB error, FK violation, bad payload) propagated into
+     * Ratchet and closed the whole connection — "gelar tikar" silently dropped
+     * the player. Every world action is now contained: the failure is logged and
+     * the client gets a notice instead of a disconnect.
+     */
     private function handleWorldMessage(ConnectionInterface $from, array $meta, string $type, array $data): void
+    {
+        try {
+            $this->dispatchWorldMessage($from, $meta, $type, $data);
+        } catch (\Throwable $e) {
+            error_log('[WebSocket world error] ' . $type . ': ' . $e->getMessage());
+            try {
+                $from->send(json_encode([
+                    'type' => 'notice',
+                    'message' => 'Aksi world gagal diproses. Coba lagi sebentar.',
+                    'level' => 'warning',
+                ]));
+            } catch (\Throwable $ignored) {
+                // Connection already gone; nothing left to notify.
+            }
+        }
+    }
+
+    private function dispatchWorldMessage(ConnectionInterface $from, array $meta, string $type, array $data): void
     {
         $worldId = $meta['room_id'];
         $resId = $from->resourceId;
@@ -1606,10 +1633,26 @@ class WebSocketHandler implements MessageComponentInterface
                 break;
 
             case 'ping':
-                $from->send(json_encode([
+                // In world mode the ping doubles as the playback heartbeat for the
+                // mat the player is standing on. Without track/state/position the
+                // client had nothing to correct against, so a player who walked
+                // into a mat mid-song never caught up with the others (legacy
+                // rooms already answer ping with the full playback snapshot).
+                $pong = [
                     'type' => 'pong',
                     'server_time' => (int)(microtime(true) * 1000),
-                ]));
+                ];
+                $activeBoxId = $this->worldManager->getActiveBox($worldId, $resId);
+                $activeBox = $activeBoxId !== null ? $this->worldManager->getBox($worldId, $activeBoxId) : null;
+                if ($activeBox !== null && isset($this->rooms[$activeBox['room_id']])) {
+                    $matRoomId = $activeBox['room_id'];
+                    $pong['box_id'] = $activeBox['id'];
+                    $pong['room_id'] = $matRoomId;
+                    $pong['position'] = $this->getCurrentPosition($matRoomId);
+                    $pong['state'] = $this->rooms[$matRoomId]['playback_state'] ?? 'stopped';
+                    $pong['track'] = $this->rooms[$matRoomId]['current_track'] ?? null;
+                }
+                $from->send(json_encode($pong));
                 break;
         }
     }
@@ -1688,34 +1731,49 @@ class WebSocketHandler implements MessageComponentInterface
     public function tickWorlds(): void
     {
         foreach ($this->worldManager->allWorldIds() as $worldId) {
-            // Resolve automatic zone membership from server-authoritative positions.
-            $this->resolveZones($worldId);
-
-            $avatars = $this->worldManager->snapshot($worldId);
-            $payload = json_encode([
-                'type' => 'world.snapshot',
-                't' => (int)(microtime(true) * 1000),
-                'avatars' => $avatars,
-            ]);
-
-            foreach ($this->clientMeta as $resId => $meta) {
-                if (($meta['mode'] ?? 'room') !== 'world' || $meta['room_id'] !== $worldId) {
-                    continue;
-                }
-                $conn = $this->findConnection($resId);
-                if ($conn !== null) {
-                    try {
-                        $conn->send($payload);
-                    } catch (\Throwable $e) {
-                        // Connection dropped mid-broadcast; ignore.
-                    }
-                }
+            // One failing world (DB hiccup, bad box row) must not stop the tick
+            // for every other world — or kill the periodic timer entirely.
+            try {
+                $this->tickWorld($worldId);
+            } catch (\Throwable $e) {
+                error_log('[WebSocket world tick] ' . $worldId . ': ' . $e->getMessage());
             }
         }
 
         // Occasional mat maintenance (roughly every 2 seconds at 15 Hz).
         if ((++$this->worldTickCounter % 30) === 0) {
-            $this->maintainMats();
+            try {
+                $this->maintainMats();
+            } catch (\Throwable $e) {
+                error_log('[WebSocket mat maintenance] ' . $e->getMessage());
+            }
+        }
+    }
+
+    private function tickWorld(string $worldId): void
+    {
+        // Resolve automatic zone membership from server-authoritative positions.
+        $this->resolveZones($worldId);
+
+        $avatars = $this->worldManager->snapshot($worldId);
+        $payload = json_encode([
+            'type' => 'world.snapshot',
+            't' => (int)(microtime(true) * 1000),
+            'avatars' => $avatars,
+        ]);
+
+        foreach ($this->clientMeta as $resId => $meta) {
+            if (($meta['mode'] ?? 'room') !== 'world' || $meta['room_id'] !== $worldId) {
+                continue;
+            }
+            $conn = $this->findConnection($resId);
+            if ($conn !== null) {
+                try {
+                    $conn->send($payload);
+                } catch (\Throwable $e) {
+                    // Connection dropped mid-broadcast; ignore.
+                }
+            }
         }
     }
 

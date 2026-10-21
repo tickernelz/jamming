@@ -13,6 +13,43 @@
  * client predicts locally for instant response and lerps remote avatars.
  */
 
+// ---------------------------------------------------------------------------
+// Tiny deterministic helpers used by the procedural art (no assets needed).
+// ---------------------------------------------------------------------------
+
+/** Stable 0..1 noise for a tile coordinate; same value on every client. */
+function hash2(x, y, seed = 0) {
+    let h = Math.imul(x | 0, 374761393) ^ Math.imul(y | 0, 668265263) ^ Math.imul(seed | 0, 1442695041);
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+/** Stable 0..1 hash for a string id (mat colours). */
+function hashStr(str) {
+    let h = 2166136261;
+    for (let i = 0; i < str.length; i++) {
+        h ^= str.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+    }
+    return (h >>> 0) / 4294967296;
+}
+
+/** Rounded-rect path helper (kept local so the canvas API stays portable). */
+function roundRect(ctx, x, y, w, h, r) {
+    const rr = Math.max(0, Math.min(r, w / 2, h / 2));
+    ctx.beginPath();
+    ctx.moveTo(x + rr, y);
+    ctx.lineTo(x + w - rr, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + rr);
+    ctx.lineTo(x + w, y + h - rr);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
+    ctx.lineTo(x + rr, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - rr);
+    ctx.lineTo(x, y + rr);
+    ctx.quadraticCurveTo(x, y, x + rr, y);
+    ctx.closePath();
+}
+
 class JamriWorld {
     static SPEED = 150;          // px per second
     static SEND_HZ = 12;         // position updates per second
@@ -48,8 +85,21 @@ class JamriWorld {
         // Phase 3/4 polish
         this.emotes = [];            // floating emote bubbles {id, emote, t}
         this.worldChat = [];         // global world chat log
+        this.chatTab = 'mat';        // active chat tab: 'mat' | 'world'
         this.minimap = null;
         this.minimapCtx = null;
+
+        // Animation + scene cache (bright daylight rendering)
+        this.now = 0;
+        this.moving = false;
+        this.walkPhase = 0;
+        this.camLook = { x: 0, y: 0 };
+        this.footTimer = 0;
+        this.noteTimer = 0;
+        this.particles = [];
+        this.bubbles = new Map();
+        this.decor = null;
+        this.plaza = { x: 0, y: 0, r: 0 };
     }
 
     // ------------------------------------------------------------------
@@ -58,6 +108,13 @@ class JamriWorld {
     enter(worldId, user) {
         this.worldId = worldId;
         this.user = user;
+        // Fresh scene state on every entry (re-entering must not inherit the
+        // previous world's particles/bubbles or stale tile cache).
+        this.particles = [];
+        this.bubbles.clear();
+        this.decor = null;
+        this.camLook = { x: 0, y: 0 };
+        this.walkPhase = 0;
         this.buildDom();
         this.bindInput();
         // connect() resets listeners and (re)binds all handlers.
@@ -106,7 +163,10 @@ class JamriWorld {
         });
         ws.on('room_init', (data) => this.onRoomInit(data));
         ws.on('chat_message', (data) => {
-            if (data.message) this.appendRoomChat(data.message);
+            if (data.message) {
+                this.appendRoomChat(data.message);
+                this.showBubble(data.message);
+            }
         });
         ws.on('queue_updated', (data) => {
             if (data.queue) this.renderQueue(data.queue);
@@ -123,12 +183,28 @@ class JamriWorld {
         ws.on('pause', (data) => this.player.syncJammingState(data.track || null, 'paused', data.position, data.server_time, true));
         ws.on('seek', (data) => this.player.syncJammingState(data.track || null, data.state, data.position, data.server_time, true));
         ws.on('track_change', (data) => {
-            if (data.track) this.player.playTrack(data.track, data.position || 0);
+            if (data.track) {
+                this.player.serverPlaybackState = data.state || 'playing';
+                this.player.serverBasePos = data.position || 0;
+                this.player.serverSyncTime = data.server_time || Date.now();
+                this.player.playTrack(data.track, data.position || 0);
+            }
         });
         ws.on('playback_stopped', () => this.player.stop());
         ws.on('loop_changed', (data) => {
             if (data.loop_mode) this.player.setLoopMode(data.loop_mode);
         });
+
+        // Playback heartbeat. connect() wipes every listener before re-binding,
+        // so without this the mat never re-synced after the initial room_init:
+        // someone joining mid-song drifted from the rest of the mat (legacy
+        // rooms already handled pong in app.js).
+        ws.on('pong', (data) => {
+            if (!this.activeBox) return;
+            if (document.hidden) return;
+            this.player.syncJammingState(data.track || null, data.state, data.position, data.server_time);
+        });
+
         ws.on('notice', (data) => {
             if (data.message && window.showToast) window.showToast(data.message, data.level || 'info');
         });
@@ -141,19 +217,46 @@ class JamriWorld {
         };
         if (data.queue) this.renderQueue(data.queue);
         if (data.online_users) this.renderUsers(data.online_users);
+
+        // Joining a mat mid-song must land on the SAME position as everyone else.
+        // playTrack(track, pos) alone is not reliable here: the YouTube bridge may
+        // still be initialising, and playTrack() then only queues the track and
+        // drops the start position (late joiners used to begin at 0:00).
         if (data.current_track) {
             const player = this.player;
-            const isSame = player.currentTrack && player.currentTrack.youtube_id === data.current_track.youtube_id;
+            const wantTrack = data.current_track;
+            const wantState = data.state || 'stopped';
+            const wantPos = data.position || 0;
+            const wantTime = data.server_time || Date.now();
+
+            player.serverPlaybackState = wantState;
+            player.serverBasePos = wantPos;
+            player.serverSyncTime = wantTime;
+
+            const isSame = player.currentTrack && player.currentTrack.youtube_id === wantTrack.youtube_id;
             if (isSame) {
-                player.syncJammingState(data.current_track, data.state, data.position, data.server_time, true);
+                player.syncJammingState(wantTrack, wantState, wantPos, wantTime, true);
             } else {
-                player.playTrack(data.current_track, data.position || 0);
-                if (data.state === 'paused') player.pause();
+                // Seed the server state BEFORE playTrack so the player knows it must
+                // not auto-play when the mat is paused.
+                player.serverPlaybackState = wantState;
+                player.playTrack(wantTrack, wantPos);
+                if (wantState !== 'playing') player.pause();
             }
+
+            // Re-apply after the engine is ready so the position sticks.
+            const apply = () => {
+                if (player.currentTrack && player.currentTrack.youtube_id === wantTrack.youtube_id) {
+                    player.syncJammingState(wantTrack, wantState, wantPos, wantTime, true);
+                }
+            };
+            setTimeout(apply, 900);
+            setTimeout(apply, 2200);
         } else {
             this.player.stop();
         }
         this.updatePanelRoomInfo();
+        this.setChatTab(this.chatTab || 'mat');
     }
 
     appendRoomChat(msg) {
@@ -178,6 +281,10 @@ class JamriWorld {
 
     renderQueue(queue) {
         this._queue = queue || [];
+        // search.js checks JAMRI_APP.roomQueue for duplicates before adding. The
+        // mat queue is the shared queue in world mode, so mirror it there or the
+        // same song can be queued twice and the two lists drift apart.
+        if (window.JAMRI_APP) window.JAMRI_APP.roomQueue = this._queue;
         const el = document.getElementById('mat-queue-list');
         if (!el) return;
         if (this._queue.length === 0) {
@@ -240,6 +347,26 @@ class JamriWorld {
         list.scrollTop = list.scrollHeight;
     }
 
+    /**
+     * WorkAdventure-style speech bubble above the avatar that wrote a message.
+     * Bubbles are keyed by avatar id and fade out on their own.
+     */
+    showBubble(msg) {
+        if (!msg || !msg.message) return;
+        const nick = msg.sender_nickname;
+        let id = null;
+        if (this.user && nick === this.user.nickname) {
+            id = this.myId;
+        } else {
+            for (const [avId, av] of this.avatars.entries()) {
+                if (av.nick === nick) { id = avId; break; }
+            }
+        }
+        if (id === null) return;
+        const text = String(msg.message).slice(0, 90);
+        this.bubbles.set(id, { text, t: performance.now() });
+    }
+
     sendEmote(emote) {
         this.send('world.emote', { emote });
         // Show it locally right away for instant feedback.
@@ -248,6 +375,10 @@ class JamriWorld {
 
     leave() {
         this.unbindInput();
+        if (this._resizeObserver) {
+            this._resizeObserver.disconnect();
+            this._resizeObserver = null;
+        }
         this.player.setMatVolumeScale(1);
         if (this.rafId) {
             cancelAnimationFrame(this.rafId);
@@ -283,7 +414,7 @@ class JamriWorld {
                         <span id="world-conn-dot" title="Status koneksi" style="display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--text-muted); flex-shrink:0;"></span>
                         <span id="world-name-label" class="world-name-label">World</span>
                         <span id="world-online-badge" class="world-online-badge">0 online</span>
-                        <span id="world-debug-badge" class="world-online-badge" title="Versi antarmuka & ukuran peta" style="background:var(--bg-surface-elevated);color:var(--text-muted);">v4</span>
+                        <span id="world-debug-badge" class="world-online-badge" title="Versi antarmuka & ukuran peta" style="background:var(--bg-surface-elevated);color:var(--text-muted);">v5</span>
                     </div>
                     <div class="world-hud-actions">
                         <button type="button" id="btn-place-mat" class="btn btn-primary btn-sm" title="Gelar tikar jamming di posisi Anda">
@@ -324,6 +455,9 @@ class JamriWorld {
                             <div class="spinner"></div>
                             <span>Memasuki world...</span>
                         </div>
+                        <div class="world-joystick" id="world-joystick">
+                            <div class="world-joystick-knob" id="world-joystick-knob"></div>
+                        </div>
                     </div>
 
                     <aside class="mat-panel" id="mat-panel">
@@ -336,28 +470,29 @@ class JamriWorld {
                         <div class="mat-queue-list" id="mat-queue-list">
                             <div class="mat-empty">Belum bergabung ke tikar.</div>
                         </div>
-                        <div class="mat-chat-title-label">Chat Tikar</div>
-                        <div class="mat-chat-list" id="mat-chat-list"></div>
-                        <form class="mat-chat-form" id="mat-chat-form">
-                            <input type="text" id="mat-chat-input" class="mat-chat-input" placeholder="Chat tikar..." maxlength="300" autocomplete="off" />
-                            <button type="submit" class="btn btn-primary btn-sm">Kirim</button>
-                        </form>
 
-                        <div class="mat-chat-title-label">Chat World</div>
-                        <div class="mat-chat-list" id="world-chat-list"></div>
-                        <form class="mat-chat-form" id="world-chat-form">
-                            <input type="text" id="world-chat-input" class="mat-chat-input" placeholder="Chat world..." maxlength="300" autocomplete="off" />
-                            <button type="submit" class="btn btn-outline btn-sm">Kirim</button>
-                        </form>
+                        <div class="world-chat-block">
+                            <div class="world-chat-tabs" role="tablist">
+                                <button type="button" class="world-chat-tab active" id="world-chat-tab-mat" role="tab"
+                                        aria-selected="true" aria-controls="world-chat-panel-mat" data-chat-tab="mat">Chat Tikar</button>
+                                <button type="button" class="world-chat-tab" id="world-chat-tab-world" role="tab"
+                                        aria-selected="false" aria-controls="world-chat-panel-world" data-chat-tab="world">Chat World</button>
+                            </div>
+                            <div class="world-chat-panel active" id="world-chat-panel-mat" role="tabpanel" aria-labelledby="world-chat-tab-mat">
+                                <div class="mat-chat-list" id="mat-chat-list"></div>
+                            </div>
+                            <div class="world-chat-panel" id="world-chat-panel-world" role="tabpanel" aria-labelledby="world-chat-tab-world">
+                                <div class="mat-chat-list" id="world-chat-list"></div>
+                            </div>
+                            <form class="mat-chat-form" id="world-chat-form">
+                                <input type="text" id="world-chat-input" class="mat-chat-input" placeholder="Chat tikar..." maxlength="300" autocomplete="off" />
+                                <button type="submit" class="btn btn-primary btn-sm" id="world-chat-send">Kirim</button>
+                            </form>
+                        </div>
                     </aside>
-                </div>
-
-                <div class="world-joystick" id="world-joystick">
-                    <div class="world-joystick-knob" id="world-joystick-knob"></div>
                 </div>
             </div>
         `;
-
         this.canvas = container.querySelector('#world-canvas');
         this.ctx = this.canvas.getContext('2d');
         this.minimap = container.querySelector('#world-minimap');
@@ -390,36 +525,81 @@ class JamriWorld {
             this.send('mat.pickup', { box_id: this.activeBox.id });
         });
 
-        const chatForm = container.querySelector('#mat-chat-form');
+        const chatForm = container.querySelector('#world-chat-form');
         if (chatForm) {
             chatForm.addEventListener('submit', (e) => {
-                e.preventDefault();
-                const input = document.getElementById('mat-chat-input');
-                const text = input.value.trim();
-                if (!text) return;
-                if (!this.activeBox) {
-                    if (window.showToast) window.showToast('Masuk ke tikar dulu untuk chat.', 'warning');
-                    return;
-                }
-                window.JAMRI_APP.wsClient.sendChatMessage(text);
-                input.value = '';
-            });
-        }
-
-        const worldChatForm = container.querySelector('#world-chat-form');
-        if (worldChatForm) {
-            worldChatForm.addEventListener('submit', (e) => {
                 e.preventDefault();
                 const input = document.getElementById('world-chat-input');
                 const text = input.value.trim();
                 if (!text) return;
-                this.send('world.chat', { message: text });
+                if (this.chatTab === 'world') {
+                    this.send('world.chat', { message: text });
+                } else {
+                    if (!this.activeBox) {
+                        if (window.showToast) window.showToast('Masuk ke tikar dulu untuk chat tikar.', 'warning');
+                        return;
+                    }
+                    window.JAMRI_APP.wsClient.sendChatMessage(text);
+                }
                 input.value = '';
             });
         }
 
+        container.querySelectorAll('.world-chat-tab').forEach(tab => {
+            tab.addEventListener('click', () => this.setChatTab(tab.dataset.chatTab));
+        });
+        this.setChatTab(this.chatTab || 'mat');
+
         window.addEventListener('resize', this._bound.resize = () => this.resize());
+
+        // The stage can also change size without a window resize (panel content
+        // growing, dock height changes, layout settling after the first paint).
+        // Without this the canvas buffer goes stale and the world is stretched.
+        if (typeof ResizeObserver !== 'undefined') {
+            if (this._resizeObserver) this._resizeObserver.disconnect();
+            this._resizeObserver = new ResizeObserver(() => this.resize());
+            const stage = document.getElementById('world-stage');
+            if (stage) this._resizeObserver.observe(stage);
+        }
+
         this.resize();
+    }
+
+    /**
+     * One chat panel, two tabs. The mat tab is only meaningful while standing on
+     * a mat, so the tab shows that state instead of silently swallowing input.
+     */
+    setChatTab(tab) {
+        const target = tab === 'world' ? 'world' : 'mat';
+        this.chatTab = target;
+
+        document.querySelectorAll('.world-chat-tab').forEach(el => {
+            const on = el.dataset.chatTab === target;
+            el.classList.toggle('active', on);
+            el.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+        document.querySelectorAll('.world-chat-panel').forEach(el => {
+            el.classList.toggle('active', el.id === `world-chat-panel-${target}`);
+        });
+
+        const input = document.getElementById('world-chat-input');
+        const send = document.getElementById('world-chat-send');
+        const onMat = !!this.activeBox;
+        if (input) {
+            input.placeholder = target === 'world'
+                ? 'Chat world...'
+                : (onMat ? 'Chat tikar...' : 'Chat tikar (masuk tikar dulu)');
+        }
+        if (send) {
+            send.className = target === 'world' ? 'btn btn-outline btn-sm' : 'btn btn-primary btn-sm';
+        }
+
+        const matTab = document.getElementById('world-chat-tab-mat');
+        if (matTab) matTab.classList.toggle('needs-mat', !onMat);
+
+        // Keep the newest message visible when switching tabs.
+        const list = document.getElementById(target === 'world' ? 'world-chat-list' : 'mat-chat-list');
+        if (list) list.scrollTop = list.scrollHeight;
     }
 
     openPlaceMatDialog() {
@@ -493,8 +673,14 @@ class JamriWorld {
         const stage = document.getElementById('world-stage');
         const w = stage ? stage.clientWidth : window.innerWidth;
         const h = stage ? stage.clientHeight : window.innerHeight;
-        this.canvas.width = Math.max(320, w);
-        this.canvas.height = Math.max(240, h);
+        // Render at device pixel ratio so text/emoji stay sharp on retina and
+        // high-DPI laptops; the CSS box stays 100% of the stage.
+        const dpr = Math.min(2, window.devicePixelRatio || 1);
+        this.dpr = dpr;
+        // Never force a size bigger than the stage: the canvas is stretched by
+        // CSS to 100%, so a mismatch would squash the world vertically.
+        this.canvas.width = Math.max(160, Math.round(w * dpr));
+        this.canvas.height = Math.max(120, Math.round(h * dpr));
         if (this.ctx) this.ctx.imageSmoothingEnabled = false;
     }
 
@@ -547,7 +733,7 @@ class JamriWorld {
                 this.online = data.online || 0;
                 this.updateHud(data.name, this.online, data.max_users);
                 const dbg = document.getElementById('world-debug-badge');
-                if (dbg) dbg.textContent = `v4 · ${this.map.w}×${this.map.h}`;
+                if (dbg) dbg.textContent = `v5 · ${this.map.w}×${this.map.h}`;
                 const connDot = document.getElementById('world-conn-dot');
                 if (connDot) connDot.style.background = 'var(--success)';
                 const loading = document.getElementById('world-loading');
@@ -592,6 +778,7 @@ class JamriWorld {
 
             case 'world.chat':
                 this.appendWorldChat(data.message);
+                this.showBubble(data.message);
                 break;
 
             case 'world.emote':
@@ -607,6 +794,8 @@ class JamriWorld {
                 this.closeChoiceDialog();
                 this.updatePanelRoomInfo();
                 if (this.statusEl) this.statusEl.classList.add('on-mat');
+                // Chat mat tab only makes sense on a mat: refresh placeholder state.
+                this.setChatTab(this.chatTab || 'mat');
                 if (window.showToast) window.showToast(`Masuk tikar: ${data.label || 'Tikar'}`, 'success');
                 break;
 
@@ -615,6 +804,11 @@ class JamriWorld {
                 this.player.setMatVolumeScale(1);
                 this.player.pause();
                 this.updatePanelRoomInfo();
+                this.setChatTab(this.chatTab || 'mat');
+                // Clear the shared queue mirror too, otherwise a stale mat queue
+                // makes search.js reject songs as "already queued".
+                this._queue = [];
+                if (window.JAMRI_APP) window.JAMRI_APP.roomQueue = [];
                 const ql = document.getElementById('mat-queue-list');
                 if (ql) ql.innerHTML = '<div class="mat-empty">Belum bergabung ke tikar.</div>';
                 const ul = document.getElementById('mat-users-list');
@@ -843,6 +1037,7 @@ class JamriWorld {
     }
 
     update(dt, now) {
+        this.now = now;
         // Direction from keyboard + joystick.
         let dx = 0, dy = 0;
         if (this.keys['a'] || this.keys['arrowleft']) dx -= 1;
@@ -851,10 +1046,14 @@ class JamriWorld {
         if (this.keys['s'] || this.keys['arrowdown']) dy += 1;
         if (this.joystick.active) { dx += this.joystick.x; dy += this.joystick.y; }
 
+        this.moving = false;
         if (dx !== 0 || dy !== 0) {
             const len = Math.hypot(dx, dy) || 1;
             const nx = this.me.x + (dx / len) * JamriWorld.SPEED * dt;
             const ny = this.me.y + (dy / len) * JamriWorld.SPEED * dt;
+
+            const beforeX = this.me.x;
+            const beforeY = this.me.y;
 
             // Axis-separated so you slide along walls instead of sticking.
             if (!this.blocked(nx, this.me.y)) this.me.x = nx;
@@ -862,15 +1061,32 @@ class JamriWorld {
 
             this.me.dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 2 : 3) : (dy > 0 ? 0 : 1);
 
+            // Walking animation state: bob phase + footstep dust.
+            this.moving = Math.hypot(this.me.x - beforeX, this.me.y - beforeY) > 0.01;
+            if (this.moving) {
+                this.walkPhase += dt * 11;
+                this.footTimer -= dt;
+                if (this.footTimer <= 0) {
+                    this.footTimer = 0.18;
+                    this.spawnDust(this.me.x, this.me.y + 14);
+                }
+            }
+
             if (now - this.lastSend > 1000 / JamriWorld.SEND_HZ) {
                 this.lastSend = now;
                 this.send('world.move', { x: this.me.x, y: this.me.y, dir: this.me.dir });
             }
         }
 
-        // Smooth camera.
-        this.cam.x += (this.me.x - this.cam.x) * Math.min(1, dt * 8);
-        this.cam.y += (this.me.y - this.cam.y) * Math.min(1, dt * 8);
+        // Camera: smoothed follow plus a small look-ahead in the facing
+        // direction so the world feels alive (WorkAdventure-ish).
+        const lookX = (this.me.dir === 2 ? 1 : this.me.dir === 3 ? -1 : 0) * 26;
+        const lookY = (this.me.dir === 0 ? 1 : this.me.dir === 1 ? -1 : 0) * 26;
+        const lookK = Math.min(1, dt * 3);
+        this.camLook.x += (lookX - this.camLook.x) * lookK;
+        this.camLook.y += (lookY - this.camLook.y) * lookK;
+        this.cam.x += (this.me.x + this.camLook.x - this.cam.x) * Math.min(1, dt * 8);
+        this.cam.y += (this.me.y + this.camLook.y - this.cam.y) * Math.min(1, dt * 8);
 
         // Proximity audio fade: volume scales by how centred you are on the mat.
         if (this.activeBox) {
@@ -884,148 +1100,547 @@ class JamriWorld {
         // Lerp remote avatars toward their latest server position.
         const t = Math.min(1, dt * JamriWorld.LERP);
         for (const av of this.avatars.values()) {
+            const prevX = av.rx;
+            const prevY = av.ry;
             av.rx += (av.x - av.rx) * t;
             av.ry += (av.y - av.ry) * t;
+            // Remote avatars animate when they actually move.
+            const speed = Math.hypot(av.rx - prevX, av.ry - prevY) / Math.max(dt, 0.0001);
+            av.moving = speed > 12;
+            if (av.moving) av.phase = (av.phase || 0) + dt * 11;
+        }
+
+        this.updateParticles(dt);
+    }
+
+    // ------------------------------------------------------------------
+    // Particles + ambient life (dust, music notes over mats)
+    // ------------------------------------------------------------------
+
+    spawnDust(x, y) {
+        if (this.particles.length > 90) return;
+        this.particles.push({
+            kind: 'dust',
+            x: x + (Math.random() - 0.5) * 10,
+            y,
+            vx: (Math.random() - 0.5) * 14,
+            vy: -8 - Math.random() * 10,
+            life: 0,
+            max: 0.45 + Math.random() * 0.2,
+            size: 2 + Math.floor(Math.random() * 2),
+        });
+    }
+
+    spawnNote(box) {
+        if (this.particles.length > 90) return;
+        const glyphs = ['♪', '♫', '♬'];
+        this.particles.push({
+            kind: 'note',
+            glyph: glyphs[Math.floor(Math.random() * glyphs.length)],
+            x: box.x + (Math.random() - 0.5) * 40,
+            y: box.y - 6,
+            vx: (Math.random() - 0.5) * 10,
+            vy: -18 - Math.random() * 10,
+            life: 0,
+            max: 1.6,
+            size: 12,
+        });
+    }
+
+    updateParticles(dt) {
+        for (const p of this.particles) {
+            p.life += dt;
+            p.x += p.vx * dt;
+            p.y += p.vy * dt;
+            if (p.kind === 'dust') p.vy += 6 * dt; else p.vy *= 0.99;
+        }
+        this.particles = this.particles.filter(p => p.life < p.max);
+
+        // Notes drifting off every mat that has listeners.
+        this.noteTimer -= dt;
+        if (this.noteTimer <= 0) {
+            this.noteTimer = 0.55;
+            for (const b of this.boxes) {
+                if (b.users > 0 || (this.activeBox && this.activeBox.id === b.id)) {
+                    this.spawnNote(b);
+                }
+            }
         }
     }
 
     // ------------------------------------------------------------------
-    // Rendering (procedural pixel art)
+    // Rendering (procedural pixel art, bright daylight)
     // ------------------------------------------------------------------
+
+    /**
+     * Camera zoom: keeps avatars readable like WorkAdventure instead of
+     * shrinking them into a huge empty field. Bigger viewports see more world.
+     */
+    zoomFor(W, H) {
+        // Target ~20 tiles across on desktop; never below 1.35 so avatars stay
+        // readable on small screens (WorkAdventure-like framing).
+        return Math.max(1.35, Math.min(2.2, Math.min(W / 620, H / 430)));
+    }
+
     render() {
         const ctx = this.ctx;
         if (!ctx || !this.map) return;
 
-        const W = this.canvas.width;
-        const H = this.canvas.height;
+        const dpr = this.dpr || 1;
+        const W = this.canvas.width / dpr;
+        const H = this.canvas.height / dpr;
         const tile = this.map.tile || JamriWorld.TILE;
+        const now = this.now || performance.now();
+        const zoom = this.zoomFor(W, H);
+        const viewW = W / zoom;
+        const viewH = H / zoom;
+
+        this.buildScene();
 
         // Camera top-left in world space, clamped to map bounds.
         const mapW = this.map.w * tile;
         const mapH = this.map.h * tile;
-        let camX = this.cam.x - W / 2;
-        let camY = this.cam.y - H / 2;
-        camX = Math.max(0, Math.min(camX, Math.max(0, mapW - W)));
-        camY = Math.max(0, Math.min(camY, Math.max(0, mapH - H)));
+        let camX = this.cam.x - viewW / 2;
+        let camY = this.cam.y - viewH / 2;
+        camX = Math.max(0, Math.min(camX, Math.max(0, mapW - viewW)));
+        camY = Math.max(0, Math.min(camY, Math.max(0, mapH - viewH)));
 
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.imageSmoothingEnabled = false;
+        ctx.textBaseline = 'middle';
 
-        // Background void.
-        ctx.fillStyle = '#0b0f1a';
+        // Soft grass beyond the map edge so the world never reads as a void.
+        ctx.fillStyle = '#6fae5f';
+        ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+        // World-space pass: zoom + device pixel ratio only. The draw helpers
+        // subtract camX/camY themselves (they emit screen-space coordinates), so
+        // adding a camera translate here would offset the scene twice.
+        const scale = zoom * dpr;
+        ctx.setTransform(scale, 0, 0, scale, 0, 0);
+
+        const startCol = Math.floor(camX / tile);
+        const endCol = Math.ceil((camX + viewW) / tile);
+        const startRow = Math.floor(camY / tile);
+        const endRow = Math.ceil((camY + viewH) / tile);
+
+        this.drawFloor(ctx, camX, camY, startCol, endCol, startRow, endRow, tile);
+        this.drawPlaza(ctx, camX, camY, tile);
+        this.drawDecor(ctx, camX, camY, viewW, viewH, now);
+        this.drawWalls(ctx, camX, camY, tile);
+        this.drawMats(ctx, camX, camY, now);
+        this.drawParticles(ctx, camX, camY);
+        this.drawAvatars(ctx, camX, camY, now, viewW);
+
+        // Screen-space pass: light + vignette stay fixed to the viewport.
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+        const sun = ctx.createRadialGradient(W * 0.5, H * 0.28, 0, W * 0.5, H * 0.28, Math.max(W, H) * 0.75);
+        sun.addColorStop(0, 'rgba(255, 249, 214, 0.16)');
+        sun.addColorStop(1, 'rgba(255, 249, 214, 0)');
+        ctx.fillStyle = sun;
         ctx.fillRect(0, 0, W, H);
 
-        // Floor tiles (checkerboard with subtle pixel noise).
-        const startCol = Math.floor(camX / tile);
-        const endCol = Math.ceil((camX + W) / tile);
-        const startRow = Math.floor(camY / tile);
-        const endRow = Math.ceil((camY + H) / tile);
+        const vig = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.45, W / 2, H / 2, Math.max(W, H) * 0.78);
+        vig.addColorStop(0, 'rgba(18, 48, 30, 0)');
+        vig.addColorStop(1, 'rgba(18, 48, 30, 0.14)');
+        ctx.fillStyle = vig;
+        ctx.fillRect(0, 0, W, H);
 
-        for (let ry = startRow; ry <= endRow; ry++) {
-            for (let rx = startCol; rx <= endCol; rx++) {
-                if (rx < 0 || ry < 0 || rx >= this.map.w || ry >= this.map.h) continue;
-                const even = (rx + ry) % 2 === 0;
-                ctx.fillStyle = even ? '#20263a' : '#1b2033';
-                ctx.fillRect(Math.round(rx * tile - camX), Math.round(ry * tile - camY), tile, tile);
-                // pixel speck
-                if ((rx * 7 + ry * 13) % 5 === 0) {
-                    ctx.fillStyle = even ? '#262d44' : '#222840';
-                    ctx.fillRect(Math.round(rx * tile - camX) + 6, Math.round(ry * tile - camY) + 8, 3, 3);
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        this.renderMinimap(camX, camY, viewW, viewH);
+    }
+
+    /** True when a tile is inside any collider (decor placement helper). */
+    tileBlocked(tx, ty) {
+        for (const c of this.map.colliders || []) {
+            if (tx >= c.x && tx < c.x + c.w && ty >= c.y && ty < c.y + c.h) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Build the deterministic decoration layer once per map: flowers, grass
+     * tufts, bushes and small trees. Same world id -> same scenery everywhere.
+     */
+    buildScene() {
+        if (this.decor && this.decorFor === this.map) return;
+        this.decorFor = this.map;
+
+        const tile = this.map.tile || JamriWorld.TILE;
+        const decor = [];
+
+        // Central plaza (the spawn area is always open ground). Computed first
+        // so decoration placement can avoid it.
+        const spawn = this.map.spawn || { x: this.map.w * tile / 2, y: this.map.h * tile / 2 };
+        this.plaza = { x: spawn.x, y: spawn.y, r: tile * 5 };
+
+        for (let ty = 1; ty < this.map.h - 1; ty++) {
+            for (let tx = 1; tx < this.map.w - 1; tx++) {
+                if (this.tileBlocked(tx, ty)) continue;
+                const h = hash2(tx, ty, 7);
+                const jx = (hash2(tx, ty, 3) - 0.5) * tile * 0.55;
+                const jy = (hash2(tx, ty, 5) - 0.5) * tile * 0.55;
+                const x = tx * tile + tile / 2 + jx;
+                const y = ty * tile + tile / 2 + jy;
+                // Keep the spawn plaza clear so the meeting area stays open.
+                if (this.plaza.r && Math.hypot(x - this.plaza.x, y - this.plaza.y) < this.plaza.r + 12) continue;
+                if (h < 0.045) {
+                    decor.push({ type: 'flower', x, y, v: Math.floor(hash2(tx, ty, 11) * 4) });
+                } else if (h < 0.068) {
+                    decor.push({ type: 'bush', x, y, v: Math.floor(hash2(tx, ty, 13) * 3) });
+                } else if (h < 0.150) {
+                    decor.push({ type: 'tuft', x, y, v: Math.floor(hash2(tx, ty, 17) * 3) });
+                } else if (h < 0.162) {
+                    decor.push({ type: 'tree', x, y, v: Math.floor(hash2(tx, ty, 19) * 2) });
                 }
             }
         }
+        decor.sort((a, b) => a.y - b.y);
+        this.decor = decor;
+    }
 
-        // Colliders / walls.
+    drawFloor(ctx, camX, camY, startCol, endCol, startRow, endRow, tile) {
+        // Three grass tones picked per tile; no hard checkerboard, just soft
+        // patches like a hand-painted tileset.
+        const tones = ['#8ed07a', '#86c973', '#96d883'];
+        for (let ry = startRow; ry <= endRow; ry++) {
+            for (let rx = startCol; rx <= endCol; rx++) {
+                if (rx < 0 || ry < 0 || rx >= this.map.w || ry >= this.map.h) continue;
+                const h = hash2(rx, ry, 1);
+                const px = Math.round(rx * tile - camX);
+                const py = Math.round(ry * tile - camY);
+                ctx.fillStyle = tones[Math.floor(h * tones.length) % tones.length];
+                ctx.fillRect(px, py, tile, tile);
+
+                // Fine grass blade detail (2px, deterministic).
+                if (hash2(rx, ry, 23) < 0.5) {
+                    ctx.fillStyle = 'rgba(58, 122, 62, 0.20)';
+                    const bx = px + 4 + Math.floor(hash2(rx, ry, 29) * (tile - 10));
+                    const by = py + 6 + Math.floor(hash2(rx, ry, 31) * (tile - 14));
+                    ctx.fillRect(bx, by, 2, 5);
+                    ctx.fillRect(bx + 5, by + 3, 2, 4);
+                }
+                // Occasional light moss patch.
+                if (hash2(rx, ry, 37) > 0.93) {
+                    ctx.fillStyle = 'rgba(198, 240, 160, 0.35)';
+                    ctx.fillRect(px + 8, py + 10, 10, 7);
+                }
+            }
+        }
+    }
+
+    /** Sand/stone plaza around the spawn so the centre reads as a meeting spot. */
+    drawPlaza(ctx, camX, camY, tile) {
+        const p = this.plaza;
+        if (!p || !p.r) return;
+        const sx = p.x - camX;
+        const sy = p.y - camY;
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(sx, sy, p.r + 4, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(70, 108, 62, 0.20)';
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.arc(sx, sy, p.r, 0, Math.PI * 2);
+        ctx.fillStyle = '#e6d7ae';
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.arc(sx, sy, p.r - 10, 0, Math.PI * 2);
+        ctx.fillStyle = '#efe3c2';
+        ctx.fill();
+        ctx.restore();
+
+        // Pixel paving stones, clipped to the plaza.
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(sx, sy, p.r - 12, 0, Math.PI * 2);
+        ctx.clip();
+        const cell = 22;
+        for (let gy = -p.r; gy < p.r; gy += cell) {
+            for (let gx = -p.r; gx < p.r; gx += cell) {
+                const h = hash2(Math.round(gx), Math.round(gy), 41);
+                if (h > 0.55) {
+                    ctx.fillStyle = h > 0.8 ? '#e2d3a6' : '#e8dcb8';
+                    ctx.fillRect(Math.round(sx + gx) + 1, Math.round(sy + gy) + 1, cell - 3, cell - 3);
+                }
+            }
+        }
+        ctx.restore();
+
+        // Warm rim highlight.
+        ctx.beginPath();
+        ctx.arc(sx, sy, p.r - 2, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+    }
+
+    drawDecor(ctx, camX, camY, W, H, now) {
+        const sway = Math.sin(now / 900) * 1.2;
+        for (const d of this.decor || []) {
+            const x = Math.round(d.x - camX);
+            const y = Math.round(d.y - camY);
+            if (x < -40 || y < -40 || x > W + 40 || y > H + 40) continue;
+
+            if (d.type === 'tuft') {
+                ctx.fillStyle = 'rgba(56, 116, 58, 0.55)';
+                ctx.fillRect(x - 4, y - 4, 2, 6);
+                ctx.fillRect(x + 1, y - 6, 2, 8);
+                ctx.fillRect(x + 5, y - 3, 2, 5);
+            } else if (d.type === 'flower') {
+                const colors = ['#fff1a8', '#ffd0e0', '#c9b6ff', '#ffffff'];
+                ctx.fillStyle = 'rgba(48, 104, 52, 0.55)';
+                ctx.fillRect(x - 1, y, 2, 6);
+                ctx.fillStyle = colors[d.v % colors.length];
+                ctx.fillRect(x - 3, y - 4, 6, 5);
+                ctx.fillStyle = 'rgba(255, 214, 92, 0.95)';
+                ctx.fillRect(x - 1, y - 3, 2, 2);
+            } else if (d.type === 'bush') {
+                ctx.fillStyle = 'rgba(38, 92, 46, 0.22)';
+                ctx.fillRect(x - 12, y + 8, 24, 5);
+                ctx.fillStyle = '#4f9a56';
+                ctx.fillRect(x - 12, y - 6, 24, 14);
+                ctx.fillStyle = '#63b167';
+                ctx.fillRect(x - 9, y - 10, 18, 8);
+                ctx.fillStyle = '#79c67a';
+                ctx.fillRect(x - 6, y - 12, 12, 5);
+                ctx.fillStyle = '#3f8449';
+                ctx.fillRect(x - 12, y + 5, 24, 3);
+            } else if (d.type === 'tree') {
+                // Pixel tree: trunk + layered canopy, sways slightly.
+                ctx.fillStyle = 'rgba(30, 78, 40, 0.25)';
+                ctx.fillRect(x - 16, y + 14, 32, 7);
+                ctx.fillStyle = '#8a5a34';
+                ctx.fillRect(x - 4, y - 2, 8, 20);
+                ctx.fillStyle = '#a06b3e';
+                ctx.fillRect(x - 4, y - 2, 3, 20);
+                const s = sway * (d.v ? 1 : -1);
+                ctx.fillStyle = '#3f8b4a';
+                ctx.fillRect(x - 18 + s, y - 14, 36, 16);
+                ctx.fillStyle = '#4f9d55';
+                ctx.fillRect(x - 14 + s, y - 22, 28, 12);
+                ctx.fillStyle = '#66b566';
+                ctx.fillRect(x - 9 + s, y - 27, 18, 9);
+                ctx.fillStyle = '#7fcb78';
+                ctx.fillRect(x - 5 + s, y - 25, 10, 4);
+            }
+        }
+    }
+
+    drawWalls(ctx, camX, camY, tile) {
         for (const c of this.map.colliders || []) {
             const x = Math.round(c.x * tile - camX);
             const y = Math.round(c.y * tile - camY);
             const w = c.w * tile;
             const h = c.h * tile;
-            ctx.fillStyle = '#3b2c1e';
+
+            // Ground shadow, offset to the bottom-right (light comes from above).
+            ctx.fillStyle = 'rgba(28, 62, 34, 0.22)';
+            ctx.fillRect(x + 5, y + h - 3, w, 10);
+
+            // Low stone kerb.
+            ctx.fillStyle = '#cdb894';
             ctx.fillRect(x, y, w, h);
-            ctx.fillStyle = '#5a4430';
-            ctx.fillRect(x, y, w, 6);
-            ctx.fillStyle = '#2a1f15';
-            ctx.fillRect(x, y + h - 5, w, 5);
-        }
+            ctx.fillStyle = '#e3d2b0';
+            ctx.fillRect(x, y + h - 9, w, 9);
 
-        // Mats (jamming boxes) drawn on the floor, under avatars.
-        for (const b of this.boxes) {
-            const sx = b.x - camX;
-            const sy = b.y - camY;
-            const r = b.r || 96;
-            const isActive = this.activeBox && this.activeBox.id === b.id;
+            // Hedge body sitting on the kerb.
+            const top = Math.max(8, Math.round(h * 0.28));
+            ctx.fillStyle = '#3f8b4a';
+            ctx.fillRect(x, y + top, w, h - top);
+            ctx.fillStyle = '#4f9d55';
+            ctx.fillRect(x, y + top, w, Math.max(4, Math.round((h - top) * 0.55)));
+            ctx.fillStyle = '#66b566';
+            ctx.fillRect(x + 2, y + top - 4, Math.max(0, w - 4), 6);
 
-            ctx.beginPath();
-            ctx.arc(sx, sy, r, 0, Math.PI * 2);
-            ctx.fillStyle = isActive ? 'rgba(99,102,241,0.20)' : 'rgba(148,163,184,0.12)';
-            ctx.fill();
-            ctx.lineWidth = isActive ? 4 : 2;
-            ctx.strokeStyle = isActive ? '#818cf8' : 'rgba(148,163,184,0.55)';
-            ctx.stroke();
-
-            // Checkerboard mat pattern (pixel style).
-            ctx.save();
-            ctx.beginPath();
-            ctx.arc(sx, sy, r - 3, 0, Math.PI * 2);
-            ctx.clip();
-            const cell = 16;
-            for (let gy = -r; gy < r; gy += cell) {
-                for (let gx = -r; gx < r; gx += cell) {
-                    if (((gx / cell) + (gy / cell)) % 2 === 0) {
-                        ctx.fillStyle = isActive ? 'rgba(129,140,248,0.12)' : 'rgba(148,163,184,0.07)';
-                        ctx.fillRect(Math.round(sx + gx), Math.round(sy + gy), cell, cell);
+            // Leafy pixel clumps so large blocks do not read as flat slabs.
+            const step = 12;
+            let i = 0;
+            for (let bx = x + 3; bx < x + w - 6; bx += step) {
+                for (let by = y + top + 3; by < y + h - 12; by += step) {
+                    const hsh = hash2(i++, by, 53);
+                    if (hsh > 0.55) {
+                        ctx.fillStyle = hsh > 0.8 ? 'rgba(126, 200, 118, 0.75)' : 'rgba(56, 122, 60, 0.55)';
+                        ctx.fillRect(bx, by, 5, 4);
                     }
                 }
             }
+
+            // Sunlit rim on top.
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+            ctx.fillRect(x, y + top - 6, w, 3);
+        }
+    }
+
+    drawMats(ctx, camX, camY, now) {
+        for (const b of this.boxes) {
+            // Guard against a partial box payload (e.g. a zone.enter stub that
+            // only carries id/label): a missing x/y would make the gradient
+            // throw and kill the whole render loop.
+            if (!Number.isFinite(b.x) || !Number.isFinite(b.y)) continue;
+            const sx = b.x - camX;
+            const sy = b.y - camY;
+            const r = Number.isFinite(b.r) && b.r > 0 ? b.r : (Number.isFinite(b.radius) && b.radius > 0 ? b.radius : 96);
+            const isActive = this.activeBox && this.activeBox.id === b.id;
+            const hue = Math.floor(hashStr(b.id || b.label || 'mat') * 360);
+            const pulse = 0.5 + 0.5 * Math.sin(now / 700 + hue);
+
+            // Soft warm glow so mats pop against the grass (kept low so the disc
+            // still reads as translucent ground, not a pasted-on panel).
+            const glow = ctx.createRadialGradient(sx, sy, r * 0.55, sx, sy, r * 1.12);
+            glow.addColorStop(0, `hsla(${hue}, 70%, 60%, ${isActive ? 0.18 : 0.10})`);
+            glow.addColorStop(1, `hsla(${hue}, 70%, 60%, 0)`);
+            ctx.fillStyle = glow;
+            ctx.beginPath();
+            ctx.arc(sx, sy, r * 1.12, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Rug body: a genuinely translucent disc (the grass shows through),
+            // just a touch darker than the ground. No checkerboard / "fake
+            // transparency" pattern — it read as grey squares, not a rug.
+            ctx.beginPath();
+            ctx.arc(sx, sy, r, 0, Math.PI * 2);
+            ctx.fillStyle = isActive
+                ? `hsla(${hue}, 52%, 34%, 0.26)`
+                : `hsla(${hue}, 45%, 30%, 0.17)`;
+            ctx.fill();
+
+            // Soft inner shading toward the rim so the disc has depth without
+            // any hard-edged tiles.
+            const shade = ctx.createRadialGradient(sx, sy, r * 0.35, sx, sy, r);
+            shade.addColorStop(0, 'rgba(255, 255, 255, 0.05)');
+            shade.addColorStop(1, 'rgba(0, 0, 0, 0.10)');
+            ctx.beginPath();
+            ctx.arc(sx, sy, r, 0, Math.PI * 2);
+            ctx.fillStyle = shade;
+            ctx.fill();
+
+            // Border: clean circle, thicker/brighter when you are standing on it.
+            ctx.beginPath();
+            ctx.arc(sx, sy, r - 1, 0, Math.PI * 2);
+            ctx.lineWidth = isActive ? 4 : 2.5;
+            ctx.strokeStyle = isActive
+                ? `hsla(${hue}, 85%, 58%, ${0.75 + pulse * 0.25})`
+                : `hsla(${hue}, 60%, 55%, 0.55)`;
+            ctx.stroke();
+
+            // Subtle dashed inner ring for the "zone" feel.
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(sx, sy, r - 12, 0, Math.PI * 2);
+            ctx.setLineDash([8, 10]);
+            ctx.lineWidth = 1.5;
+            ctx.strokeStyle = `hsla(${hue}, 50%, 45%, 0.22)`;
+            ctx.stroke();
             ctx.restore();
 
-            // Label above the mat.
-            ctx.font = 'bold 12px sans-serif';
+            // Label pill above the mat.
+            const label = `${b.label || 'Tikar'}${b.users ? ' · ' + b.users : ''}`;
+            ctx.font = 'bold 12px system-ui, sans-serif';
             ctx.textAlign = 'center';
-            const label = `${b.label || 'Tikar'}${b.users ? ' (' + b.users + ')' : ''}`;
             const tw = ctx.measureText(label).width;
-            ctx.fillStyle = 'rgba(0,0,0,0.6)';
-            ctx.fillRect(sx - tw / 2 - 5, sy - r - 20, tw + 10, 16);
-            ctx.fillStyle = isActive ? '#c7d2fe' : '#cbd5e1';
-            ctx.fillText(label, sx, sy - r - 8);
+            const lx = sx - tw / 2 - 8;
+            const ly = sy - r - 26;
+            roundRect(ctx, lx, ly, tw + 16, 20, 10);
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.94)';
+            ctx.fill();
+            ctx.strokeStyle = `hsla(${hue}, 70%, 55%, 0.9)`;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            ctx.fillStyle = `hsl(${hue}, 55%, 32%)`;
+            ctx.fillText(label, sx, ly + 10);
         }
+    }
 
-        // Draw entities sorted by Y (painter's algorithm).
+    drawParticles(ctx, camX, camY) {
+        for (const p of this.particles) {
+            const x = p.x - camX;
+            const y = p.y - camY;
+            const t = p.life / p.max;
+            if (p.kind === 'dust') {
+                ctx.globalAlpha = (1 - t) * 0.5;
+                ctx.fillStyle = '#e8e0c8';
+                ctx.fillRect(Math.round(x), Math.round(y), p.size, p.size);
+            } else {
+                ctx.globalAlpha = (1 - t) * 0.9;
+                ctx.font = `bold ${p.size}px system-ui, sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillStyle = '#2f7a4d';
+                ctx.fillText(p.glyph, Math.round(x), Math.round(y));
+            }
+        }
+        ctx.globalAlpha = 1;
+    }
+
+    drawAvatars(ctx, camX, camY, now, viewW) {
         const entities = [];
         for (const [id, av] of this.avatars.entries()) {
-            entities.push({ id, x: av.rx, y: av.ry, emoji: av.emoji, nick: av.nick, me: false, owner: av.owner });
+            entities.push({
+                id, x: av.rx, y: av.ry, emoji: av.emoji, nick: av.nick,
+                me: false, owner: av.owner, moving: !!av.moving, phase: av.phase || 0,
+                dir: av.dir || 0,
+            });
         }
-        entities.push({ id: this.myId, x: this.me.x, y: this.me.y, emoji: this.user.emoji, nick: this.user.nickname, me: true, owner: !!this.iAmOwner });
+        entities.push({
+            id: this.myId, x: this.me.x, y: this.me.y, emoji: this.user.emoji,
+            nick: this.user.nickname, me: true, owner: !!this.iAmOwner,
+            moving: this.moving, phase: this.walkPhase, dir: this.me.dir || 0,
+        });
         entities.sort((a, b) => a.y - b.y);
 
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        const now = performance.now();
         for (const e of entities) {
             const sx = Math.round(e.x - camX);
             const sy = Math.round(e.y - camY);
 
-            // Shadow ellipse (pixel style).
-            ctx.fillStyle = 'rgba(0,0,0,0.35)';
-            ctx.fillRect(sx - 12, sy + 12, 24, 6);
+            // Walk bob: 3px hop while moving, gentle idle breathing otherwise.
+            const bob = e.moving
+                ? Math.abs(Math.sin(e.phase)) * 3
+                : Math.sin(now / 800 + (e.id || 0)) * 0.9;
 
-            // Emoji avatar.
-            ctx.font = '30px serif';
-            ctx.fillText(e.emoji || '🎧', sx, sy);
+            // Ground shadow (shrinks as the avatar hops).
+            const shadowW = 26 - bob * 1.2;
+            ctx.fillStyle = 'rgba(26, 58, 36, 0.26)';
+            ctx.beginPath();
+            ctx.ellipse(sx, sy + 15, shadowW / 2, 5, 0, 0, Math.PI * 2);
+            ctx.fill();
 
-            // Name label.
-            ctx.font = 'bold 11px sans-serif';
+            // Highlight ring under your own avatar so you never lose yourself.
+            if (e.me) {
+                ctx.beginPath();
+                ctx.ellipse(sx, sy + 15, 17, 7, 0, 0, Math.PI * 2);
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+                ctx.lineWidth = 2.5;
+                ctx.stroke();
+            }
+
+            // Emoji avatar, flipped horizontally when facing left.
+            ctx.save();
+            ctx.translate(sx, sy - bob);
+            if (e.dir === 3) ctx.scale(-1, 1);
+            ctx.font = '30px "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(e.emoji || '🎧', 0, 0);
+            ctx.restore();
+
+            // Name pill (light, WorkAdventure-like).
+            ctx.font = 'bold 11px system-ui, sans-serif';
+            ctx.textAlign = 'center';
             const label = e.nick || '';
             const tw = ctx.measureText(label).width;
-            ctx.fillStyle = 'rgba(0,0,0,0.55)';
-            ctx.fillRect(sx - tw / 2 - 4, sy - 30, tw + 8, 14);
-            ctx.fillStyle = e.me ? '#8ab4ff' : '#e5e7eb';
-            ctx.fillText(label, sx, sy - 23);
+            const ny = sy - 34 - bob;
+            roundRect(ctx, sx - tw / 2 - 6, ny - 7, tw + 12, 15, 7);
+            ctx.fillStyle = e.me ? 'rgba(37, 99, 235, 0.92)' : 'rgba(255, 255, 255, 0.92)';
+            ctx.fill();
+            ctx.fillStyle = e.me ? '#ffffff' : '#1f3b2a';
+            ctx.fillText(label, sx, ny + 0.5);
 
-            // Owner crown: the world host / mat owner is highlighted.
             if (e.owner) {
-                ctx.font = '13px serif';
-                ctx.fillText('👑', sx + tw / 2 + 10, sy - 23);
+                ctx.font = '13px "Segoe UI Emoji", "Apple Color Emoji", serif';
+                ctx.fillText('👑', sx + tw / 2 + 12, ny);
             }
 
             // Floating emote above the avatar (fades + rises).
@@ -1034,21 +1649,77 @@ class JamriWorld {
                 const age = (now - em.t) / 1000;
                 if (age < 2.2) {
                     ctx.globalAlpha = Math.max(0, 1 - age / 2.2);
-                    ctx.font = '24px serif';
-                    ctx.fillText(em.emote, sx, sy - 44 - age * 18);
+                    ctx.font = '24px "Segoe UI Emoji", "Apple Color Emoji", serif';
+                    ctx.fillText(em.emote, sx, sy - 52 - age * 20);
                     ctx.globalAlpha = 1;
+                }
+            }
+
+            // Chat bubble (speech) above everything else for that avatar.
+            const bub = this.bubbles.get(e.id);
+            if (bub) {
+                const age = (now - bub.t) / 1000;
+                if (age < 6) {
+                    const fade = age > 5 ? Math.max(0, 1 - (age - 5)) : 1;
+                    ctx.globalAlpha = fade;
+                    ctx.font = '12px system-ui, sans-serif';
+                    const text = bub.text;
+                    const maxW = 190;
+                    // Wrap to at most 3 lines.
+                    const lines = [];
+                    let cur = '';
+                    for (const word of text.split(/\s+/)) {
+                        const next = cur ? cur + ' ' + word : word;
+                        if (ctx.measureText(next).width > maxW - 18 && cur) {
+                            lines.push(cur);
+                            cur = word;
+                            if (lines.length === 3) break;
+                        } else {
+                            cur = next;
+                        }
+                    }
+                    if (lines.length < 3 && cur) lines.push(cur);
+
+                    const bw = Math.min(maxW, Math.max(...lines.map(l => ctx.measureText(l).width)) + 18);
+                    const bh = lines.length * 15 + 10;
+                    const viewRight = camX + (viewW || this.canvas.width);
+                    const bx = Math.max(camX + 4, Math.min(sx - bw / 2, viewRight - bw - 4));
+                    const by = sy - 56 - bob - bh;
+
+                    roundRect(ctx, bx, by, bw, bh, 8);
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.97)';
+                    ctx.fill();
+                    ctx.strokeStyle = 'rgba(70, 110, 80, 0.35)';
+                    ctx.lineWidth = 1.5;
+                    ctx.stroke();
+
+                    // Tail pointing at the speaker.
+                    ctx.beginPath();
+                    ctx.moveTo(sx - 5, by + bh);
+                    ctx.lineTo(sx + 5, by + bh);
+                    ctx.lineTo(sx, by + bh + 7);
+                    ctx.closePath();
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.97)';
+                    ctx.fill();
+
+                    ctx.fillStyle = '#1f3b2a';
+                    ctx.textAlign = 'center';
+                    lines.forEach((line, i) => {
+                        ctx.fillText(line, bx + bw / 2, by + 13 + i * 15);
+                    });
+                    ctx.globalAlpha = 1;
+                } else {
+                    this.bubbles.delete(e.id);
                 }
             }
         }
 
         // Drop expired emotes.
         this.emotes = this.emotes.filter(x => (now - x.t) < 2200);
-
-        this.renderMinimap(camX, camY, W, H);
     }
 
     /** Small corner minimap: world bounds, walls, mats and every avatar. */
-    renderMinimap(camX, camY, W, H) {
+    renderMinimap(camX, camY, viewW, viewH) {
         const m = this.minimap;
         const mctx = this.minimapCtx;
         if (!m || !mctx || !this.map) return;
@@ -1061,11 +1732,11 @@ class JamriWorld {
         const sy = mh / mapH;
 
         mctx.clearRect(0, 0, mw, mh);
-        mctx.fillStyle = 'rgba(11,15,26,0.75)';
+        mctx.fillStyle = 'rgba(120, 186, 118, 0.92)';
         mctx.fillRect(0, 0, mw, mh);
 
         // Walls.
-        mctx.fillStyle = 'rgba(120,110,90,0.8)';
+        mctx.fillStyle = 'rgba(232, 216, 178, 0.95)';
         for (const c of this.map.colliders || []) {
             mctx.fillRect(c.x * (this.map.tile || 32) * sx, c.y * (this.map.tile || 32) * sy,
                 c.w * (this.map.tile || 32) * sx, c.h * (this.map.tile || 32) * sy);
@@ -1075,23 +1746,26 @@ class JamriWorld {
         for (const b of this.boxes) {
             mctx.beginPath();
             mctx.arc(b.x * sx, b.y * sy, Math.max(3, (b.r || 96) * sx), 0, Math.PI * 2);
-            mctx.strokeStyle = (this.activeBox && this.activeBox.id === b.id) ? '#818cf8' : 'rgba(148,163,184,0.7)';
+            mctx.fillStyle = (this.activeBox && this.activeBox.id === b.id)
+                ? 'rgba(99, 102, 241, 0.45)' : 'rgba(255, 255, 255, 0.45)';
+            mctx.fill();
+            mctx.strokeStyle = (this.activeBox && this.activeBox.id === b.id) ? '#4f46e5' : 'rgba(46, 88, 52, 0.7)';
             mctx.lineWidth = 1.5;
             mctx.stroke();
         }
 
         // Avatars.
         for (const av of this.avatars.values()) {
-            mctx.fillStyle = '#94a3b8';
+            mctx.fillStyle = '#2e6b3c';
             mctx.fillRect(av.rx * sx - 1.5, av.ry * sy - 1.5, 3, 3);
         }
-        mctx.fillStyle = '#8ab4ff';
+        mctx.fillStyle = '#2563eb';
         mctx.fillRect(this.me.x * sx - 2.5, this.me.y * sy - 2.5, 5, 5);
 
         // Camera viewport rectangle.
-        mctx.strokeStyle = 'rgba(255,255,255,0.25)';
+        mctx.strokeStyle = 'rgba(30, 58, 36, 0.45)';
         mctx.lineWidth = 1;
-        mctx.strokeRect(camX * sx, camY * sy, W * sx, H * sy);
+        mctx.strokeRect(camX * sx, camY * sy, viewW * sx, viewH * sy);
     }
 }
 
