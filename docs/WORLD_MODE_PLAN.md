@@ -358,9 +358,24 @@ tile 16px dihapus karena terbaca sebagai "kotak-kotak / transparansi palsu".
 Sisa penanda: ring luar (lebih tebal saat aktif) + ring putus-putus tipis + label pill.
 Dijaga oleh `tests/world_visual_check.mjs` (menolak `ctx.clip()` bertile dan alpha > 0.35).
 
+### 10.6 Snapshot join yang tertunda tidak boleh menimpa state baru
 
+`onRoomInit()` memasang `setTimeout(apply, 900)` dan `setTimeout(apply, 2200)`
+supaya posisi awal menempel setelah bridge YouTube siap. Timer itu **tidak pernah
+dibatalkan**, jadi kalau user play/pause/seek tepat setelah masuk tikar (atau
+keluar-masuk tikar berulang), snapshot lama diterapkan ulang dan mengembalikan
+state yang sudah usang — persis gejala "keluar-masuk bikin sinkronnya rusak,
+jadi kaya play masing-masing".
 
+Perbaikan: timer dilacak di `this._matApplyTimers`, dibatalkan lewat
+`_clearMatApplyTimers()` pada `onRoomInit()` berikutnya, `zone.exit`, dan
+`leave()`; dan `apply()` sendiri batal bila `player.serverSyncTime > wantTime`
+(artinya sudah ada state yang lebih baru).
 
+Dijaga oleh `tests/world_playback_sync_check.mjs`. Verifikasi protokol
+(`scratch/qa_world_pair.mjs`, 1 browser + 2 peer WS): pause → keluar-masuk 6× →
+tetap `paused` di 88.36; resume@60 → `playing` 61.50; late joiner C masuk di
+62.10 (+2.97 s) → proyeksi 65.07 vs B 64.56.
 
 ---
 

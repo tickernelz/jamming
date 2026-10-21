@@ -17,10 +17,60 @@ final class RateLimiter
 {
     private string $storageDir;
     private array $buckets = [];
+    private bool $dirty = false;
 
     public function __construct(?string $storageDir = null)
     {
         $this->storageDir = $storageDir ?? (dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data');
+        $this->load();
+    }
+
+    /**
+     * Restore buckets written by a previous PHP worker.
+     *
+     * HTTP endpoints run in a fresh process per request, so an in-memory-only
+     * map meant every request started with an empty bucket and the limits never
+     * triggered (room creation, chat, search, ...). The WS daemon is long-lived
+     * and simply keeps its map in memory.
+     */
+    private function load(): void
+    {
+        $file = $this->storageFile();
+        if (!is_file($file)) {
+            return;
+        }
+        $raw = @file_get_contents($file);
+        if (!is_string($raw) || $raw === '') {
+            return;
+        }
+        // Guard against a corrupted/huge file turning into a memory problem.
+        if (strlen($raw) > 512 * 1024) {
+            @unlink($file);
+            return;
+        }
+        $decoded = json_decode($raw, true);
+        if (!is_array($decoded)) {
+            @unlink($file);
+            return;
+        }
+        $now = microtime(true);
+        foreach ($decoded as $key => $bucket) {
+            if (!is_string($key) || !is_array($bucket)) {
+                continue;
+            }
+            $start = (float)($bucket['start'] ?? 0);
+            $count = (int)($bucket['count'] ?? 0);
+            // Drop entries that are already far past any window we use.
+            if ($start <= 0 || $count <= 0 || ($now - $start) > 3600) {
+                continue;
+            }
+            $this->buckets[$key] = ['start' => $start, 'count' => $count];
+        }
+    }
+
+    private function storageFile(): string
+    {
+        return $this->storageDir . DIRECTORY_SEPARATOR . 'rate_limit.json';
     }
 
     /**
@@ -36,6 +86,7 @@ final class RateLimiter
 
         if ($bucket === null || ($now - $bucket['start']) >= $window) {
             $this->buckets[$key] = ['start' => $now, 'count' => 1];
+            $this->dirty = true;
             $this->maybePersist();
             return true;
         }
@@ -45,6 +96,7 @@ final class RateLimiter
         }
 
         $this->buckets[$key]['count']++;
+        $this->dirty = true;
         $this->maybePersist();
         return true;
     }
@@ -79,18 +131,20 @@ final class RateLimiter
 
     private function maybePersist(): void
     {
-        // Persistence is optional and intentionally cheap: it keeps counts alive
-        // across PHP worker restarts for HTTP endpoints. WS daemon keeps them in
-        // memory only. We throttle writes to avoid I/O on the hot path.
-        if ((count($this->buckets) % 50) !== 0) {
-            return;
-        }
+        // Persist on every change: PHP workers are per-request, so batching would
+        // lose the increments that make the limit effective. The write is a single
+        // small JSON blob with LOCK_EX and the map is compacted first.
         $this->gc();
         if (!is_dir($this->storageDir)) {
             @mkdir($this->storageDir, 0755, true);
         }
-        $file = $this->storageDir . DIRECTORY_SEPARATOR . 'rate_limit.json';
-        @file_put_contents($file, json_encode($this->buckets), LOCK_EX);
+        $file = $this->storageFile();
+        $payload = json_encode($this->buckets);
+        if (!is_string($payload)) {
+            return;
+        }
+        @file_put_contents($file, $payload, LOCK_EX);
         @chmod($file, 0600);
+        $this->dirty = false;
     }
 }

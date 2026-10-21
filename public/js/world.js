@@ -86,6 +86,9 @@ class JamriWorld {
         this.emotes = [];            // floating emote bubbles {id, emote, t}
         this.worldChat = [];         // global world chat log
         this.chatTab = 'mat';        // active chat tab: 'mat' | 'world'
+        // Deferred mat-snapshot re-applies (see onRoomInit). Tracked so a newer
+        // play/pause/seek cannot be undone by a stale snapshot.
+        this._matApplyTimers = [];
         this.minimap = null;
         this.minimapCtx = null;
 
@@ -218,6 +221,11 @@ class JamriWorld {
         if (data.queue) this.renderQueue(data.queue);
         if (data.online_users) this.renderUsers(data.online_users);
 
+        // Any pending "re-apply the snapshot" timer from a previous join belongs to
+        // a stale snapshot. Leaving them running made a later play/pause look like
+        // it "reverted" on its own after re-entering the mat.
+        this._clearMatApplyTimers();
+
         // Joining a mat mid-song must land on the SAME position as everyone else.
         // playTrack(track, pos) alone is not reliable here: the YouTube bridge may
         // still be initialising, and playTrack() then only queues the track and
@@ -244,19 +252,33 @@ class JamriWorld {
                 if (wantState !== 'playing') player.pause();
             }
 
-            // Re-apply after the engine is ready so the position sticks.
+            // Re-apply once the engine is ready so the start position sticks. Only
+            // do this while the snapshot is still the newest thing we know about:
+            // if a play/pause/seek/pong arrived in the meantime, that newer state
+            // wins and the deferred apply must not undo it.
             const apply = () => {
-                if (player.currentTrack && player.currentTrack.youtube_id === wantTrack.youtube_id) {
-                    player.syncJammingState(wantTrack, wantState, wantPos, wantTime, true);
-                }
+                if (!player.currentTrack || player.currentTrack.youtube_id !== wantTrack.youtube_id) return;
+                if ((player.serverSyncTime || 0) > wantTime) return;
+                player.syncJammingState(wantTrack, wantState, wantPos, wantTime, true);
             };
-            setTimeout(apply, 900);
-            setTimeout(apply, 2200);
+            this._matApplyTimers = this._matApplyTimers || [];
+            this._matApplyTimers.push(setTimeout(apply, 900));
+            this._matApplyTimers.push(setTimeout(apply, 2200));
         } else {
             this.player.stop();
         }
         this.updatePanelRoomInfo();
         this.setChatTab(this.chatTab || 'mat');
+    }
+
+    /** Cancel deferred mat-snapshot re-applies (new join, mat exit, teardown). */
+    _clearMatApplyTimers() {
+        if (!this._matApplyTimers) {
+            this._matApplyTimers = [];
+            return;
+        }
+        this._matApplyTimers.forEach((t) => clearTimeout(t));
+        this._matApplyTimers = [];
     }
 
     appendRoomChat(msg) {
@@ -375,6 +397,7 @@ class JamriWorld {
 
     leave() {
         this.unbindInput();
+        this._clearMatApplyTimers();
         if (this._resizeObserver) {
             this._resizeObserver.disconnect();
             this._resizeObserver = null;
@@ -801,6 +824,7 @@ class JamriWorld {
 
             case 'zone.exit':
                 this.activeBox = null;
+                this._clearMatApplyTimers();
                 this.player.setMatVolumeScale(1);
                 this.player.pause();
                 this.updatePanelRoomInfo();

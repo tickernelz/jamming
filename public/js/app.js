@@ -637,7 +637,7 @@ async function joinRoom(roomId, isPrivate = false, passcode = '') {
         bindRoomWebSocketEvents(ws, player, roomDetail);
 
         // Connect WebSocket
-        ws.connect(roomId, window.JAMRI_USER);
+        ws.connect(roomId, window.JAMRI_USER, 'room', passcode);
 
         switchView('room');
     } catch (err) {

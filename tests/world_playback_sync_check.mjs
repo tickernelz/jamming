@@ -40,4 +40,18 @@ assert.ok(/setTimeout\(apply, 900\)/.test(roomInit),
 assert.ok(roomInit.includes('playTrack(wantTrack, wantPos)'),
     'room_init must start the track at the server position, not 0');
 
+// 4) The deferred re-apply must never undo newer playback state.
+//    Leaving the 900ms/2200ms timers unguarded meant a play/pause that arrived
+//    right after entering the mat was silently reverted to the join snapshot
+//    ("keluar-masuk tikar bikin sinkronnya rusak").
+assert.ok(roomInit.includes('_clearMatApplyTimers'), 'room_init must cancel stale re-apply timers');
+assert.ok(/serverSyncTime \|\| 0\) > wantTime/.test(roomInit),
+    'the deferred apply must bail out when a newer state has arrived');
+assert.ok(/this\._matApplyTimers/.test(world), 'deferred timers must be tracked for cancellation');
+const zoneExit = world.slice(world.indexOf("case 'zone.exit':"), world.indexOf("case 'zone.choice_required':"));
+assert.ok(zoneExit.includes('_clearMatApplyTimers'),
+    'leaving the mat must cancel deferred re-applies');
+assert.ok(/leave\(\) \{\s*\n\s*this\.unbindInput\(\);\s*\n\s*this\._clearMatApplyTimers\(\);/.test(world),
+    'leaving the world must cancel deferred re-applies');
+
 console.log('world_playback_sync_check: OK');

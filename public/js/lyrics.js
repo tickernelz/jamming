@@ -108,6 +108,12 @@ class JamriLyricsManager {
 
     initKeyListeners() {
         window.addEventListener('keydown', (e) => {
+            // The modal's close button is labelled "Tutup (Esc)" and other modals
+            // honour Escape, so the lyrics overlay must too.
+            if (e.key === 'Escape' && this.isOpen) {
+                this.closeModal();
+                return;
+            }
             if (e.key.toLowerCase() === 'l' && !e.ctrlKey && !e.altKey && !e.metaKey) {
                 const target = e.target;
                 if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
@@ -116,6 +122,20 @@ class JamriLyricsManager {
                 this.toggleModal();
             }
         });
+
+        // Cover art can 404 (region blocks, dead thumbnails). The CSP forbids
+        // inline handlers, so failures are handled here instead: hide the broken
+        // image and reveal the placeholder next to it.
+        if (!this._coverFallbackBound) {
+            this._coverFallbackBound = true;
+            document.addEventListener('error', (e) => {
+                const img = e.target;
+                if (!img || img.tagName !== 'IMG' || !img.dataset || img.dataset.fallback !== '1') return;
+                img.style.display = 'none';
+                const sibling = img.nextElementSibling;
+                if (sibling) sibling.style.display = 'flex';
+            }, true);
+        }
     }
 
     onTrackChange(track) {
@@ -310,9 +330,12 @@ class JamriLyricsManager {
 
     getCoverHtml(thumb, size = 36) {
         if (thumb && thumb.trim() && !thumb.includes('default-thumb.png')) {
+            // No inline onerror: the app ships a strict CSP (script-src without
+            // 'unsafe-inline'), so an inline handler is blocked and the broken
+            // image icon stays visible. A delegated listener does the swap.
             return `
                 <div class="lyrics-thumb-wrapper" style="width:${size}px; height:${size}px; flex-shrink:0;">
-                    <img src="${this.escape(thumb)}" alt="Cover" class="lyrics-track-thumb" style="width:${size}px; height:${size}px;" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';" />
+                    <img src="${this.escape(thumb)}" alt="Cover" class="lyrics-track-thumb" data-fallback="1" style="width:${size}px; height:${size}px;" />
                     <div class="lyrics-track-thumb-placeholder" style="display:none; width:${size}px; height:${size}px;">
                         <svg width="${Math.round(size * 0.45)}" height="${Math.round(size * 0.45)}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M9 18V5l12-2v13"></path>
@@ -1025,6 +1048,16 @@ class JamriLyricsManager {
         });
     }
 
+    /**
+     * Popup-window PiP used by browsers without Document PiP (Firefox) and as a
+     * fallback when requestWindow() is unavailable.
+     */
+    openFallbackPiPWindow(width, height) {
+        const left = Math.max(0, (window.screen.width || 1200) - width - 30);
+        const top = 50;
+        return window.open('', 'JamriLyricsPiP', `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=no,status=no,toolbar=no,menubar=no`);
+    }
+
     async openPiP(mode = 'full') {
         this.pipMode = mode;
         try {
@@ -1047,17 +1080,24 @@ class JamriLyricsManager {
                     height: height
                 });
             } else {
-                // Fallback popup window for browsers without Document PiP (e.g. Firefox)
-                const left = Math.max(0, (window.screen.width || 1200) - width - 30);
-                const top = 50;
-                this.pipWindow = window.open('', 'JamriLyricsPiP', `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=no,status=no,toolbar=no,menubar=no`);
+                this.pipWindow = this.openFallbackPiPWindow(width, height);
             }
         } catch (err) {
-            console.error('[Lyrics PiP] Failed to open PiP window:', err);
-            if (window.JAMRI_APP && window.JAMRI_APP.showToast) {
-                window.JAMRI_APP.showToast('Gagal membuka Picture-in-Picture: ' + (err.message || err), 'error');
+            // requestWindow() rejects with InvalidStateError when the browser has
+            // no eligible window (some embedded/automation contexts). Fall back to
+            // a popup instead of surfacing a hard error to the user.
+            console.warn('[Lyrics PiP] Document PiP unavailable, using popup:', err && err.message);
+            try {
+                this.pipWindow = this.openFallbackPiPWindow(width, height);
+            } catch (e) {
+                this.pipWindow = null;
             }
-            return;
+            if (!this.pipWindow) {
+                if (window.JAMRI_APP && window.JAMRI_APP.showToast) {
+                    window.JAMRI_APP.showToast('Gagal membuka Picture-in-Picture: ' + (err.message || err), 'error');
+                }
+                return;
+            }
         }
 
         if (!this.pipWindow) {
@@ -1457,7 +1497,7 @@ class JamriLyricsManager {
                 <div class="pip-container pip-container-mini">
                     <!-- Mini Track Card -->
                     <div class="pip-mini-card">
-                        ${thumb ? `<img src="${this.safeImageUrl(thumb)}" alt="" class="pip-mini-thumb" onerror="this.style.display='none'" />` : `<div class="pip-mini-thumb-placeholder">🎵</div>`}
+                        ${thumb ? `<img src="${this.safeImageUrl(thumb)}" alt="" class="pip-mini-thumb" data-fallback="1" />` : `<div class="pip-mini-thumb-placeholder">🎵</div>`}
                         <div class="pip-mini-meta">
                             <div class="pip-track-title" title="${this.escape(title)}">${this.escape(title)}</div>
                             <div class="pip-track-artist">${this.escape(artist)}</div>

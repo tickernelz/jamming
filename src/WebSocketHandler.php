@@ -97,6 +97,18 @@ class WebSocketHandler implements MessageComponentInterface
             return;
         }
 
+        // Private rooms must be verified here too: the HTTP gate only protects the
+        // UI flow, and the socket URL is trivially forgeable.
+        $passcode = Validator::passcode($params['passcode'] ?? '');
+        if (!$this->roomManager->canAccessRoom($roomId, $passcode)) {
+            $conn->send(json_encode([
+                'type' => 'room_not_found',
+                'message' => 'Room ini private atau sudah tidak aktif. Periksa passcode Anda.'
+            ]));
+            $conn->close();
+            return;
+        }
+
         $resId = $conn->resourceId;
         $this->clientMeta[$resId] = [
             'mode' => 'room',
@@ -479,7 +491,14 @@ class WebSocketHandler implements MessageComponentInterface
 
                     // If currently nothing is playing, start this track immediately
                     if ($this->rooms[$roomId]['current_track'] === null) {
+                        // The track we just started must leave the queue, otherwise it
+                        // is both "now playing" and "next up": pressing next replayed
+                        // the same song instead of moving on.
+                        if (isset($added['id'])) {
+                            $this->roomManager->markTrackPlayed($roomId, (int)$added['id']);
+                        }
                         $this->setRoomTrack($roomId, $added, $meta['nickname']);
+                        $queue = $this->roomManager->getQueue($roomId);
                     }
 
                     $this->broadcastToRoom($roomId, [
@@ -617,7 +636,9 @@ class WebSocketHandler implements MessageComponentInterface
                 break;
 
             case 'chat':
-                $text = Validator::chatMessage($data['message'] ?? '');
+                // Coerce first: a JSON number/array here used to throw a TypeError
+                // inside Validator::chatMessage() (caught, but it logged an error).
+                $text = Validator::chatMessage(is_scalar($data['message'] ?? null) ? (string)$data['message'] : '');
                 if ($text !== '') {
                     // Anti-spam: at most 5 messages per 4 seconds per device.
                     if (!$this->rateLimiter->allow(RateLimiter::key('chat', $meta['device_id']), 5, 4)) {
@@ -759,7 +780,52 @@ class WebSocketHandler implements MessageComponentInterface
                 break;
             }
         } catch (\Throwable $e) {
-            error_log("[WebSocket onMessage Error]: " . $e->getMessage());
+            // A deleted room (purge sweeper, host delete, manual cleanup) makes
+            // every write fail on its FK. That is a normal end-of-life condition,
+            // not an internal error: tell the client and detach instead of
+            // logging a scary SQLSTATE for every subsequent message.
+            $message = $e->getMessage();
+            if ($e instanceof \PDOException && str_contains($message, 'FOREIGN KEY constraint failed')) {
+                $this->handleRoomGone($from, $roomId, $meta);
+                return;
+            }
+            error_log("[WebSocket onMessage Error]: " . $message);
+        }
+    }
+
+    /**
+     * The room row backing this session no longer exists. Drop the in-memory
+     * session, notify the client once and detach it from the dead room.
+     */
+    private function handleRoomGone(ConnectionInterface $conn, string $roomId, array $meta): void
+    {
+        $resId = $conn->resourceId;
+        if (isset($this->rooms[$roomId])) {
+            unset($this->rooms[$roomId]['clients'][$resId]);
+        }
+
+        try {
+            $conn->send(json_encode([
+                'type' => 'room_not_found',
+                'message' => 'Room ini sudah dihapus atau kedaluwarsa. Silakan buat room baru.',
+            ]));
+        } catch (\Throwable $e) {
+            // Client already gone.
+        }
+
+        if (($meta['mode'] ?? 'room') === 'world') {
+            // In a world the avatar lives on: just drop the mat binding.
+            $this->worldManager->setActiveBox($meta['room_id'], $resId, null);
+            if (isset($this->clientMeta[$resId])) {
+                $this->clientMeta[$resId]['mat_room_id'] = null;
+            }
+            return;
+        }
+
+        unset($this->clientMeta[$resId]);
+        try {
+            $conn->close();
+        } catch (\Throwable $e) {
         }
     }
 
@@ -1606,7 +1672,7 @@ class WebSocketHandler implements MessageComponentInterface
                 break;
 
             case 'world.chat':
-                $text = Validator::chatMessage($data['message'] ?? '');
+                $text = Validator::chatMessage(is_scalar($data['message'] ?? null) ? (string)$data['message'] : '');
                 if ($text === '' || !$this->rateLimiter->allow(RateLimiter::key('world_chat', $meta['device_id']), 6, 4)) {
                     break;
                 }

@@ -33,10 +33,12 @@ class JamriWebSocket {
         }
     }
 
-    connect(roomId, user, mode = 'room') {
+    connect(roomId, user, mode = 'room', passcode = '') {
         this.roomId = roomId;
         this.user = user;
         this.mode = mode;
+        // Retained so reconnect() can re-authenticate against a private room.
+        this.passcode = passcode || this.passcode || '';
 
         if (this.reconnectTimeout) {
             clearTimeout(this.reconnectTimeout);
@@ -58,7 +60,7 @@ class JamriWebSocket {
             endpoint = `${protocol}//${window.location.hostname || 'localhost'}:8081/`;
         }
 
-        const url = `${endpoint}?mode=${encodeURIComponent(mode)}&room_id=${encodeURIComponent(roomId)}&device_id=${encodeURIComponent(user.device_id)}&nickname=${encodeURIComponent(user.nickname)}&emoji=${encodeURIComponent(user.emoji)}`;
+        const url = `${endpoint}?mode=${encodeURIComponent(mode)}&room_id=${encodeURIComponent(roomId)}&device_id=${encodeURIComponent(user.device_id)}&nickname=${encodeURIComponent(user.nickname)}&emoji=${encodeURIComponent(user.emoji)}${this.passcode ? '&passcode=' + encodeURIComponent(this.passcode) : ''}`;
 
         // Detach handlers from any previous socket before replacing it. Otherwise
         // the old socket's onclose fires later and re-enters attemptReconnect(),
@@ -133,7 +135,7 @@ class JamriWebSocket {
 
         this.reconnectTimeout = setTimeout(() => {
             if (!this.isConnected && this.roomId && this.user) {
-                this.connect(this.roomId, this.user, this.mode || 'room');
+                this.connect(this.roomId, this.user, this.mode || 'room', this.passcode || '');
             }
         }, delay);
     }
@@ -254,6 +256,7 @@ class JamriWebSocket {
 
     disconnect() {
         this.roomId = null;
+        this.passcode = '';
         if (this.reconnectTimeout) {
             clearTimeout(this.reconnectTimeout);
             this.reconnectTimeout = null;

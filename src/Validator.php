@@ -31,13 +31,32 @@ final class Validator
     public const DEFAULT_EMOJI = '🎧';
 
     /**
+     * Coerce any untrusted JSON value into a string without warnings. Arrays and
+     * objects (which JSON clients can send for any field) collapse to '' instead
+     * of triggering an "Array to string conversion" notice.
+     */
+    private static function str(mixed $value): string
+    {
+        if (is_string($value)) {
+            return $value;
+        }
+        if (is_int($value) || is_float($value)) {
+            return (string)$value;
+        }
+        if (is_bool($value)) {
+            return $value ? '1' : '';
+        }
+        return '';
+    }
+
+    /**
      * Strip control characters (incl. null bytes / newlines) and enforce a max
      * length in a Unicode-safe way. This is the first line of defence for every
      * free-text field that later gets broadcast or stored.
      */
-    public static function clean(?string $value, int $maxLen): string
+    public static function clean(mixed $value, int $maxLen): string
     {
-        $value = (string)$value;
+        $value = self::str($value);
         // Remove ASCII control chars except a normal space; keep multibyte intact.
         $value = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', '', $value) ?? '';
         $value = trim($value);
@@ -47,7 +66,7 @@ final class Validator
         return $value;
     }
 
-    public static function nickname(?string $value, string $fallback = 'Kawan Jamming'): string
+    public static function nickname(mixed $value, string $fallback = 'Kawan Jamming'): string
     {
         $v = self::clean($value, self::MAX_NICKNAME_LEN);
         return $v !== '' ? $v : $fallback;
@@ -58,9 +77,9 @@ final class Validator
      * Anything containing HTML metacharacters or emoji-ZWJ bombs is rejected and
      * replaced with the safe default. Length is capped to a few code points.
      */
-    public static function emoji(?string $value): string
+    public static function emoji(mixed $value): string
     {
-        $v = trim((string)$value);
+        $v = trim(self::str($value));
         if ($v === '' || mb_strlen($v, 'UTF-8') > self::MAX_EMOJI_LEN) {
             return self::DEFAULT_EMOJI;
         }
@@ -75,29 +94,29 @@ final class Validator
         return $v;
     }
 
-    public static function roomName(?string $value): string
+    public static function roomName(mixed $value): string
     {
         return self::clean($value, self::MAX_ROOM_NAME_LEN);
     }
 
-    public static function passcode(?string $value): string
+    public static function passcode(mixed $value): string
     {
         return self::clean($value, self::MAX_PASSCODE_LEN);
     }
 
-    public static function chatMessage(?string $value): string
+    public static function chatMessage(mixed $value): string
     {
         return self::clean($value, self::MAX_CHAT_LEN);
     }
 
-    public static function deviceId(?string $value): string
+    public static function deviceId(mixed $value): string
     {
         $v = self::clean($value, self::MAX_DEVICE_ID_LEN);
         // device_id is a client-generated opaque token: allow only safe chars.
         return preg_replace('/[^A-Za-z0-9_.\-]/', '', $v) ?? '';
     }
 
-    public static function roomId(?string $value): string
+    public static function roomId(mixed $value): string
     {
         $v = self::clean($value, self::MAX_ROOM_ID_LEN);
         // UUID style: hex + dashes (stored ids are UUID v4).
@@ -105,9 +124,9 @@ final class Validator
     }
 
     /** YouTube video id: exactly 11 url-safe characters. */
-    public static function youtubeId(?string $value): string
+    public static function youtubeId(mixed $value): string
     {
-        $v = trim((string)$value);
+        $v = trim(self::str($value));
         return preg_match('/^[A-Za-z0-9_-]{11}$/', $v) ? $v : '';
     }
 
@@ -115,9 +134,9 @@ final class Validator
      * Extract a YouTube playlist id from either a raw id or any playlist URL.
      * Returns '' when nothing valid is found.
      */
-    public static function playlistId(?string $value): string
+    public static function playlistId(mixed $value): string
     {
-        $v = trim((string)$value);
+        $v = trim(self::str($value));
         if ($v === '' || strlen($v) > 300) {
             return '';
         }
@@ -146,13 +165,13 @@ final class Validator
         return min($n, 150);
     }
 
-    public static function title(?string $value, string $fallback = 'Untitled Track'): string
+    public static function title(mixed $value, string $fallback = 'Untitled Track'): string
     {
         $v = self::clean($value, self::MAX_TITLE_LEN);
         return $v !== '' ? $v : $fallback;
     }
 
-    public static function channel(?string $value, string $fallback = 'YouTube'): string
+    public static function channel(mixed $value, string $fallback = 'YouTube'): string
     {
         $v = self::clean($value, self::MAX_CHANNEL_LEN);
         return $v !== '' ? $v : $fallback;
@@ -172,9 +191,9 @@ final class Validator
      * Only allow track artwork from YouTube's own image hosts. This closes the
      * stored-XSS vector that flowed through `<img src="...">` rendering.
      */
-    public static function thumbnailUrl(?string $value): string
+    public static function thumbnailUrl(mixed $value): string
     {
-        $v = trim((string)$value);
+        $v = trim(self::str($value));
         if ($v === '' || strlen($v) > self::MAX_URL_LEN) {
             return '';
         }

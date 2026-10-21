@@ -14,6 +14,7 @@ import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { execFileSync, spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import assert from 'node:assert';
 
 const src = readFileSync(new URL('../src/RoomManager.php', import.meta.url), 'utf8');
@@ -63,7 +64,9 @@ if (!php) {
 
 const dir = mkdtempSync(join(tmpdir(), 'jamri-race-'));
 const db = join(dir, 't.sqlite');
-const repo = new URL('..', import.meta.url).pathname;
+// new URL(...).pathname yields "/C:/xampp/..." on Windows, which PHP then reads
+// as a path relative to the drive root. fileURLToPath() gives a native path.
+const repo = fileURLToPath(new URL('..', import.meta.url));
 
 writeFileSync(join(dir, 'setup.php'), `<?php
 $db = $argv[1];

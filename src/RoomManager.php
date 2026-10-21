@@ -156,6 +156,33 @@ class RoomManager
         return $room ?: null;
     }
 
+    /**
+     * Cheap access check for the WebSocket handshake. The HTTP flow verifies the
+     * passcode before opening the room, but a client can dial the socket directly
+     * with any room_id, so the server must enforce it independently.
+     */
+    public function canAccessRoom(string $roomId, ?string $passcode = null): bool
+    {
+        $room = $this->getRoomSummary($roomId);
+        if (!$room) {
+            return false;
+        }
+        if ((int)$room['is_private'] !== 1) {
+            return true;
+        }
+
+        $secret = $this->getRoomWithPasscode($roomId);
+        $hash = $secret['passcode'] ?? null;
+        if (!is_string($hash) || $hash === '') {
+            return false;
+        }
+        $provided = Validator::passcode($passcode ?? '');
+        if (str_starts_with($hash, '$2y$') || str_starts_with($hash, '$argon2')) {
+            return password_verify($provided, $hash);
+        }
+        return hash_equals($hash, $provided);
+    }
+
     public function getRoomDetail(string $roomId, ?string $passcode = null): ?array
     {
         $room = $this->getRoomSummary($roomId);
