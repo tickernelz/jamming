@@ -223,6 +223,7 @@ mengikuti rasa WorkAdventure (tetap prosedural, tanpa file gambar):
 | Avatar | Emoji + **walk bob** 3px, shadow menyusut saat melompat, ring putih untuk diri sendiri, flip horizontal saat menghadap kiri |
 | Partikel | Debu kaki saat jalan, not musik (`♪ ♫ ♬`) naik dari tikar yang ada pendengarnya |
 | Chat | **Speech bubble** di atas avatar pengirim, untuk **kedua** kanal (Chat Tikar & Chat World): auto-wrap maks 3 baris, fade 6s, layout di-cache per pesan |
+| Posisi bubble | Dihitung oleh `bubbleRect()` dalam **view space** (`sx/sy` sudah dikurangi kamera). Clamp hanya boleh 0..viewW / 0..viewH — memakai `camX + viewW` membuat bubble tertempel di tepi kanan stage. Flip ke bawah avatar kalau tidak muat di atas, dan avatar di luar layar tidak menyisakan bubble. |
 | Panel chat | **Satu input + dua tab** (Chat Tikar / Chat World); tab aktif menentukan tujuan kirim |
 | Kamera | Zoom 1.15–1.8 (avatar tetap terbaca) + look-ahead 26px ke arah hadap |
 | Cahaya | Sunlight radial hangat + vignette hijau sangat tipis (bukan gelap) |

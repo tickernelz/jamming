@@ -163,6 +163,37 @@ function wrapBubbleLines(ctx, text, maxWidth) {
     return rendered;
 }
 
+/**
+ * Place a speech bubble above an avatar.
+ *
+ * IMPORTANT: every argument here is in VIEW space (already camera-subtracted),
+ * never world space. Mixing the two silently pins bubbles to the viewport edge
+ * (that bug shipped once: the clamp used `camX + viewW` against a screen-space
+ * `sx`, so with camX ≈ 1000 the bubble was forced to x ≈ 1027 — off the avatar
+ * and against the right edge of the stage).
+ *
+ * Returns the top-left corner plus the tail anchor so the caller only draws.
+ */
+function bubbleRect(sx, sy, bw, bh, bob, viewW, viewH) {
+    const margin = 4;
+    const maxX = Math.max(margin, viewW - bw - margin);
+
+    // Horizontally centred on the speaker, kept fully inside the viewport.
+    const bx = Math.max(margin, Math.min(sx - bw / 2, maxX));
+
+    // Preferred: above the avatar. If that would leave the viewport (avatar near
+    // the top edge), flip BELOW the avatar instead of drawing a clipped bubble.
+    let by = sy - 56 - bob - bh;
+    let tailUp = false;
+    if (by < margin) {
+        by = sy + 22;
+        tailUp = true;
+    }
+    by = Math.max(margin, Math.min(by, Math.max(margin, viewH - bh - margin)));
+
+    return { bx, by, tailUp };
+}
+
 class JamriWorld {
     static SPEED = 150;          // px per second
     static SEND_HZ = 12;         // position updates per second
@@ -1489,7 +1520,7 @@ class JamriWorld {
         this.drawWalls(ctx, camX, camY, tile);
         this.drawMats(ctx, camX, camY, now);
         this.drawParticles(ctx, camX, camY);
-        this.drawAvatars(ctx, camX, camY, now, viewW);
+        this.drawAvatars(ctx, camX, camY, now, viewW, viewH);
 
         // Screen-space pass: light + vignette stay fixed to the viewport.
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1835,7 +1866,7 @@ class JamriWorld {
         ctx.globalAlpha = 1;
     }
 
-    drawAvatars(ctx, camX, camY, now, viewW) {
+    drawAvatars(ctx, camX, camY, now, viewW, viewH) {
         const entities = [];
         for (const [id, av] of this.avatars.entries()) {
             entities.push({
@@ -1941,9 +1972,18 @@ class JamriWorld {
                     }
 
                     const { lines, bw, bh } = bub.layout;
-                    const viewRight = camX + (viewW || this.canvas.width);
-                    const bx = Math.max(camX + 4, Math.min(sx - bw / 2, viewRight - bw - 4));
-                    const by = sy - 56 - bob - bh;
+                    // Screen-space placement. sx/sy are already camera-subtracted,
+                    // so the bounds are 0..viewW / 0..viewH (NOT camX + viewW).
+                    const viewRight = viewW || (this.canvas.width / (this.dpr || 1));
+                    const viewBottom = viewH || (this.canvas.height / (this.dpr || 1));
+                    const { bx, by, tailUp } = bubbleRect(sx, sy, bw, bh, bob, viewRight, viewBottom);
+
+                    // An avatar that walked off-screen must not leave a bubble
+                    // glued to the viewport edge.
+                    if (sx < -bw || sx > viewRight + bw || sy < -bh || sy > viewBottom + bh) {
+                        ctx.globalAlpha = 1;
+                        continue;
+                    }
 
                     roundRect(ctx, bx, by, bw, bh, 8);
                     ctx.fillStyle = 'rgba(255, 255, 255, 0.97)';
@@ -1952,11 +1992,18 @@ class JamriWorld {
                     ctx.lineWidth = 1.5;
                     ctx.stroke();
 
-                    // Tail pointing at the speaker.
+                    // Tail pointing at the speaker (below the bubble normally, above
+                    // it when the bubble had to be flipped under the avatar).
                     ctx.beginPath();
-                    ctx.moveTo(sx - 5, by + bh);
-                    ctx.lineTo(sx + 5, by + bh);
-                    ctx.lineTo(sx, by + bh + 7);
+                    if (tailUp) {
+                        ctx.moveTo(sx - 5, by);
+                        ctx.lineTo(sx + 5, by);
+                        ctx.lineTo(sx, by - 7);
+                    } else {
+                        ctx.moveTo(sx - 5, by + bh);
+                        ctx.lineTo(sx + 5, by + bh);
+                        ctx.lineTo(sx, by + bh + 7);
+                    }
                     ctx.closePath();
                     ctx.fillStyle = 'rgba(255, 255, 255, 0.97)';
                     ctx.fill();

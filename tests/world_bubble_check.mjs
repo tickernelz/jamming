@@ -138,4 +138,63 @@ check('world.leave drops the bubble', leaveCase.includes('this.bubbles.delete(da
 check('bubble layout is cached', /bub\.layout = \{ lines, bw, bh \}/.test(src));
 check('bubble uses the shared wrapper', src.includes('wrapBubbleLines(ctx, bub.text'));
 
+// ---- bubble placement (view space only) ----------------------------------
+// Regression: the clamp used `camX + viewW` (WORLD space) against `sx` which is
+// already camera-subtracted (VIEW space). With camX ≈ 1000 every bubble was
+// forced to x ≈ 1027 — pinned to the right edge of the stage instead of sitting
+// above its avatar. The screenshot showed "HALO" floating far from the speaker.
+const geometry = src.slice(src.indexOf('function bubbleRect'), src.indexOf('class JamriWorld'));
+assert.ok(geometry.length > 100, 'bubbleRect must be an extractable pure helper');
+assert.ok(!/camX/.test(geometry),
+    'bubbleRect must never take camera coordinates: sx/sy are already view space');
+assert.ok(!/camY/.test(geometry),
+    'bubbleRect must never take camera coordinates: sx/sy are already view space');
+
+const rectMod = await import('data:text/javascript;base64,' + Buffer.from(
+    geometry + '\nexport { bubbleRect };'
+).toString('base64'));
+const { bubbleRect } = rectMod;
+
+const VIEW_W = 768, VIEW_H = 430, BW = 120, BH = 25;
+
+// A bubble centred over a mid-screen avatar must actually be centred on it.
+const centred = bubbleRect(384, 200, BW, BH, 0, VIEW_W, VIEW_H);
+check('bubble is centred over a mid-screen avatar',
+    Math.abs((centred.bx + BW / 2) - 384) <= 0.01, String(centred.bx));
+check('bubble sits above the avatar', centred.by + BH <= 200, String(centred.by));
+check('centred bubble does not use the tail-up fallback', centred.tailUp === false);
+
+// Every on-screen avatar position must keep the bubble fully inside the view.
+let outside = 0;
+for (let sx = -200; sx <= VIEW_W + 200; sx += 17) {
+    for (let sy = -200; sy <= VIEW_H + 200; sy += 13) {
+        const r = bubbleRect(sx, sy, BW, BH, 0, VIEW_W, VIEW_H);
+        const okX = r.bx >= 0 && r.bx + BW <= VIEW_W + 0.01;
+        const okY = r.by >= 0 && r.by + BH <= VIEW_H + 0.01;
+        if (!okX || !okY) outside++;
+    }
+}
+check('bubble never escapes the viewport', outside === 0, `${outside} placements out of bounds`);
+
+// Near the top edge the bubble flips BELOW the avatar instead of being clipped.
+const topEdge = bubbleRect(384, 10, BW, BH, 0, VIEW_W, VIEW_H);
+check('bubble flips below the avatar near the top edge', topEdge.tailUp === true, String(topEdge.by));
+check('flipped bubble is below the avatar', topEdge.by >= 10, String(topEdge.by));
+
+// Near the right edge it slides left instead of overflowing.
+const rightEdge = bubbleRect(VIEW_W - 5, 200, BW, BH, 0, VIEW_W, VIEW_H);
+check('bubble slides left at the right edge', rightEdge.bx + BW <= VIEW_W + 0.01, String(rightEdge.bx));
+
+// A wider bubble than the viewport still stays at the left margin (no negative x).
+const huge = bubbleRect(384, 200, VIEW_W + 400, BH, 0, VIEW_W, VIEW_H);
+check('an oversized bubble does not produce a negative x', huge.bx >= 0, String(huge.bx));
+
+// The caller must place bubbles with view bounds, not camera bounds.
+const drawAvatars = src.slice(src.indexOf('    drawAvatars(ctx, camX, camY, now'), src.indexOf('    renderMinimap('));
+check('drawAvatars delegates placement to bubbleRect', drawAvatars.includes('bubbleRect('));
+check('drawAvatars does not clamp against camX', !/camX \+ \(viewW/.test(drawAvatars),
+    'the old `camX + (viewW ...)` clamp pinned bubbles to the right edge');
+check('drawAvatars receives viewH', /drawAvatars\(ctx, camX, camY, now, viewW, viewH\)/.test(src));
+check('off-screen avatars do not keep a bubble', drawAvatars.includes('sx < -bw'));
+
 console.log(`world_bubble_check: ${pass} OK`);
