@@ -578,6 +578,11 @@ function leaveRoom() {
     // Hentikan musik di device saat keluar dari room jamming
     player.stop();
     player.setMode('solo', null);
+    // Drop the room's mirrored lists. They are what search.js consults to decide
+    // whether a track goes to a shared queue, so a stale copy must not outlive
+    // the session (a fresh join re-renders both from room_detail).
+    window.JAMRI_APP.roomQueue = [];
+    window.JAMRI_APP.roomPlaylist = [];
     if (window.JAMRI_APP.searchModule) {
         window.JAMRI_APP.searchModule.setWebSocket(null);
     }
@@ -947,6 +952,9 @@ function bindRoomWebSocketEvents(ws, player, roomDetail) {
 
     ws.on('room_init', (data) => {
         if (data.queue) renderRoomQueue(data.queue);
+        // A reconnect re-sends room_init without re-fetching room_detail, so the
+        // Bank Musik tab would keep whatever it rendered on first join.
+        if (Array.isArray(data.playlist)) renderRoomPlaylist(data.playlist);
         if (data.loop_mode) player.setLoopMode(data.loop_mode);
         if (data.is_shuffled !== undefined) {
             player.isShuffled = !!data.is_shuffled;

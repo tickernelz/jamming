@@ -62,7 +62,9 @@ const track = (id, t) => ({ youtube_id: id, title: t, channel: 'QA', duration_se
     const { execSync } = await import('node:child_process');
     execSync(`php -r "$db=new PDO('sqlite:data/jamri.sqlite');$db->exec('PRAGMA foreign_keys=ON');$db->exec(\\"DELETE FROM room_queue WHERE room_id='${roomId}'\\");$db->exec(\\"DELETE FROM rooms WHERE id='${roomId}'\\");"`, { cwd: 'C:/xampp/htdocs/jamri', shell: 'cmd.exe' });
     await sleep(300);
-    A.send('queue_add', { track: track('dQw4w9WgXcQ', 'Orphan') });
+    // A DISTINCT track: re-adding the track that is already loaded is refused
+    // before any DB write, so it would never surface the deleted room.
+    A.send('queue_add', { track: track('kJQP7kiw5Fk', 'Orphan') });
     await sleep(1500);
     check('deleted room reports room_not_found', !!A.last('room_not_found'), JSON.stringify(A.msgs.map(m => m.type)));
     check('deleted room closes the socket cleanly (code 1000)', A.closed !== null && A.closed.code === 1000, JSON.stringify(A.closed));

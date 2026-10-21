@@ -275,8 +275,8 @@ Perbaikan:
 
 | Bagian | Perilaku |
 |---|---|
-| `search.js#isSharedSession()` | True bila mode jamming **atau** `activeRoomId` **atau** (`activeWorldId` **dan** `world.activeBox`) |
-| Semua entry point search | Memakai `isSharedSession()` (Play Now, Add to Queue, Bank Musik) |
+| `search.js#hasSharedTarget()` | True bila `activeRoomId` **atau** (`activeWorldId` **dan** `world.activeBox`) |
+| Semua entry point search | Memakai `hasSharedTarget()` (Play Now, Add to Queue, Bank Musik) |
 | `world.js#renderQueue()` | Mirror antrean tikar ke `JAMRI_APP.roomQueue` supaya cek duplikat akurat |
 | `zone.exit` | Mengosongkan mirror (`roomQueue = []`) agar lagu lama tidak dianggap duplikat |
 
@@ -397,8 +397,9 @@ Perbaikan:
 | `zone.exit` / `leave()` / `enter()` | Memanggil keduanya (plus `roomState = null`), sehingga masuk world selalu mulai dari kondisi bersih. |
 | `room_init` | Sekarang membawa `playlist`, dan `onRoomInit()` meng-hydrate panel Bank Musik dari snapshot itu → masuk tikar lagi menampilkan isi **terkini**. |
 | `playlist_updated` | Di-listen world.js (sebelumnya hanya jalur room legacy). |
-| `search.hasWritableSharedTarget()` (baru) | Menulis antrean/Bank Musik hanya bila benar-benar ada target (room aktif atau tikar aktif), bukan sekadar socket hidup. |
-| `detachFromRoom()` | Menghitung posisi **sebelum** mengubah state ke `paused`; `getCurrentPosition()` hanya menambah delta saat state masih `playing`, jadi urutan lama membekukan posisi di anchor terakhir dan tikar yang kosong restart dari 0:00. |
+| `search.hasSharedTarget()` (baru) | Menentukan **ke mana** lagu dikirim (antrean bersama vs antrean lokal) hanya dari ada/tidaknya target (room aktif atau tikar aktif) — **tidak** dari status socket, supaya aksi saat reconnect tidak nyasar ke antrean solo. |
+| `pauseRoom()` (baru) | Satu-satunya tempat pause-diam-diam: menghitung posisi **sebelum** mengubah state ke `paused`; `getCurrentPosition()` hanya menambah delta saat state masih `playing`, jadi urutan lama membekukan posisi di anchor terakhir dan tikar/room yang kosong restart dari 0:00. Dipakai `detachFromRoom()` **dan** `onClose()` legacy. |
+| `detachFromRoom()` | Mendelegasikan pembekuan posisi ke `pauseRoom()` (dulu menyimpan salinannya sendiri, dan `onClose()` punya salinan kedua dengan bug urutan yang sama). |
 
 Dijaga oleh `tests/world_mat_exit_reset_check.mjs`. Verifikasi UI (1 user, 1 tikar):
 `playing` di 4.01 s → keluar → dock "Tidak ada lagu yang diputar", semua panel

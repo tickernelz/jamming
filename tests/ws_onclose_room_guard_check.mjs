@@ -9,10 +9,19 @@ const src = readFileSync(new URL('../src/WebSocketHandler.php', import.meta.url)
 const close = src.slice(src.indexOf('public function onClose'), src.indexOf('public function onError'));
 
 // The world branch returns before the room branch; assert the room branch
-// guards the room's existence before indexing it.
+// guards the room's existence before indexing/delegating it.
 const guardIdx = close.indexOf("if (!isset($this->rooms[$roomId]))");
-const countIdx = close.indexOf("count($this->rooms[$roomId]['clients'])");
+const detachIdx = close.indexOf("$this->detachFromRoom($roomId, $resId, $meta)");
 assert.ok(guardIdx !== -1, 'onClose room branch must guard !isset($this->rooms[$roomId])');
-assert.ok(guardIdx < countIdx, 'the room-existence guard must precede count() on the room');
+assert.ok(detachIdx !== -1, 'onClose room branch must delegate the detach bookkeeping');
+assert.ok(guardIdx < detachIdx, 'the room-existence guard must precede the detach delegation');
+
+// The legacy detach must share the mat's pause bookkeeping instead of keeping a
+// second copy: the duplicate copy paused first and then read the position, so an
+// emptied legacy room always resumed at 0:00.
+assert.ok(!close.includes("count($this->rooms[$roomId]['clients'])"),
+    'onClose must not re-implement the client count (it must delegate to detachFromRoom)');
+assert.ok(!close.includes("'playback_state'] = 'paused'"),
+    'onClose must not pause the room itself (pauseRoom owns the ordering)');
 
 console.log('ws_onclose_room_guard_check: OK');

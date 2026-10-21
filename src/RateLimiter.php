@@ -12,17 +12,33 @@ namespace Jamri;
  * expensive upstream calls. No user identity is stored — buckets are keyed by a
  * short-lived hash of the caller (device id or IP) plus an action name, and the
  * backing file is periodically compacted so no personal data accumulates.
- */
+ *
+ * Two modes, because the two callers have opposite lifetimes:
+ *
+ *  - Per-request (HTTP APIs): the process dies after one request, so buckets
+ *    MUST be shared through the file or every request would start empty and no
+ *    limit would ever trigger.
+ *  - Long-lived (the Ratchet daemon): one process serves every socket, so the
+ *    in-memory map already holds the truth. Writing the whole bucket map to disk
+ *    on every allow() put a LOCK_EX file write on the hot path (world.move is
+ *    rate limited at 90/3s per device), which stalled the event loop and made
+ *    every room feel laggy. Those instances use `persist: false`. */
 final class RateLimiter
 {
     private string $storageDir;
     private array $buckets = [];
-    private bool $dirty = false;
+    private bool $persist;
 
-    public function __construct(?string $storageDir = null)
+    public function __construct(?string $storageDir = null, ?bool $persist = null)
     {
         $this->storageDir = $storageDir ?? (dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data');
-        $this->load();
+        // Auto-detect by SAPI: HTTP (apache/fpm) runs one process per request and
+        // therefore must share buckets through the file, while the WebSocket
+        // daemon (CLI, long-lived) keeps the authoritative map in memory.
+        $this->persist = $persist ?? (PHP_SAPI !== 'cli');
+        if ($this->persist) {
+            $this->load();
+        }
     }
 
     /**
@@ -86,7 +102,6 @@ final class RateLimiter
 
         if ($bucket === null || ($now - $bucket['start']) >= $window) {
             $this->buckets[$key] = ['start' => $now, 'count' => 1];
-            $this->dirty = true;
             $this->maybePersist();
             return true;
         }
@@ -96,7 +111,6 @@ final class RateLimiter
         }
 
         $this->buckets[$key]['count']++;
-        $this->dirty = true;
         $this->maybePersist();
         return true;
     }
@@ -131,9 +145,13 @@ final class RateLimiter
 
     private function maybePersist(): void
     {
-        // Persist on every change: PHP workers are per-request, so batching would
-        // lose the increments that make the limit effective. The write is a single
-        // small JSON blob with LOCK_EX and the map is compacted first.
+        if (!$this->persist) {
+            return;
+        }
+        // Per-request mode: persist on every change, otherwise the increment is
+        // lost when this short-lived worker exits and the limit never triggers.
+        // The daemon never reaches here (persist=false), so this write is not on
+        // any hot path.
         $this->gc();
         if (!is_dir($this->storageDir)) {
             @mkdir($this->storageDir, 0755, true);
@@ -145,6 +163,5 @@ final class RateLimiter
         }
         @file_put_contents($file, $payload, LOCK_EX);
         @chmod($file, 0600);
-        $this->dirty = false;
     }
 }

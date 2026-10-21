@@ -68,6 +68,17 @@ assert.ok(/file_put_contents\(\$file, \$payload, LOCK_EX\)/.test(rateLimiter),
 assert.ok(!/count\(\$this->buckets\) % 50/.test(rateLimiter),
     'the old "persist every 50" heuristic silently disabled HTTP limits');
 
+// 4b) ...but the long-lived daemon must NOT touch the disk on every allow().
+//     world.move is limited at 90/3s per device, so a LOCK_EX rewrite of the
+//     whole bucket map per call put a ~10 ms file write on the event loop and
+//     made every room (legacy included) feel laggy.
+assert.ok(/private bool \$persist/.test(rateLimiter),
+    'RateLimiter must know whether it is allowed to write to disk');
+assert.ok(/PHP_SAPI !== 'cli'/.test(rateLimiter),
+    'persistence must default to HTTP-only (the CLI daemon is long-lived)');
+assert.ok(/new RateLimiter\(null, false\)/.test(ws),
+    'WebSocketHandler must run its limiter in memory only');
+
 // 5) VCS metadata must not be web-reachable.
 assert.ok(/\\\.\(git\|github\|svn/.test(htaccess),
     '.htaccess must block .git and friends (a named-folder rule does not cover them)');

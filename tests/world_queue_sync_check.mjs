@@ -10,28 +10,25 @@ import assert from 'node:assert';
 
 const search = readFileSync(new URL('../public/js/search.js', import.meta.url), 'utf8');
 
-// 1) The helpers must exist and understand world mode.
-const helper = search.slice(search.indexOf('isSharedSession() {'), search.indexOf('addTracksToBankMusik(tracks) {'));
-assert.ok(helper.includes('activeWorldId'), 'isSharedSession must check activeWorldId');
-assert.ok(/world\.activeBox/.test(helper), 'isSharedSession must require standing on a mat');
-assert.ok(helper.includes('activeRoomId'), 'isSharedSession must keep legacy room support');
-assert.ok(/hasWritableSharedTarget\(\) \{/.test(helper),
-    'a separate writable-target helper must guard queue/playlist writes');
-assert.ok(/world\.activeBox/.test(helper.slice(helper.indexOf('hasWritableSharedTarget'))),
-    'hasWritableSharedTarget must require an active mat in world mode');
+// 1) The helper must exist and understand world mode.
+const helper = search.slice(search.indexOf('hasSharedTarget() {'), search.indexOf('addTracksToBankMusik(tracks) {'));
+assert.ok(helper.includes('activeWorldId'), 'hasSharedTarget must check activeWorldId');
+assert.ok(/world\.activeBox/.test(helper), 'hasSharedTarget must require standing on a mat');
+assert.ok(helper.includes('activeRoomId'), 'hasSharedTarget must keep legacy room support');
+assert.ok(!/isConnected/.test(helper),
+    'hasSharedTarget must not depend on socket state (legacy reconnect regression)');
 
 // 2) No call site may keep the old room-only check.
 const legacyChecks = search.match(/player\.mode === 'jamming' \|\| !!\(window\.JAMRI_APP && window\.JAMRI_APP\.activeRoomId\)/g) || [];
 assert.strictEqual(legacyChecks.length, 0,
-    'all shared-session checks must use isSharedSession() (found the legacy room-only check)');
+    'all shared-session checks must use hasSharedTarget() (found the legacy room-only check)');
 
-// Write paths use the stricter helper; display-only paths may use isSharedSession.
-const writeCalls = search.match(/this\.hasWritableSharedTarget\(\)/g) || [];
-assert.ok(writeCalls.length >= 4,
-    `queue/playlist write paths must use hasWritableSharedTarget(), found ${writeCalls.length}`);
-assert.ok(!/isCurrentlyJamming = this\.isSharedSession\(\)/.test(search),
-    'no write path may rely on the broader isSharedSession()');
-
+// Every routing decision goes through the one helper.
+const targetCalls = search.match(/this\.hasSharedTarget\(\)/g) || [];
+assert.ok(targetCalls.length >= 5,
+    `all queue/playlist routing must use hasSharedTarget(), found ${targetCalls.length}`);
+assert.ok(!/this\.hasWritableSharedTarget\(\)/.test(search),
+    'the connectivity-gated helper must not be used for routing');
 // 3) world.js must mirror the mat queue so duplicate detection works, and clear
 //    it on zone.exit.
 const world = readFileSync(new URL('../public/js/world.js', import.meta.url), 'utf8');

@@ -43,9 +43,9 @@ assert.ok(/setMode\('solo',\s*null\)/.test(leave),
 // 4) Other consumers must use the shared helper too.
 assert.ok(!/player\.mode === 'jamming'/.test(app), 'app.js must use player.isSynced()');
 assert.ok(!/player\.mode === 'jamming'/.test(lyrics), 'lyrics.js must use player.isSynced()');
-assert.ok(!/player\.mode === 'jamming'/.test(search), 'search.js must use isSharedSession()');
-assert.ok(/this\.player\.isSynced && this\.player\.isSynced\(\)/.test(search),
-    'search.isSharedSession must consult player.isSynced()');
+assert.ok(!/player\.mode === 'jamming'/.test(search), 'search.js must use hasSharedTarget()');
+assert.ok(/hasSharedTarget\(\) \{/.test(search),
+    'search.js must expose hasSharedTarget() instead of reading player.mode');
 
 // 5) Periodic pong correction must be tighter inside a world. A mat is a shared
 //    listening spot, so a 4.5s tolerance (fine for a legacy room's rare stalls)

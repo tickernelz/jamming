@@ -12,7 +12,10 @@ assert.ok(closeBlock.includes("$this->worldManager->getBox($roomId, $activeBox)"
     'world onClose must resolve the mat box before detaching');
 assert.ok(closeBlock.includes("$this->detachFromRoom($box['room_id'], $resId, $meta)"),
     'world onClose must detach the mat room, not the world id');
-assert.ok(!closeBlock.includes("$this->detachFromRoom($roomId, $resId, $meta)"),
+// The legacy branch legitimately detaches its own $roomId (that IS the room), so
+// only the world branch must avoid it. Assert on the world branch only.
+const worldBranch = closeBlock.slice(0, closeBlock.indexOf('// A client that failed to attach'));
+assert.ok(!worldBranch.includes("$this->detachFromRoom($roomId, $resId, $meta)"),
     'world onClose must not detach the world id as if it were a room');
 
 // 2) resolveZones sends zone.choice_required at most once per pending choice.

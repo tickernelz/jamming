@@ -182,9 +182,9 @@ class JamriSearch {
 
     renderResults(container) {
         container.innerHTML = '';
-        // Labels ("Antrean" vs "Antrean Lokal") follow the writable target, so a
-        // user who walked off the mat sees local-mode actions, not mat actions.
-        const isJamming = this.hasWritableSharedTarget();
+        // Labels ("Antrean" vs "Antrean Lokal") follow the shared target, not the
+        // socket state, so they do not flip mid-reconnect.
+        const isJamming = this.hasSharedTarget();
 
         this.results.forEach((track, idx) => {
             const row = document.createElement('div');
@@ -257,14 +257,20 @@ class JamriSearch {
                 this.player.stopPreview();
 
                 const activeWs = this.ws || (window.JAMRI_APP && window.JAMRI_APP.wsClient);
-                const isCurrentlyJamming = this.hasWritableSharedTarget();
+                const isShared = this.hasSharedTarget();
 
-                if (isCurrentlyJamming && window.JAMRI_APP && window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
+                if (isShared && window.JAMRI_APP && window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
                     window.JAMRI_APP.games.notifyPunishedAction('memutar lagu');
                     return;
                 }
 
-                if (isCurrentlyJamming && activeWs && activeWs.isConnected) {
+                if (isShared) {
+                    // Never fall through to a private solo play while the user is
+                    // still attached to a shared session — that desynced them.
+                    if (!activeWs || !activeWs.isConnected) {
+                        if (window.showToast) window.showToast('Menyambung ulang ke sesi. Coba lagi sebentar.', 'warning');
+                        return;
+                    }
                     activeWs.sendSetTrack(track);
                 } else {
                     this.player.playTrack(track, 0);
@@ -276,21 +282,23 @@ class JamriSearch {
             row.querySelector('.btn-add-queue').addEventListener('click', (e) => {
                 e.stopPropagation();
                 const activeWs = this.ws || (window.JAMRI_APP && window.JAMRI_APP.wsClient);
-                const isCurrentlyJamming = this.hasWritableSharedTarget();
+                const isShared = this.hasSharedTarget();
 
-                if (isCurrentlyJamming && window.JAMRI_APP && window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
+                if (isShared && window.JAMRI_APP && window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
                     window.JAMRI_APP.games.notifyPunishedAction('menambah antrean');
                     return;
                 }
 
-                if (isCurrentlyJamming) {
+                if (isShared) {
                     if (window.JAMRI_APP && window.JAMRI_APP.roomQueue && window.JAMRI_APP.roomQueue.some(t => t.youtube_id === track.youtube_id)) {
                         if (window.showToast) window.showToast('Lagu ini sudah ada di antrean.', 'warning');
                         return;
                     }
-                    if (activeWs && activeWs.isConnected) {
-                        activeWs.sendQueueAdd(track);
+                    if (!activeWs || !activeWs.isConnected) {
+                        if (window.showToast) window.showToast('Menyambung ulang ke sesi. Coba lagi sebentar.', 'warning');
+                        return;
                     }
+                    activeWs.sendQueueAdd(track);
                 } else {
                     const added = this.player.addToSoloQueue(track);
                     if (!added) {
@@ -311,14 +319,14 @@ class JamriSearch {
             row.querySelector('.btn-add-playlist').addEventListener('click', (e) => {
                 e.stopPropagation();
                 const activeWs = this.ws || (window.JAMRI_APP && window.JAMRI_APP.wsClient);
-                const isCurrentlyJamming = this.hasWritableSharedTarget();
+                const isShared = this.hasSharedTarget();
 
-                if (isCurrentlyJamming && window.JAMRI_APP && window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
+                if (isShared && window.JAMRI_APP && window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
                     window.JAMRI_APP.games.notifyPunishedAction('menambah lagu ke Bank Musik');
                     return;
                 }
 
-                if (isCurrentlyJamming) {
+                if (isShared) {
                     if (window.JAMRI_APP && window.JAMRI_APP.roomPlaylist && window.JAMRI_APP.roomPlaylist.some(t => t.youtube_id === track.youtube_id)) {
                         if (window.showToast) window.showToast('Lagu ini sudah ada di Bank Musik.', 'warning');
                         return;
@@ -326,7 +334,15 @@ class JamriSearch {
                     if (activeWs && activeWs.isConnected) {
                         activeWs.sendPlaylistAdd(track);
                     } else {
-                        const roomId = (activeWs && activeWs.roomId) || (window.JAMRI_APP && window.JAMRI_APP.activeRoomId);
+                        // HTTP fallback keeps the write on the shared Bank Musik
+                        // while the socket is reconnecting. A mat has no HTTP
+                        // endpoint, so it can only ask the user to retry.
+                        const roomId = (window.JAMRI_APP && window.JAMRI_APP.activeRoomId)
+                            || (activeWs && activeWs.mode !== 'world' ? activeWs.roomId : '');
+                        if (!roomId) {
+                            if (window.showToast) window.showToast('Menyambung ulang ke sesi. Coba lagi sebentar.', 'warning');
+                            return;
+                        }
                         const deviceId = (window.JAMRI_USER && window.JAMRI_USER.device_id) || '';
                         fetch('api/rooms.php', {
                             method: 'POST',
@@ -429,37 +445,23 @@ class JamriSearch {
     }
 
     /**
-     * True when the user is listening together with other people — either a
-     * legacy jamming room OR a world mat. World mode never sets activeRoomId
-     * (the socket id is the world id), so checking only that flag silently sent
-     * every "add to queue"/"play now" into the local solo queue instead of the
-     * mat, which looked like the mat queue "not syncing".
+     * True when the user belongs to a shared queue/playlist target — a legacy
+     * jamming room OR a world mat — whether or not the socket is up this instant.
+     *
+     * World mode never sets activeRoomId (the socket id is the world id), so
+     * checking only that flag silently sent every "add to queue"/"play now" into
+     * the local solo queue instead of the mat, which looked like the mat queue
+     * "not syncing".
+     *
+     * Deliberately independent of `isConnected`: gating this on the socket meant
+     * a legacy member who clicked "add to queue" during a brief reconnect had the
+     * track silently dropped into their private solo queue. Walking off a mat
+     * still clears `world.activeBox`, so world users correctly fall back to solo.
      */
-    isSharedSession() {
-        if (this.player && this.player.isSynced && this.player.isSynced()) return true;
+    hasSharedTarget() {
         const app = window.JAMRI_APP || {};
         if (app.activeRoomId) return true;
-        // World mode: only a mat gives access to a shared queue.
         return !!(app.activeWorldId && app.world && app.world.activeBox);
-    }
-
-    /**
-     * True when this player currently OWNS a shared target for queue/playlist
-     * writes. isSharedSession() is broader (it also covers "socket is live"),
-     * which is not enough after walking off a mat: the world socket is still
-     * connected but there is no mat room behind it, so sending would silently
-     * target the mat we just left.
-     */
-    hasWritableSharedTarget() {
-        const app = window.JAMRI_APP || {};
-        if (app.activeRoomId) {
-            const ws = this.ws || app.wsClient;
-            return !!(ws && ws.isConnected);
-        }
-        if (app.activeWorldId) {
-            return !!(app.world && app.world.activeBox && app.wsClient && app.wsClient.isConnected);
-        }
-        return false;
     }
 
     /**
@@ -470,7 +472,7 @@ class JamriSearch {
      */
     addTracksToBankMusik(tracks) {
         const activeWs = this.ws || (window.JAMRI_APP && window.JAMRI_APP.wsClient);
-        const isCurrentlyJamming = this.hasWritableSharedTarget();
+        const isCurrentlyJamming = this.hasSharedTarget();
 
         if (isCurrentlyJamming && window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
             window.JAMRI_APP.games.notifyPunishedAction('menambah lagu ke Bank Musik');
@@ -485,7 +487,14 @@ class JamriSearch {
             if (activeWs && activeWs.isConnected) {
                 activeWs.sendPlaylistAddBulk(fresh);
             } else {
-                const roomId = (activeWs && activeWs.roomId) || (window.JAMRI_APP && window.JAMRI_APP.activeRoomId);
+                // Only a legacy room has an HTTP fallback; a mat lives purely on
+                // the world socket, so there is nothing to POST to.
+                const roomId = (window.JAMRI_APP && window.JAMRI_APP.activeRoomId)
+                    || (activeWs && activeWs.mode !== 'world' ? activeWs.roomId : '');
+                if (!roomId) {
+                    if (window.showToast) window.showToast('Menyambung ulang ke sesi. Coba lagi sebentar.', 'warning');
+                    return 0;
+                }
                 const deviceId = (window.JAMRI_USER && window.JAMRI_USER.device_id) || '';
                 fresh.forEach(track => {
                     fetch('api/rooms.php', {

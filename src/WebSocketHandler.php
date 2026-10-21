@@ -61,7 +61,10 @@ class WebSocketHandler implements MessageComponentInterface
     {
         $this->roomManager = $roomManager;
         $this->ytService = $ytService;
-        $this->rateLimiter = new RateLimiter();
+        // persist=false: this process is long-lived, so the in-memory bucket map
+        // is already authoritative. File I/O here would sit on the message hot
+        // path (world.move is limited per device) and stall the event loop.
+        $this->rateLimiter = new RateLimiter(null, false);
         $this->worldManager = $worldManager ?? new WorldManager($roomManager->pdo(), $roomManager);
         $this->restoreRuntimeState();
         register_shutdown_function([$this, 'persistRuntimeState']);
@@ -234,17 +237,7 @@ class WebSocketHandler implements MessageComponentInterface
         unset($this->rooms[$roomId]['clients'][$resId]);
 
         if (count($this->rooms[$roomId]['clients']) === 0) {
-            $this->rooms[$roomId]['empty_since'] = time();
-            // Compute the live position BEFORE flipping the state: getCurrentPosition()
-            // only adds the elapsed delta while the room is still 'playing', so
-            // pausing first froze the position at its stale anchor (the last explicit
-            // play/seek) and an emptied mat resumed at 0:00 instead of where it stopped.
-            $currentPos = $this->getCurrentPosition($roomId);
-            $this->rooms[$roomId]['playback_state'] = 'paused';
-            $this->rooms[$roomId]['position'] = $currentPos;
-            $this->rooms[$roomId]['last_sync_timestamp'] = microtime(true);
-            $this->roomManager->updatePlaybackState($roomId, 'paused', $currentPos);
-            $this->roomManager->markEmptySince($roomId, true);
+            $this->pauseRoom($roomId);
         } else {
             $this->broadcastToRoom($roomId, [
                 'type' => 'user_left',
@@ -255,6 +248,37 @@ class WebSocketHandler implements MessageComponentInterface
                 'online_users' => $this->getOnlineUsers($roomId),
             ]);
         }
+    }
+
+    /**
+     * Freeze a room that just lost its last listener: remember where the track
+     * stopped, freeze the state and flag it for auto-purge.
+     *
+     * The position MUST be read before the state flips, because
+     * getCurrentPosition() only adds the elapsed delta while the room is still
+     * 'playing'. Pausing first left the anchor at the last explicit play/seek,
+     * so an emptied room resumed at 0:00 instead of where it stopped.
+     */
+    private function pauseRoom(string $roomId): void
+    {
+        if (!isset($this->rooms[$roomId])) {
+            return;
+        }
+
+        $currentPos = $this->getCurrentPosition($roomId);
+        // A room with no track has nothing to resume: keep it 'stopped' instead
+        // of advertising a paused track that does not exist.
+        $hasTrack = !empty($this->rooms[$roomId]['current_track']);
+        $state = $hasTrack ? 'paused' : 'stopped';
+        $position = $hasTrack ? $currentPos : 0.0;
+
+        $this->rooms[$roomId]['empty_since'] = time();
+        $this->rooms[$roomId]['playback_state'] = $state;
+        $this->rooms[$roomId]['position'] = $position;
+        $this->rooms[$roomId]['last_sync_timestamp'] = microtime(true);
+
+        $this->roomManager->updatePlaybackState($roomId, $state, $position);
+        $this->roomManager->markEmptySince($roomId, true);
     }
 
     public function onMessage(ConnectionInterface $from, $msg): void
@@ -314,9 +338,12 @@ class WebSocketHandler implements MessageComponentInterface
             'queue_shuffle', 'playlist_add', 'playlist_remove'
         ];
 
-        // Mat control policy: when a mat is set to 'owner', only the mat owner
-        // may drive playback. Enforced server-side (never trust the client).
-        if (in_array($type, $musicControlActions, true) && ($meta['mode'] ?? 'room') === 'world') {
+        // Control policy: when a room/mat is set to 'owner', only the owner may
+        // drive playback. Enforced server-side (never trust the client) and NOT
+        // gated on world mode — the flag lives on the room row, so a legacy room
+        // carrying control_mode='owner' must be honoured too instead of silently
+        // letting everyone control it.
+        if (in_array($type, $musicControlActions, true)) {
             $control = $this->rooms[$roomId]['control_mode'] ?? 'everyone';
             if ($control === 'owner') {
                 $summary = $this->roomManager->getRoomSummary($roomId);
@@ -324,7 +351,7 @@ class WebSocketHandler implements MessageComponentInterface
                 if ($owner !== '' && $owner !== $meta['device_id']) {
                     $from->send(json_encode([
                         'type' => 'notice',
-                        'message' => 'Tikar ini hanya bisa dikontrol oleh pemiliknya.',
+                        'message' => 'Sesi ini hanya bisa dikontrol oleh pemiliknya.',
                         'level' => 'warning',
                     ]));
                     return;
@@ -390,6 +417,16 @@ class WebSocketHandler implements MessageComponentInterface
                 break;
 
             case 'pause':
+                if (empty($this->rooms[$roomId]['current_track'])) {
+                    // Nothing is loaded: keep the room 'stopped'. Flipping to
+                    // 'paused' made an empty room look like a paused track in
+                    // every client's UI.
+                    $this->rooms[$roomId]['playback_state'] = 'stopped';
+                    $this->rooms[$roomId]['position'] = 0.0;
+                    $this->roomManager->updatePlaybackState($roomId, 'stopped', 0.0);
+                    break;
+                }
+
                 $currentPos = $this->getCurrentPosition($roomId);
                 $this->rooms[$roomId]['playback_state'] = 'paused';
                 $this->rooms[$roomId]['position'] = $currentPos;
@@ -488,6 +525,19 @@ class WebSocketHandler implements MessageComponentInterface
             case 'queue_add':
                 $track = Validator::track($data['track'] ?? []);
                 if ($track !== null) {
+                    // The track that is already playing must not be re-queued: the
+                    // queue only rejects duplicates of UNPLAYED rows, so the playing
+                    // song could be added again and would then play twice in a row.
+                    $current = $this->rooms[$roomId]['current_track'] ?? null;
+                    if ($current !== null && ($current['youtube_id'] ?? null) === $track['youtube_id']) {
+                        $from->send(json_encode([
+                            'type' => 'notice',
+                            'message' => 'Lagu ini sedang diputar.',
+                            'level' => 'warning',
+                        ]));
+                        break;
+                    }
+
                     $added = $this->roomManager->addTrackToQueue($roomId, $track, $meta['nickname']);
                     if ($added === null) {
                         $from->send(json_encode([
@@ -890,27 +940,13 @@ class WebSocketHandler implements MessageComponentInterface
             return;
         }
 
-        unset($this->rooms[$roomId]['clients'][$resId]);
         unset($this->clientMeta[$resId]);
 
-        $remainingCount = count($this->rooms[$roomId]['clients']);
-
-        if ($remainingCount === 0) {
-            $this->rooms[$roomId]['empty_since'] = time();
-            $this->rooms[$roomId]['playback_state'] = 'paused';
-            $currentPos = $this->getCurrentPosition($roomId);
-            $this->roomManager->updatePlaybackState($roomId, 'paused', $currentPos);
-            $this->roomManager->markEmptySince($roomId, true);
-        } else {
-            $this->broadcastToRoom($roomId, [
-                'type' => 'user_left',
-                'user' => [
-                    'nickname' => $meta['nickname'],
-                    'emoji' => $meta['emoji'],
-                ],
-                'online_users' => $this->getOnlineUsers($roomId),
-            ]);
-        }
+        // Same bookkeeping as a mat detach. Delegating keeps the pause-position
+        // ordering in ONE place: computing the position after flipping the state
+        // to 'paused' froze an emptied legacy room at its last explicit play/seek
+        // (0:00), so rejoining restarted the song instead of resuming.
+        $this->detachFromRoom($roomId, $resId, $meta);
     }
 
     public function onError(ConnectionInterface $conn, Exception $e): void

@@ -76,24 +76,35 @@ assert.ok(getCur.indexOf('if (!this.currentTrack) return 0;') < getCur.indexOf('
     'the no-track guard must run before the YT bridge is queried');
 
 // 7) Queue/playlist writes must target a real shared room, not a mat we left.
-assert.ok(/hasWritableSharedTarget\(\) \{/.test(search),
-    'search.js must distinguish "shared session" from "writable shared target"');
-assert.ok(!/isCurrentlyJamming = this\.isSharedSession\(\)/.test(search),
-    'write paths must use hasWritableSharedTarget(), not isSharedSession()');
-assert.ok(/app\.world\.activeBox/.test(search),
-    'hasWritableSharedTarget must require an active mat in world mode');
+//    hasSharedTarget() decides WHICH queue a track belongs to and must NOT
+//    depend on socket state: gating it on isConnected dropped legacy room
+//    actions into the private solo queue during a reconnect.
+assert.ok(/hasSharedTarget\(\) \{/.test(search),
+    'search.js must expose a hasSharedTarget() routing helper');
+const targetHelper = search.slice(search.indexOf('hasSharedTarget() {'), search.indexOf('addTracksToBankMusik(tracks) {'));
+assert.ok(/app\.world\.activeBox/.test(targetHelper),
+    'hasSharedTarget must require an active mat in world mode');
+assert.ok(!/isConnected/.test(targetHelper),
+    'hasSharedTarget must not depend on socket state (legacy reconnect regression)');
 
-// 8) Emptied mat must remember where it stopped.
-//    detachFromRoom() flipped the state to 'paused' BEFORE reading the position,
-//    but getCurrentPosition() only adds the elapsed delta while state is still
-//    'playing'. The position therefore froze at the last explicit anchor and an
-//    emptied mat restarted at 0:00 instead of resuming where it stopped.
-const detach = php.slice(php.indexOf('private function detachFromRoom'), php.indexOf('public function onMessage'));
-assert.ok(detach.indexOf('getCurrentPosition($roomId)') < detach.indexOf("'playback_state'] = 'paused'"),
-    'detachFromRoom must read the live position BEFORE pausing the room');
-assert.ok(/\$this->rooms\[\$roomId\]\['position'\] = \$currentPos/.test(detach),
-    'detachFromRoom must persist the computed position on the in-memory room');
-assert.ok(/\$this->rooms\[\$roomId\]\['last_sync_timestamp'\] = microtime\(true\)/.test(detach),
-    'detachFromRoom must reset the sync anchor alongside the position');
+// 8) Emptied room must remember where it stopped.
+//    The pause path used to flip the state to 'paused' BEFORE reading the
+//    position, but getCurrentPosition() only adds the elapsed delta while state
+//    is still 'playing'. The position therefore froze at the last explicit anchor
+//    and an emptied room restarted at 0:00 instead of resuming where it stopped.
+//    Both the mat detach and the legacy onClose go through pauseRoom(), so the
+//    ordering is asserted once, on the shared helper.
+const pause = php.slice(php.indexOf('private function pauseRoom'), php.indexOf('public function onMessage'));
+assert.ok(pause.indexOf('getCurrentPosition($roomId)') < pause.indexOf("'playback_state'] = $state"),
+    'pauseRoom must read the live position BEFORE pausing the room');
+assert.ok(/\$this->rooms\[\$roomId\]\['position'\] = \$position/.test(pause),
+    'pauseRoom must persist the computed position on the in-memory room');
+assert.ok(/\$this->rooms\[\$roomId\]\['last_sync_timestamp'\] = microtime\(true\)/.test(pause),
+    'pauseRoom must reset the sync anchor alongside the position');
+const detach = php.slice(php.indexOf('private function detachFromRoom'), php.indexOf('private function pauseRoom'));
+assert.ok(detach.includes('$this->pauseRoom($roomId)'),
+    'detachFromRoom must delegate the pause bookkeeping to pauseRoom');
+assert.ok(!detach.includes("'playback_state'] = 'paused'"),
+    'detachFromRoom must not pause the room itself (pauseRoom owns the ordering)');
 
 console.log('world_mat_exit_reset_check: OK');

@@ -14,8 +14,9 @@
 | WebSocket world | 54 | ✅ 0 gagal |
 | Ketahanan (resilience) | 14 | ✅ 0 gagal |
 | Keamanan (hardening/XSS) | 58 | ✅ 0 gagal |
+| Legacy mendalam (per-room) | 50 | ✅ 0 gagal |
 | Guard statis `tests/*.mjs` | 23 file | ✅ 0 gagal |
-| **Total** | **240** | **✅ 0 gagal** |
+| **Total** | **290** | **✅ 0 gagal** |
 
 Log daemon: **0 error** setelah perbaikan (`onMessage Error` = 0).
 
@@ -149,12 +150,12 @@ Masuk lagi menampilkan campuran data lama/baru, bukan snapshot terkini.
 
 **Akar:** `zone.exit` hanya `player.pause()` + mengosongkan antrean. `currentTrack`,
 anchor timeline, `roomPlaylist`, `roomState` dan panel lain tidak disentuh;
-`search.js` memakai `isSharedSession()` yang hanya melihat socket hidup.
+`search.js` masih memakai cek lama yang tidak melihat tikar.
 
 **Fix:** `player.resetSharedSession()` + `world._resetMatLists()` dipanggil dari
 `zone.exit`, `leave()` dan `enter()`; `room_init` sekarang membawa `playlist` dan
-`onRoomInit()` meng-hydrate panelnya; `playlist_updated` di-listen; tulis
-antrean/Bank Musik memakai `search.hasWritableSharedTarget()` baru.
+`onRoomInit()` meng-hydrate panelnya; `playlist_updated` di-listen; semua tulis
+antrean/Bank Musik dirutekan lewat `search.hasSharedTarget()`.
 
 ### 12. 🟠 Tikar yang kosong kehilangan posisi (restart 0:00)
 
@@ -170,6 +171,98 @@ state masih `playing`. Posisi jadi membeku di anchor play/seek terakhir.
 
 **Verifikasi:** `tests/e2e/qa_mat_position.mjs` → 6.00 s → keluar → masuk →
 **6.55 s** (POSITION OK).
+
+## Audit regresi mode legacy (lanjutan)
+
+Fokus: memastikan pekerjaan mode world **tidak** merusak room legacy, dan
+mencari bug legacy yang selama ini tidak terdeteksi. Semua temuan direproduksi
+dulu lewat probe WebSocket mentah, baru diperbaiki.
+
+### 13. 🔴 Rate limiter menulis file di hot path daemon (semua room lag)
+
+**Repro:** `tests/e2e/qa_ratelimiter_perf.php` — 200 panggilan `allow()` dengan
+key berbeda.
+
+**Akar:** perbaikan #4 (HTTP rate limit tidak pernah aktif) membuat
+`maybePersist()` menulis ulang **seluruh** map bucket ke
+`data/rate_limit.json` dengan `LOCK_EX` pada setiap perubahan. Di HTTP itu benar
+(satu proses per request), tapi daemon Ratchet hidup lama: 10 device × tick
+15 Hz = **19.6 ms file I/O per tick** yang memblokir event loop, sehingga
+**semua** room (legacy termasuk) terasa lag.
+
+**Fix:** `RateLimiter` sekarang punya flag `persist` (default
+`PHP_SAPI !== 'cli'`); `WebSocketHandler` memakai `new RateLimiter(null, false)`.
+HTTP tetap persisten, daemon murni in-memory.
+
+**Verifikasi:** 10.244 ms → **0.0025 ms** per panggilan (distinct key), 19.65 ms
+→ **0.005 ms** per tick. Rate limit HTTP tetap aktif (5× 200 lalu 429).
+
+### 14. 🟠 Aksi legacy jatuh ke antrean solo saat socket putus
+
+**Repro:** di room legacy, putuskan socket sesaat (tab sleep/ngrok), lalu klik
+"Antrean" pada hasil pencarian.
+
+**Akar:** `search.hasWritableSharedTarget()` mensyaratkan `isConnected`. Saat
+reconnect, lagu diam-diam masuk ke antrean **pribadi** dan tidak pernah sampai
+ke room.
+
+**Fix:** satu helper `search.hasSharedTarget()` (hanya `activeRoomId` atau
+`activeWorldId && world.activeBox`, **tanpa** cek socket) dipakai semua jalur
+routing; kalau socket sedang turun, muncul toast "Menyambung ulang ke sesi."
+
+### 15. 🟠 Room legacy yang kosong kehilangan posisi (varian #12)
+
+**Repro:** `qa_legacy_deep.mjs` → putar 3.6 s → tutup semua socket → join lagi →
+`room_init.position` = **0**.
+
+**Akar:** `onClose()` punya salinan sendiri dari logika pause, dan salinan itu
+mengulang bug urutan yang sama seperti #12 (pause dulu, baru hitung posisi).
+Perbaikan #12 hanya menyentuh `detachFromRoom()` (jalur tikar).
+
+**Fix:** logika dipindah ke satu helper `pauseRoom()`; `detachFromRoom()` dan
+`onClose()` sama-sama memanggilnya. Room tanpa track tetap `stopped` (bukan
+`paused` palsu).
+
+**Verifikasi:** 3.61 s → keluar → masuk → **4.02 s**, state `paused`.
+
+### 16. 🟡 Lagu yang sedang diputar bisa dimasukkan ulang ke antrean
+
+**Akar:** `addTrackToQueue()` hanya menolak duplikat baris `is_played = 0`, jadi
+track yang sedang diputar lolos dan akan berbunyi dua kali beruntun.
+
+**Fix:** `queue_add` menolak bila `youtube_id` sama dengan `current_track`
+(notice "Lagu ini sedang diputar.").
+
+### 17. 🟡 `box_control = 'owner'` tidak ditegakkan di room legacy
+
+**Akar:** pengecekan owner di `onMessage()` digerbangi
+`mode === 'world'`, padahal flag-nya ada di baris `rooms`. Room legacy ber-flag
+`owner` jadi bisa dikendalikan siapa saja lewat socket.
+
+**Fix:** gerbang mode dihapus; policy berlaku untuk room mana pun yang flag-nya
+`owner`. Pesan diubah jadi "Sesi ini hanya bisa dikontrol oleh pemiliknya."
+
+### 18. 🟡 `pause` pada room kosong membuat state `paused` palsu
+
+**Akar:** `pause` tanpa `current_track` tetap menulis `paused`, sehingga UI
+menampilkan track yang tidak ada.
+
+**Fix:** tanpa track, state dipertahankan `stopped` + posisi 0.
+
+### 19. 🟡 Bank Musik tidak ter-refresh saat reconnect
+
+**Akar:** `room_init` sudah membawa `playlist` (fix #11), tapi handler
+`ws.on('room_init')` di `app.js` hanya memakai `queue`. Reconnect tidak
+memanggil `room_detail`, jadi tab Bank Musik tetap menampilkan data lama.
+
+**Fix:** `renderRoomPlaylist(data.playlist)` bila array; `leaveRoom()` juga
+mengosongkan `roomQueue`/`roomPlaylist` agar tidak ada salinan basi yang dipakai
+`search.js`.
+
+**Verifikasi (UI nyata, Playwright):** peer menambah 1 lagu Bank Musik + 1
+antrean + pause → tab Bank Musik & Antrean langsung terisi, footer 0:27,
+`isPlaying=false`; keluar → mirror kosong (`0/0`, `hasSharedTarget=false`);
+masuk lagi → lagu, antrean, playlist, dan posisi 27.44 s kembali.
 ## Yang diverifikasi bekerja (tanpa perubahan)
 
 - **API**: auth GET/POST, validasi & clamp nickname (25), emoji whitelist,
@@ -217,7 +310,15 @@ node tests/e2e/qa_room_ws.mjs          # 55 checks
 node tests/e2e/qa_world_ws.mjs         # 54 checks
 node tests/e2e/qa_resilience.mjs       # 14 checks
 node tests/e2e/qa_security.mjs         # 58 checks
+node tests/e2e/qa_legacy_deep.mjs      # 50 checks (tiap skenario = room baru)
+node tests/e2e/qa_ratelimiter_perf.php # biaya allow() (hot path daemon)
 node tests/e2e/qa_world_pair.mjs <worldId>    # sinkronisasi mat (1 browser + 2 peer)
 node tests/e2e/qa_mat_position.mjs <worldId>  # posisi tikar bertahan saat kosong
 node tests/e2e/qa_mat_peer.mjs <worldId> seed  # peer lain mengubah antrean/Bank Musik
 ```
+
+`qa_legacy_deep.mjs` membuat satu room baru per skenario. Ini penting: versi
+awal memakai satu room untuk semua skenario dan menghasilkan 13 kegagalan palsu
+karena sisa `youtube_id` di antrean, debounce `track_ended` 3 s, dan
+`control_mode` yang sudah di-cache daemon.
+
