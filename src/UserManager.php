@@ -34,12 +34,10 @@ class UserManager
 
     public function registerOrUpdate(string $deviceId, string $nickname, string $emoji): array
     {
-        $nickname = trim($nickname);
-        $emoji = trim($emoji);
-
-        if ($emoji === '') {
-            $emoji = '🎧';
-        }
+        // Centralised sanitation: nicknames/emojis are broadcast to every client
+        // in a room, so they must never carry markup or control characters.
+        $nickname = Validator::nickname($nickname, 'Kawan Jamming');
+        $emoji = Validator::emoji($emoji);
 
         $stmt = $this->pdo->prepare('
             INSERT INTO users (device_id, nickname, emoji, last_active)

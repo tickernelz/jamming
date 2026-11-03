@@ -5,6 +5,19 @@
  */
 
 document.addEventListener('DOMContentLoaded', async () => {
+    // 0. Service-worker self-heal: if a controller change happens (a new SW
+    //    activated), reload once so the page never runs against mixed versions
+    //    of cached/new JS. Guarded so it can never loop.
+    if (!window.__jamriSwBound && 'serviceWorker' in navigator) {
+        window.__jamriSwBound = true;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+            if (!window.__jamriReloading) {
+                window.__jamriReloading = true;
+                window.location.reload();
+            }
+        });
+    }
+
     // 1. Inisialisasi Tema (Dark / Light)
     initTheme();
 
@@ -34,7 +47,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 4. Setup PWA Service Worker
     if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('./public/sw.js').catch(console.warn);
+        navigator.serviceWorker.register('./public/sw.js')
+            .then((reg) => {
+                // Ask the browser to check for an updated service worker each load
+                // so stale caches are replaced promptly.
+                if (reg.update) reg.update();
+            })
+            .catch(console.warn);
     }
 
     // 5. Setup Player Dock Listeners & UI Binding
@@ -103,7 +122,7 @@ function updateThemeButton(theme) {
    ========================================================================== */
 function switchView(viewName) {
     window.JAMRI_APP.currentView = viewName;
-    const views = ['lobby-view', 'room-view', 'solo-view'];
+    const views = ['lobby-view', 'room-view', 'solo-view', 'world-view'];
     views.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = 'none';
@@ -117,8 +136,8 @@ function switchView(viewName) {
         btn.classList.toggle('active', btn.dataset.view === viewName);
     });
 
-    // Rigid viewport lock untuk jamming room di desktop
-    if (viewName === 'room') {
+    // Rigid viewport lock untuk jamming room / world di desktop
+    if (viewName === 'room' || viewName === 'world') {
         document.body.classList.add('in-room');
     } else {
         document.body.classList.remove('in-room');
@@ -136,16 +155,12 @@ function bindNavigation(player, wsClient, searchModule) {
         btn.addEventListener('click', () => {
             const target = btn.dataset.view;
             if (target === 'lobby') {
-                if (window.JAMRI_APP.activeRoomId) {
-                    leaveRoom();
-                } else {
+                if (!leaveActiveSession()) {
                     player.setMode('solo', null);
                     switchView('lobby');
                 }
             } else if (target === 'solo') {
-                if (window.JAMRI_APP.activeRoomId) {
-                    leaveRoom();
-                }
+                leaveActiveSession();
                 player.setMode('solo', null);
                 searchModule.setWebSocket(null);
                 switchView('solo');
@@ -155,9 +170,7 @@ function bindNavigation(player, wsClient, searchModule) {
 
     // Logo brand click -> Lobby
     document.querySelector('.brand-logo').addEventListener('click', () => {
-        if (window.JAMRI_APP.activeRoomId) {
-            leaveRoom();
-        } else {
+        if (!leaveActiveSession()) {
             player.setMode('solo', null);
             switchView('lobby');
         }
@@ -233,6 +246,7 @@ async function refreshLobbyRooms(searchQuery = '') {
             const card = document.createElement('div');
             card.className = 'room-card';
             const isPlaying = room.playback_state === 'playing';
+            const isWorld = room.mode === 'world';
 
             card.innerHTML = `
                 <div class="room-card-top">
@@ -240,31 +254,39 @@ async function refreshLobbyRooms(searchQuery = '') {
                         <div class="room-card-name">${escapeHtml(room.name)}</div>
                         <div class="room-card-host">
                             <span>Host:</span>
-                            <span>${room.host_emoji || '🎧'}</span>
+                            <span>${safeEmoji(room.host_emoji)}</span>
                             <span>${escapeHtml(room.host_nickname || 'Member')}</span>
                         </div>
                     </div>
-                    <span class="badge ${room.is_private ? 'badge-private' : 'badge-primary'}" style="display:inline-flex; align-items:center; gap:4px;">
-                        ${room.is_private ? `
+                    <span class="badge ${isWorld ? 'badge-primary' : (room.is_private ? 'badge-private' : 'badge-primary')}" style="display:inline-flex; align-items:center; gap:4px;">
+                        ${isWorld ? `
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+                                <path d="M3 9h18M9 21V9"></path>
+                            </svg>
+                            World
+                        ` : (room.is_private ? `
                             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                                 <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
                                 <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
                             </svg>
                             Private
-                        ` : 'Public'}
+                        ` : 'Public')}
                     </span>
                 </div>
                 <div class="room-card-meta">
                     <div class="room-card-status">
                         <span class="status-dot ${isPlaying ? 'playing' : ''}"></span>
-                        <span>${isPlaying ? 'Sedang Memutar' : 'Standby'}</span>
+                        <span>${isWorld ? 'Peta Pixel' : (isPlaying ? 'Sedang Memutar' : 'Standby')}</span>
                     </div>
-                    <div>${room.queue_count || 0} lagu di antrean</div>
+                    <div>${isWorld ? 'Jalan & gelar tikar' : (room.queue_count || 0) + ' lagu di antrean'}</div>
                 </div>
             `;
 
             card.addEventListener('click', () => {
-                if (room.is_private) {
+                if (isWorld) {
+                    enterWorld(room.id);
+                } else if (room.is_private) {
                     promptPasscodeModal(room.name, (enteredPasscode) => {
                         joinRoom(room.id, true, enteredPasscode);
                     });
@@ -366,6 +388,18 @@ function showCreateRoomModal() {
                         <input type="text" id="new-room-name" class="form-input" placeholder="contoh: Jamming Santai Sore" required maxlength="50" autocomplete="off" />
                     </div>
                     <div class="form-group">
+                        <label class="form-label">Mode Room</label>
+                        <div style="display:flex; gap:16px; margin-top:6px; flex-wrap:wrap;">
+                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                                <input type="radio" name="room_mode" value="legacy" checked /> Legacy (Room musik biasa)
+                            </label>
+                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                                <input type="radio" name="room_mode" value="world" /> World (Peta pixel + avatar)
+                            </label>
+                        </div>
+                        <div class="input-hint" id="mode-hint" style="margin-top:6px;">Room musik klasik: antrean lagu, chat, dan Bank Musik seperti biasa.</div>
+                    </div>
+                    <div class="form-group" id="room-access-group">
                         <label class="form-label">Tipe Akses Room</label>
                         <div style="display:flex; gap:16px; margin-top:6px;">
                             <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
@@ -423,11 +457,30 @@ function showCreateRoomModal() {
         });
     });
 
+    // Room mode (legacy vs world) toggles access options and hint text.
+    const modeRadios = modal.querySelectorAll('input[name="room_mode"]');
+    const accessGroup = modal.querySelector('#room-access-group');
+    const modeHint = modal.querySelector('#mode-hint');
+    modeRadios.forEach(r => {
+        r.addEventListener('change', () => {
+            const isWorld = r.value === 'world';
+            accessGroup.style.display = isWorld ? 'none' : 'block';
+            if (isWorld) passGroup.style.display = 'none';
+            if (modeHint) {
+                modeHint.textContent = isWorld
+                    ? 'World pixel-game: avatar jalan bebas. Musik dimainkan lewat "tikar" yang digelar pemain (fitur musik tikar menyusul).'
+                    : 'Room musik klasik: antrean lagu, chat, dan Bank Musik seperti biasa.';
+            }
+        });
+    });
+
     const form = modal.querySelector('#create-room-form');
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const name = modal.querySelector('#new-room-name').value.trim();
-        const isPrivate = modal.querySelector('input[name="room_access"]:checked').value === 'private';
+        const roomMode = modal.querySelector('input[name="room_mode"]:checked').value;
+        const isWorld = roomMode === 'world';
+        const isPrivate = !isWorld && modal.querySelector('input[name="room_access"]:checked').value === 'private';
         const passcode = modal.querySelector('#new-room-passcode').value.trim();
 
         const deviceId = window.JAMRI_USER ? window.JAMRI_USER.device_id : JamriAuth.getOrCreateDeviceId();
@@ -437,6 +490,24 @@ function showCreateRoomModal() {
         submitBtn.textContent = 'Membuat...';
 
         try {
+            if (isWorld) {
+                const res = await fetch('api/worlds.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, device_id: deviceId })
+                });
+                const data = await res.json();
+                if (data.success && data.world) {
+                    closeModal();
+                    enterWorld(data.world.id);
+                } else {
+                    alert(data.error || 'Gagal membuat world.');
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'Buat Room';
+                }
+                return;
+            }
+
             const res = await fetch('api/rooms.php', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -468,6 +539,26 @@ function showCreateRoomModal() {
 /* ==========================================================================
    JOIN & MANAGE JAMMING ROOM
    ========================================================================== */
+// End whichever live session (world or room) is active. Navigation used to
+// only check activeRoomId, so leaving a world via the nav tabs/logo left its
+// socket and render loop running hidden, and re-entering stacked another one.
+// Returns true when a session was left.
+function leaveActiveSession() {
+    // Clear both ids (no early return): world and room share one socket whose
+    // ?mode= is fixed at connect time, so a leftover id from either side would
+    // let the next entry overlap the previous session.
+    let left = false;
+    if (window.JAMRI_APP.activeWorldId) {
+        leaveWorld();
+        left = true;
+    }
+    if (window.JAMRI_APP.activeRoomId) {
+        leaveRoom();
+        left = true;
+    }
+    return left;
+}
+
 function leaveRoom() {
     if (window.JAMRI_APP.activeRoomId) {
         window.JAMRI_APP.wsClient.disconnect();
@@ -479,10 +570,19 @@ function leaveRoom() {
     if (window.JAMRI_APP.voicePTT) {
         window.JAMRI_APP.voicePTT.detach();
     }
+    // Release the lyrics PiP/modal listeners and timers for this session.
+    if (window.JAMRI_APP.lyrics) {
+        window.JAMRI_APP.lyrics.teardown();
+    }
     const player = window.JAMRI_APP.player;
     // Hentikan musik di device saat keluar dari room jamming
     player.stop();
     player.setMode('solo', null);
+    // Drop the room's mirrored lists. They are what search.js consults to decide
+    // whether a track goes to a shared queue, so a stale copy must not outlive
+    // the session (a fresh join re-renders both from room_detail).
+    window.JAMRI_APP.roomQueue = [];
+    window.JAMRI_APP.roomPlaylist = [];
     if (window.JAMRI_APP.searchModule) {
         window.JAMRI_APP.searchModule.setWebSocket(null);
     }
@@ -513,6 +613,13 @@ async function joinRoom(roomId, isPrivate = false, passcode = '') {
         }
 
         const roomDetail = data.data;
+
+        // Entering a room must end any live world session: the shared socket is
+        // connected with a single ?mode=, so room and world cannot both be live.
+        if (window.JAMRI_APP.activeWorldId) {
+            leaveWorld();
+        }
+
         window.JAMRI_APP.activeRoomId = roomId;
 
         const player = window.JAMRI_APP.player;
@@ -522,6 +629,12 @@ async function joinRoom(roomId, isPrivate = false, passcode = '') {
         player.setMode('jamming', ws);
         search.setWebSocket(ws);
 
+        // Leaving world mode: drop world bindings so room events are handled by
+        // the app-level room handlers only.
+        if (window.JAMRI_APP.world) {
+            ws.listeners = {};
+        }
+
         // Render Room UI Shell
         renderRoomShell(roomDetail);
 
@@ -529,13 +642,66 @@ async function joinRoom(roomId, isPrivate = false, passcode = '') {
         bindRoomWebSocketEvents(ws, player, roomDetail);
 
         // Connect WebSocket
-        ws.connect(roomId, window.JAMRI_USER);
+        ws.connect(roomId, window.JAMRI_USER, 'room', passcode);
 
         switchView('room');
     } catch (err) {
         console.error('Join room error:', err);
         alert('Gagal menghubungi server room.');
     }
+}
+
+function enterWorld(worldId) {
+    // Entering a world must end any live room session for the same reason as
+    // joinRoom(): one shared socket, one mode. Prevents the two views from
+    // overwriting each other's active id and leaving a hidden socket behind.
+    if (window.JAMRI_APP.activeRoomId) {
+        leaveRoom();
+    }
+
+    // The socket handshake sends nickname/emoji/device_id, so a world cannot be
+    // entered before the profile exists. Bail out instead of half-entering (the
+    // player used to be flipped to 'world' mode with a dead socket).
+    if (!window.JAMRI_USER) {
+        if (typeof JamriAuth !== 'undefined' && JamriAuth.showProfileModal) {
+            JamriAuth.showProfileModal(
+                { device_id: JamriAuth.getOrCreateDeviceId(), nickname: '', emoji: '🎧' },
+                false
+            );
+        }
+        return;
+    }
+
+    const player = window.JAMRI_APP.player;
+    const ws = window.JAMRI_APP.wsClient;
+
+    // Playback inside a world is server-driven (via the mat room), exactly like a
+    // legacy jamming room. This used to be setMode('solo', null), which silently
+    // disabled every sync branch in player.js (server timeline, ping resync,
+    // play/pause routing) — the mat looked like "everyone playing separately".
+    player.setMode('world', ws);
+    if (window.JAMRI_APP.searchModule) window.JAMRI_APP.searchModule.setWebSocket(window.JAMRI_APP.wsClient);
+
+    window.JAMRI_APP.activeWorldId = worldId;
+
+    if (!window.JAMRI_APP.world) {
+        window.JAMRI_APP.world = new JamriWorld(player);
+    }
+    window.JAMRI_APP.world.enter(worldId, window.JAMRI_USER);
+    switchView('world');
+}
+
+function leaveWorld() {
+    if (window.JAMRI_APP.lyrics) {
+        window.JAMRI_APP.lyrics.teardown();
+    }
+    if (window.JAMRI_APP.world) {
+        window.JAMRI_APP.world.leave();
+    }
+    // Back to a plain local player once the world (and its mat) is gone.
+    if (window.JAMRI_APP.player) window.JAMRI_APP.player.setMode('solo', null);
+    window.JAMRI_APP.activeWorldId = null;
+    switchView('lobby');
 }
 
 function renderRoomShell(roomDetail) {
@@ -556,8 +722,8 @@ function renderRoomShell(roomDetail) {
                 <div>
                     <h1 class="lobby-title" style="font-size:18px;">${escapeHtml(room.name)}</h1>
                     <div style="font-size:12px; color:var(--text-muted);">
-                        Host: ${room.host_emoji || '🎧'} ${escapeHtml(room.host_nickname || '')}
-                        ${room.is_private ? ' • Private (Kode: ' + escapeHtml(room.passcode) + ')' : ''}
+                        Host: ${safeEmoji(room.host_emoji)} ${escapeHtml(room.host_nickname || '')}
+                        ${room.is_private ? ' • Private' : ''}
                     </div>
                 </div>
             </div>
@@ -786,6 +952,9 @@ function bindRoomWebSocketEvents(ws, player, roomDetail) {
 
     ws.on('room_init', (data) => {
         if (data.queue) renderRoomQueue(data.queue);
+        // A reconnect re-sends room_init without re-fetching room_detail, so the
+        // Bank Musik tab would keep whatever it rendered on first join.
+        if (Array.isArray(data.playlist)) renderRoomPlaylist(data.playlist);
         if (data.loop_mode) player.setLoopMode(data.loop_mode);
         if (data.is_shuffled !== undefined) {
             player.isShuffled = !!data.is_shuffled;
@@ -802,7 +971,7 @@ function bindRoomWebSocketEvents(ws, player, roomDetail) {
         player.serverSyncTime = data.server_time || Date.now();
         if (data.current_track) {
             const isSameTrack = player.currentTrack && player.currentTrack.youtube_id === data.current_track.youtube_id;
-            if (isSameTrack && (player.isPlaying || player.mode === 'jamming')) {
+            if (isSameTrack && (player.isPlaying || player.isSynced())) {
                 // Audio is ALREADY loaded/playing for this track (e.g. Server restart / reconnect)!
                 // Smoothly sync time without interrupting or reloading the video
                 player.syncJammingState(data.current_track, data.state, data.position, data.server_time);
@@ -961,6 +1130,8 @@ function bindRoomWebSocketEvents(ws, player, roomDetail) {
             if (data.action === 'remove') {
                 const title = data.removed_track_title ? `"${data.removed_track_title}"` : 'sebuah lagu';
                 window.JAMRI_APP.currentChat.appendActivityNotice(`menghapus ${title} dari Bank Musik`, '', data.triggered_by);
+            } else if (data.added_count && data.added_count > 1) {
+                window.JAMRI_APP.currentChat.appendActivityNotice(`menambahkan ${data.added_count} lagu dari playlist ke Bank Musik`, '', data.triggered_by);
             } else if (data.added_track) {
                 window.JAMRI_APP.currentChat.appendActivityNotice(`menambahkan "${data.added_track.title}" ke Bank Musik`, '', data.triggered_by);
             }
@@ -1011,7 +1182,7 @@ function renderRoomQueue(queue) {
             </div>
             <span style="font-family:var(--font-mono); font-size:11px; color:var(--text-muted); width:18px;">${idx + 1}</span>
             <div class="track-thumb-box" style="cursor:pointer;" title="Klik untuk putar">
-                <img src="${track.thumbnail_url || track.thumbnail}" alt="" class="track-thumb-img" />
+                <img src="${safeImageUrl(track.thumbnail_url || track.thumbnail)}" alt="" class="track-thumb-img" />
                 <span class="track-duration-pill">${formatSeconds(track.duration_seconds || track.duration)}</span>
             </div>
             <div class="track-info-box" style="cursor:pointer;" title="Klik untuk putar">
@@ -1172,7 +1343,7 @@ function renderRoomPlaylist(playlist) {
         item.className = 'track-item-card';
         item.innerHTML = `
             <div class="track-thumb-box">
-                <img src="${track.thumbnail_url || track.thumbnail}" alt="" class="track-thumb-img" />
+                <img src="${safeImageUrl(track.thumbnail_url || track.thumbnail)}" alt="" class="track-thumb-img" />
                 <span class="track-duration-pill">${formatSeconds(track.duration_seconds || track.duration)}</span>
             </div>
             <div class="track-info-box">
@@ -1432,7 +1603,7 @@ function renderSoloQueueList() {
             </div>
             <span style="font-family:var(--font-mono); font-size:11px; color:var(--text-muted); width:18px;">${idx + 1}</span>
             <div class="track-thumb-box" style="cursor:pointer;" title="Klik untuk putar">
-                <img src="${track.thumbnail}" alt="" class="track-thumb-img" />
+                <img src="${safeImageUrl(track.thumbnail)}" alt="" class="track-thumb-img" />
                 <span class="track-duration-pill">${track.duration_formatted || formatSeconds(track.duration)}</span>
             </div>
             <div class="track-info-box" style="cursor:pointer;" title="Klik untuk putar">
@@ -1567,7 +1738,7 @@ function renderSoloPlaylistList() {
         item.className = 'track-item-card';
         item.innerHTML = `
             <div class="track-thumb-box">
-                <img src="${track.thumbnail}" alt="" class="track-thumb-img" />
+                <img src="${safeImageUrl(track.thumbnail)}" alt="" class="track-thumb-img" />
                 <span class="track-duration-pill">${track.duration_formatted || formatSeconds(track.duration)}</span>
             </div>
             <div class="track-info-box">
@@ -1633,7 +1804,7 @@ async function renderSoloOfflineList() {
             item.className = 'track-item-card';
             item.innerHTML = `
                 <div class="track-thumb-box">
-                    <img src="${t.thumbnail}" alt="" class="track-thumb-img" />
+                    <img src="${safeImageUrl(t.thumbnail)}" alt="" class="track-thumb-img" />
                     <span class="track-duration-pill">${t.duration_formatted || formatSeconds(t.duration)}</span>
                 </div>
                 <div class="track-info-box">
@@ -1864,12 +2035,11 @@ function bindPlayerDock(player) {
         const rect = progressBar.getBoundingClientRect();
         const clickX = e.clientX - rect.left;
         const width = rect.width;
-        let duration = 0;
-        if (player.currentTrack) {
-            duration = player.currentTrack.duration_seconds || player.currentTrack.duration || 0;
-        }
+        // Use the real player duration (metadata duration can be 0 for long tracks,
+        // which previously made the progress bar unclickable).
+        const duration = player.getDuration();
         if (duration > 0 && width > 0) {
-            const seekTo = (clickX / width) * duration;
+            const seekTo = Math.max(0, Math.min(duration, (clickX / width) * duration));
             player.seek(seekTo);
         }
     });
@@ -1937,38 +2107,44 @@ function bindPlayerDock(player) {
         btnLoop.classList.remove('active-control', 'loop-one', 'loop-all', 'btn-primary');
         btnLoop.classList.add('btn-ghost');
 
+        const repeatArrow = `
+                <polyline points="17 1 21 5 17 9"></polyline>
+                <path d="M3 11V9a4 4 0 0 1 4-4h14"></path>
+                <polyline points="7 23 3 19 7 15"></polyline>
+                <path d="M21 13v2a4 4 0 0 1-4 4H3"></path>`;
+
         if (mode === 'one') {
             btnLoop.classList.add('active-control', 'loop-one', 'btn-primary');
             btnLoop.classList.remove('btn-ghost');
-            btnLoop.title = 'Looping: ULANGI LAGU INI (1 Lagu terus-menerus)';
+            btnLoop.style.color = '';
+            btnLoop.title = 'Looping: ULANGI LAGU INI (1 lagu terus-menerus)';
+            // Icon with a "1" badge distinguishes loop-one from loop-all.
             btnLoop.innerHTML = `
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <polyline points="17 1 21 5 17 9"></polyline>
-                    <path d="M3 11V9a4 4 0 0 1 4-4h14"></path>
-                    <polyline points="7 23 3 19 7 15"></polyline>
-                    <path d="M21 13v2a4 4 0 0 1-4 4H3"></path>
+                    ${repeatArrow}
                 </svg>
+                <span class="loop-badge" style="position:absolute; top:-2px; right:-2px; font-size:8px; font-weight:800; line-height:1; background:var(--primary); color:#fff; border-radius:6px; padding:1px 3px;">1</span>
             `;
+            btnLoop.style.position = 'relative';
         } else if (mode === 'all') {
             btnLoop.classList.add('active-control', 'loop-all', 'btn-primary');
             btnLoop.classList.remove('btn-ghost');
-            btnLoop.title = 'Looping: PUTAR SEMUA ANTREAN (Antrean berputar terus tanpa habis)';
+            btnLoop.style.color = '';
+            btnLoop.title = 'Looping: PUTAR SEMUA ANTREAN (antrean berputar terus tanpa habis)';
+            // Icon with an "ALL" badge distinguishes loop-all from loop-one.
             btnLoop.innerHTML = `
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <polyline points="17 1 21 5 17 9"></polyline>
-                    <path d="M3 11V9a4 4 0 0 1 4-4h14"></path>
-                    <polyline points="7 23 3 19 7 15"></polyline>
-                    <path d="M21 13v2a4 4 0 0 1-4 4H3"></path>
+                    ${repeatArrow}
                 </svg>
+                <span class="loop-badge" style="position:absolute; top:-2px; right:-2px; font-size:7px; font-weight:800; line-height:1; background:var(--primary); color:#fff; border-radius:6px; padding:1px 3px;">ALL</span>
             `;
+            btnLoop.style.position = 'relative';
         } else {
-            btnLoop.title = 'Looping: NON-AKTIF (Mainkan antrean sampai habis)';
+            btnLoop.title = 'Looping: NON-AKTIF (mainkan antrean sampai habis)';
+            btnLoop.style.color = '';
             btnLoop.innerHTML = `
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <polyline points="17 1 21 5 17 9"></polyline>
-                    <path d="M3 11V9a4 4 0 0 1 4-4h14"></path>
-                    <polyline points="7 23 3 19 7 15"></polyline>
-                    <path d="M21 13v2a4 4 0 0 1-4 4H3"></path>
+                    ${repeatArrow}
                 </svg>
             `;
         }
@@ -2010,7 +2186,7 @@ function updateDockTrackDisplay(track) {
 
     if (titleEl) titleEl.textContent = track.title;
     if (artistEl) artistEl.textContent = track.channel || 'Artis';
-    if (thumbEl) thumbEl.src = track.thumbnail || track.thumbnail_url || 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" fill="%231a202c"></svg>';
+    if (thumbEl) thumbEl.src = safeImageUrl(track.thumbnail || track.thumbnail_url) || 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" fill="%231a202c"></svg>';
 }
 
 /* ==========================================================================
@@ -2032,6 +2208,34 @@ function escapeHtml(str) {
         '"': '&quot;',
         "'": '&#039;'
     }[m]));
+}
+
+/**
+ * Sanitise an avatar emoji before injecting it into innerHTML. The server already
+ * validates this, but the client must never trust broadcast payloads either.
+ */
+function safeEmoji(str) {
+    if (typeof str !== 'string' || str.length === 0 || str.length > 8) return '🎧';
+    if (/[<>&"'`\/\\{}()\[\]=;:]/.test(str)) return '🎧';
+    return str;
+}
+
+/**
+ * Only allow image URLs from YouTube's own hosts. Blocks `javascript:`/`data:`
+ * and HTML-breaking payloads carried through thumbnail fields.
+ */
+function safeImageUrl(url) {
+    if (typeof url !== 'string' || url.length > 512) return '';
+    if (/[<>"'\s]/.test(url)) return '';
+    try {
+        const u = new URL(url, window.location.origin);
+        if (u.protocol !== 'https:') return '';
+        const host = u.hostname.toLowerCase();
+        const allowed = ['i.ytimg.com', 'img.youtube.com', 'yt3.ggpht.com', 'i9.ytimg.com'];
+        return allowed.includes(host) ? u.href : '';
+    } catch (e) {
+        return '';
+    }
 }
 
 function showToast(message, type = 'info') {

@@ -1,0 +1,492 @@
+/* ==========================================================================
+   JAMRI PIXEL WORLD
+   Pixel-art look is enforced with image-rendering + no smoothing.
+   ========================================================================== */
+
+/* The world view is positioned fixed to the viewport (between the navbar and
+   the player dock). This makes its size completely independent of any parent
+   flex/height chain, so the map & chat panel always fill the screen. */
+#world-view {
+    position: fixed !important;
+    top: 58px;
+    left: 0;
+    right: 0;
+    bottom: var(--player-dock-height, 84px);
+    padding: 10px 16px;
+    box-sizing: border-box;
+    overflow: hidden;
+    z-index: 50;
+}
+
+.world-shell {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    gap: 8px;
+}
+
+.world-hud-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    flex-shrink: 0;
+}
+
+.world-hud-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+
+.world-name-label {
+    font-weight: 700;
+    font-size: 15px;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 260px;
+}
+
+.world-online-badge {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 9px;
+    border-radius: var(--radius-full);
+    background: var(--primary-light);
+    color: var(--primary);
+    border: 1px solid var(--border-subtle);
+    white-space: nowrap;
+}
+
+.world-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.world-hud-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.world-hud-sub {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-shrink: 0;
+}
+
+.mat-room-info {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--primary);
+}
+
+.world-body {
+    display: flex;
+    gap: 10px;
+    flex: 1;
+    min-height: 0;
+}
+
+/* --- Mat side panel --- */
+.mat-panel {
+    width: 320px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 10px;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+.mat-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-weight: 700;
+    font-size: 13px;
+    color: var(--text-primary);
+    flex-shrink: 0;
+}
+
+.mat-users-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.mat-user-chip {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+    background: var(--bg-surface-elevated);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+}
+
+.mat-queue-title-label,
+.mat-chat-title-label {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    margin-top: 4px;
+    flex-shrink: 0;
+}
+
+.mat-queue-list {
+    max-height: 130px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    flex-shrink: 0;
+}
+
+.mat-queue-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 6px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface-elevated);
+    font-size: 12px;
+}
+
+.mat-queue-idx {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    width: 14px;
+    flex-shrink: 0;
+}
+
+.mat-queue-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-primary);
+}
+
+.mat-empty {
+    font-size: 11px;
+    color: var(--text-muted);
+    padding: 6px 2px;
+}
+
+.mat-chat-list {
+    flex: 1 1 auto;
+    min-height: 90px;
+    max-height: 220px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px;
+    background: var(--bg-surface-elevated);
+    border-radius: var(--radius-sm);
+}
+
+/* --- Tabbed chat (one panel, mat + world) --- */
+.world-chat-block {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1 1 auto;
+    min-height: 0;
+    margin-top: 4px;
+}
+
+.world-chat-tabs {
+    display: flex;
+    gap: 4px;
+    padding: 3px;
+    background: var(--bg-surface-elevated);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-full);
+    flex-shrink: 0;
+}
+
+.world-chat-tab {
+    flex: 1;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+    padding: 5px 10px;
+    border-radius: var(--radius-full);
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.world-chat-tab:hover {
+    color: var(--text-primary);
+}
+
+.world-chat-tab.active {
+    background: var(--primary);
+    color: #ffffff;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+}
+
+/* Mat tab dimmed while the player is not standing on a mat. */
+.world-chat-tab.needs-mat:not(.active) {
+    color: var(--text-muted);
+    opacity: 0.7;
+}
+
+.world-chat-panel {
+    display: none;
+    flex: 1 1 auto;
+    min-height: 0;
+    flex-direction: column;
+}
+
+.world-chat-panel.active {
+    display: flex;
+}
+
+.world-chat-panel .mat-chat-list {
+    flex: 1 1 auto;
+    max-height: none;
+}
+
+.mat-chat-row {
+    font-size: 12px;
+    line-height: 1.35;
+    word-break: break-word;
+}
+
+.mat-chat-nick {
+    font-weight: 700;
+    color: var(--text-secondary);
+    margin-right: 4px;
+}
+
+.mat-chat-text {
+    color: var(--text-primary);
+}
+
+.mat-chat-form {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.mat-chat-input {
+    flex: 1;
+    min-width: 0;
+    font-size: 12px;
+    padding: 6px 8px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
+    background: var(--bg-surface-elevated);
+    color: var(--text-primary);
+    outline: none;
+}
+
+/* --- Mat choice / place dialogs --- */
+.mat-choice-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 12px 14px;
+    margin-bottom: 8px;
+    background: var(--bg-surface-elevated);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    color: var(--text-primary);
+    text-align: left;
+}
+
+.mat-choice-row:hover {
+    border-color: var(--primary);
+    background: var(--primary-light);
+}
+
+.mat-choice-name {
+    font-weight: 600;
+    font-size: 13px;
+}
+
+.mat-choice-meta {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.world-stage {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    /* Bright daylight grass: the world must never look dark or murky. */
+    background: #86c973;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+}
+
+#world-canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    /* Crisp pixels, no browser blur. */
+    image-rendering: pixelated;
+    image-rendering: -moz-crisp-edges;
+    image-rendering: crisp-edges;
+    touch-action: none;
+}
+
+/* --- Minimap --- */
+.world-minimap {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 150px;
+    height: 100px;
+    border: 2px solid rgba(255, 255, 255, 0.75);
+    border-radius: var(--radius-sm);
+    background: rgba(134, 201, 115, 0.9);
+    box-shadow: 0 4px 12px rgba(24, 58, 30, 0.22);
+    image-rendering: pixelated;
+    z-index: 3;
+    pointer-events: none;
+}
+
+/* --- Emote bar --- */
+.world-emote-bar {
+    position: absolute;
+    bottom: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 6px;
+    padding: 6px 10px;
+    background: rgba(255, 255, 255, 0.88);
+    border: 1px solid rgba(46, 88, 52, 0.18);
+    border-radius: var(--radius-full);
+    box-shadow: 0 6px 18px rgba(24, 58, 30, 0.18);
+    backdrop-filter: blur(4px);
+    z-index: 3;
+}
+
+.world-emote-btn {
+    background: transparent;
+    border: none;
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: var(--radius-sm);
+    transition: transform 0.1s ease;
+}
+
+.world-emote-btn:hover {
+    transform: scale(1.25) translateY(-1px);
+    background: rgba(46, 88, 52, 0.1);
+}
+
+.world-loading {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    color: #1f3b2a;
+    font-size: 13px;
+    font-weight: 600;
+    background: rgba(240, 250, 234, 0.9);
+    z-index: 2;
+}
+
+/* --- Mobile joystick --- */
+.world-joystick {
+    display: none;
+    position: fixed;
+    left: 22px;
+    bottom: calc(var(--player-dock-height) + 24px);
+    width: 116px;
+    height: 116px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.08);
+    border: 2px solid rgba(255, 255, 255, 0.18);
+    z-index: 200;
+    touch-action: none;
+}
+
+.world-joystick-knob {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 52px;
+    height: 52px;
+    margin-left: -26px;
+    margin-top: -26px;
+    border-radius: 50%;
+    background: rgba(138, 180, 255, 0.65);
+    border: 2px solid rgba(255, 255, 255, 0.5);
+    transition: transform 0.05s linear;
+}
+
+@media (max-width: 768px) {
+    /* The mobile player dock stacks to 120px (components.css) while the global
+       --player-dock-height stays 84px, which made the world view overlap the
+       dock. Re-anchor both the view and the joystick to the real dock height. */
+    #world-view {
+        bottom: 120px;
+        padding: 8px 10px;
+        overflow-y: auto;
+    }
+
+    .world-shell {
+        height: 100%;
+    }
+
+    .world-hint {
+        display: none;
+    }
+
+    .world-joystick {
+        display: block;
+        bottom: 144px;
+    }
+
+    /* Stacked layout: the stage must keep a usable height instead of being
+       squeezed to nothing by the panel (it used to collapse to ~1px). */
+    .world-body {
+        flex-direction: column;
+    }
+
+    .world-stage {
+        flex: 1 1 auto;
+        min-height: 220px;
+    }
+
+    .mat-panel {
+        width: 100%;
+        flex: 0 0 auto;
+        max-height: 34vh;
+    }
+}

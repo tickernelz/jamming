@@ -1,0 +1,71 @@
+# ==========================================================================
+# Jamri - root hardening (.htaccess)
+# Protects source, config, database and build artifacts from web access.
+# Works on Apache (XAMPP). For Nginx, mirror these rules in the server block.
+# ==========================================================================
+
+# Disable directory listings everywhere.
+Options -Indexes
+
+# Block direct access to sensitive folders.
+RedirectMatch 404 ^/(vendor|src|config|bin|scratch|tests|data)(/|$)
+
+# Block VCS metadata and other dot-directories (.git, .github, .vscode ...).
+# RedirectMatch above only covers named folders, so .git/config used to be
+# fetchable straight from the web root.
+RedirectMatch 404 ^/\.(git|github|svn|hg|bzr|vscode|idea|env|aws|ssh)(/|$)
+RedirectMatch 404 /\.(git|svn|hg)/
+
+# Never serve the SQLite database or its WAL/SHM sidecars anywhere.
+<FilesMatch "\.(sqlite|sqlite3|sqlite-shm|sqlite-wal|db)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order deny,allow
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# Block composer files, archives, sqlite databases and runtime state.
+# NOTE: .json is intentionally NOT blanket-denied here — the PWA needs
+# public/manifest.json. Sensitive JSON (data/*.json) is denied by the folder
+# rules below and by data/.htaccess.
+<FilesMatch "\.(sqlite|sqlite3|db|sqlite-shm|sqlite-wal|zip|tar|gz|rar|log|sh|bat|md|lock|pem|ini)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order deny,allow
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# Always allow the PWA manifest (must be publicly fetchable).
+<Files "manifest.json">
+    <IfModule mod_authz_core.c>
+        Require all granted
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Allow from all
+    </IfModule>
+</Files>
+
+# Never serve dotfiles (.git, .env, .htaccess ...).
+<FilesMatch "^\.">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order deny,allow
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# Extra safety headers (the PHP layer sets the full CSP).
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "DENY"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>

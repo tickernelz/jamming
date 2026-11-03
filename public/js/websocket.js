@@ -33,9 +33,12 @@ class JamriWebSocket {
         }
     }
 
-    connect(roomId, user) {
+    connect(roomId, user, mode = 'room', passcode = '') {
         this.roomId = roomId;
         this.user = user;
+        this.mode = mode;
+        // Retained so reconnect() can re-authenticate against a private room.
+        this.passcode = passcode || this.passcode || '';
 
         if (this.reconnectTimeout) {
             clearTimeout(this.reconnectTimeout);
@@ -46,19 +49,31 @@ class JamriWebSocket {
         const protocol = isHttps ? 'wss:' : 'ws:';
         let endpoint;
         if (isHttps) {
+            // Through a tunnel (ngrok) the gateway proxies /ws to the daemon.
             endpoint = `${protocol}//${window.location.host}/ws`;
         } else if (window.location.port === '3000') {
             endpoint = `${protocol}//${window.location.host}/ws`;
+        } else if (window.JAMRI_WS_URL) {
+            endpoint = window.JAMRI_WS_URL;
         } else {
-            endpoint = `${protocol}//${window.location.hostname || 'localhost'}:8080/`;
+            // Local direct connection. Keep in sync with config/app.php ws_port.
+            endpoint = `${protocol}//${window.location.hostname || 'localhost'}:8081/`;
         }
 
-        const url = `${endpoint}?room_id=${encodeURIComponent(roomId)}&device_id=${encodeURIComponent(user.device_id)}&nickname=${encodeURIComponent(user.nickname)}&emoji=${encodeURIComponent(user.emoji)}`;
+        const url = `${endpoint}?mode=${encodeURIComponent(mode)}&room_id=${encodeURIComponent(roomId)}&device_id=${encodeURIComponent(user.device_id)}&nickname=${encodeURIComponent(user.nickname)}&emoji=${encodeURIComponent(user.emoji)}${this.passcode ? '&passcode=' + encodeURIComponent(this.passcode) : ''}`;
+
+        // Detach handlers from any previous socket before replacing it. Otherwise
+        // the old socket's onclose fires later and re-enters attemptReconnect(),
+        // causing reconnect flapping and phantom "disconnected" states.
+        if (this.ws) {
+            try {
+                this.ws.onopen = this.ws.onmessage = this.ws.onclose = this.ws.onerror = null;
+                this.ws.close();
+            } catch (e) {}
+            this.ws = null;
+        }
 
         try {
-            if (this.ws) {
-                try { this.ws.close(); } catch (e) {}
-            }
             this.ws = new WebSocket(url);
         } catch (e) {
             console.error('WS Connection initiation error:', e);
@@ -66,7 +81,10 @@ class JamriWebSocket {
             return;
         }
 
-        this.ws.onopen = () => {
+        const socket = this.ws;
+
+        socket.onopen = () => {
+            if (socket !== this.ws) return;
             this.isConnected = true;
             this.reconnectAttempts = 0;
             this.emit('connection_change', { connected: true });
@@ -79,7 +97,8 @@ class JamriWebSocket {
             }, 5000);
         };
 
-        this.ws.onmessage = (event) => {
+        socket.onmessage = (event) => {
+            if (socket !== this.ws) return;
             try {
                 const data = JSON.parse(event.data);
                 this.emit(data.type, data);
@@ -88,13 +107,15 @@ class JamriWebSocket {
             }
         };
 
-        this.ws.onclose = () => {
+        socket.onclose = () => {
+            if (socket !== this.ws) return;
             this.isConnected = false;
             this.emit('connection_change', { connected: false });
             this.attemptReconnect();
         };
 
-        this.ws.onerror = (err) => {
+        socket.onerror = (err) => {
+            if (socket !== this.ws) return;
             console.error('WS Error:', err);
             this.emit('error', err);
         };
@@ -114,7 +135,7 @@ class JamriWebSocket {
 
         this.reconnectTimeout = setTimeout(() => {
             if (!this.isConnected && this.roomId && this.user) {
-                this.connect(this.roomId, this.user);
+                this.connect(this.roomId, this.user, this.mode || 'room', this.passcode || '');
             }
         }, delay);
     }
@@ -182,6 +203,10 @@ class JamriWebSocket {
         this.send('playlist_add', { track });
     }
 
+    sendPlaylistAddBulk(tracks) {
+        this.send('playlist_add', { tracks });
+    }
+
     sendPlaylistRemove(playlistId) {
         this.send('playlist_remove', { playlist_id: playlistId });
     }
@@ -231,6 +256,7 @@ class JamriWebSocket {
 
     disconnect() {
         this.roomId = null;
+        this.passcode = '';
         if (this.reconnectTimeout) {
             clearTimeout(this.reconnectTimeout);
             this.reconnectTimeout = null;
@@ -240,7 +266,10 @@ class JamriWebSocket {
             this.pingInterval = null;
         }
         if (this.ws) {
-            try { this.ws.close(); } catch (e) {}
+            try {
+                this.ws.onopen = this.ws.onmessage = this.ws.onclose = this.ws.onerror = null;
+                this.ws.close();
+            } catch (e) {}
             this.ws = null;
         }
         this.isConnected = false;

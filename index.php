@@ -1,3 +1,33 @@
+<?php
+declare(strict_types=1);
+
+// Security headers for the HTML shell (mirrors the API hardening in Jamri\Http).
+header('X-Content-Type-Options: nosniff');
+header('X-Frame-Options: DENY');
+header('Referrer-Policy: strict-origin-when-cross-origin');
+header('Permissions-Policy: geolocation=(), camera=(), microphone=(self)');
+header(
+    "Content-Security-Policy: "
+    . "default-src 'self'; "
+    . "script-src 'self' https://www.youtube.com https://www.youtube-nocookie.com; "
+    . "style-src 'self' 'unsafe-inline'; "
+    . "img-src 'self' data: https:; "
+    . "media-src 'self' blob: data: https:; "
+    . "connect-src 'self' ws: wss: https://www.youtube.com https://www.youtube-nocookie.com https://i.ytimg.com; "
+    . "frame-src https://www.youtube.com https://www.youtube-nocookie.com; "
+    . "object-src 'none'; "
+    . "base-uri 'self'; "
+    . "form-action 'self'"
+);
+
+// Content-hash cache-busting: assets are cached by the browser & service worker
+// and only invalidated when the file actually changes (no more ?v=time()).
+$assetVersion = static function (string $relativePath): string {
+    $abs = __DIR__ . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $relativePath);
+    $mtime = @filemtime($abs);
+    return $mtime !== false ? (string)$mtime : '1';
+};
+?>
 <!DOCTYPE html>
 <html lang="id" data-theme="dark">
 <head>
@@ -14,8 +44,9 @@
     <link rel="apple-touch-icon" href="public/icon-192.svg" />
 
     <!-- Stylesheets -->
-    <link rel="stylesheet" href="public/css/main.css?v=<?= time() ?>" />
-    <link rel="stylesheet" href="public/css/components.css?v=<?= time() ?>" />
+    <link rel="stylesheet" href="public/css/main.css?v=<?= $assetVersion('public/css/main.css') ?>" />
+    <link rel="stylesheet" href="public/css/components.css?v=<?= $assetVersion('public/css/components.css') ?>" />
+    <link rel="stylesheet" href="public/css/world.css?v=<?= $assetVersion('public/css/world.css') ?>" />
 </head>
 <body>
 
@@ -106,6 +137,9 @@
 
         <!-- VIEW 3: SOLO INDIVIDUAL PLAYER VIEW -->
         <section id="solo-view" style="display:none;"></section>
+
+        <!-- VIEW 4: PIXEL WORLD (WORLD MODE) -->
+        <section id="world-view" style="display:none;"></section>
 
     </main>
 
@@ -273,16 +307,17 @@
     <script src="https://www.youtube.com/iframe_api"></script>
 
     <!-- JAVASCRIPT LIBRARIES & CLIENT SCRIPTS -->
-    <script src="public/js/jamri-format.js?v=<?= time() ?>"></script>
-    <script src="public/js/identity.js?v=<?= time() ?>"></script>
-    <script src="public/js/websocket.js?v=<?= time() ?>"></script>
-    <script src="public/js/player.js?v=<?= time() ?>"></script>
-    <script src="public/js/chat.js?v=<?= time() ?>"></script>
-    <script src="public/js/search.js?v=<?= time() ?>"></script>
-    <script src="public/js/soundboard.js?v=<?= time() ?>"></script>
-    <script src="public/js/voice-ptt.js?v=<?= time() ?>"></script>
-    <script src="public/js/games.js?v=<?= time() ?>"></script>
-    <script src="public/js/lyrics.js?v=<?= time() ?>"></script>
-    <script src="public/js/app.js?v=<?= time() ?>"></script>
+    <script src="public/js/jamri-format.js?v=<?= $assetVersion('public/js/jamri-format.js') ?>"></script>
+    <script src="public/js/identity.js?v=<?= $assetVersion('public/js/identity.js') ?>"></script>
+    <script src="public/js/websocket.js?v=<?= $assetVersion('public/js/websocket.js') ?>"></script>
+    <script src="public/js/player.js?v=<?= $assetVersion('public/js/player.js') ?>"></script>
+    <script src="public/js/chat.js?v=<?= $assetVersion('public/js/chat.js') ?>"></script>
+    <script src="public/js/search.js?v=<?= $assetVersion('public/js/search.js') ?>"></script>
+    <script src="public/js/soundboard.js?v=<?= $assetVersion('public/js/soundboard.js') ?>"></script>
+    <script src="public/js/voice-ptt.js?v=<?= $assetVersion('public/js/voice-ptt.js') ?>"></script>
+    <script src="public/js/games.js?v=<?= $assetVersion('public/js/games.js') ?>"></script>
+    <script src="public/js/lyrics.js?v=<?= $assetVersion('public/js/lyrics.js') ?>"></script>
+    <script src="public/js/world.js?v=<?= $assetVersion('public/js/world.js') ?>"></script>
+    <script src="public/js/app.js?v=<?= $assetVersion('public/js/app.js') ?>"></script>
 </body>
 </html>

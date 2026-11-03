@@ -23,6 +23,7 @@ class JamriLyricsManager {
 
         // Picture-in-Picture state
         this.pipWindow = null;
+        this.pipCloseHandler = null;
         this.pipMode = localStorage.getItem('jamri_pip_mode') || 'full'; // 'full' (Lengkap) | 'lyrics' (Lirik Saja)
         this.pipIsDraggingSeek = false;
 
@@ -107,6 +108,12 @@ class JamriLyricsManager {
 
     initKeyListeners() {
         window.addEventListener('keydown', (e) => {
+            // The modal's close button is labelled "Tutup (Esc)" and other modals
+            // honour Escape, so the lyrics overlay must too.
+            if (e.key === 'Escape' && this.isOpen) {
+                this.closeModal();
+                return;
+            }
             if (e.key.toLowerCase() === 'l' && !e.ctrlKey && !e.altKey && !e.metaKey) {
                 const target = e.target;
                 if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
@@ -115,6 +122,20 @@ class JamriLyricsManager {
                 this.toggleModal();
             }
         });
+
+        // Cover art can 404 (region blocks, dead thumbnails). The CSP forbids
+        // inline handlers, so failures are handled here instead: hide the broken
+        // image and reveal the placeholder next to it.
+        if (!this._coverFallbackBound) {
+            this._coverFallbackBound = true;
+            document.addEventListener('error', (e) => {
+                const img = e.target;
+                if (!img || img.tagName !== 'IMG' || !img.dataset || img.dataset.fallback !== '1') return;
+                img.style.display = 'none';
+                const sibling = img.nextElementSibling;
+                if (sibling) sibling.style.display = 'flex';
+            }, true);
+        }
     }
 
     onTrackChange(track) {
@@ -283,7 +304,13 @@ class JamriLyricsManager {
         }
         this.embeddedContainers.forEach(id => {
             const el = document.getElementById(id);
-            if (el) this.renderEmbedded(el);
+            if (el) {
+                this.renderEmbedded(el);
+            } else {
+                // Container was removed by a room/solo re-render: forget it so
+                // the registry does not grow without bound.
+                this.embeddedContainers.delete(id);
+            }
         });
         if (this.pipWindow && !this.pipWindow.closed) {
             this.renderPiPContent();
@@ -303,9 +330,12 @@ class JamriLyricsManager {
 
     getCoverHtml(thumb, size = 36) {
         if (thumb && thumb.trim() && !thumb.includes('default-thumb.png')) {
+            // No inline onerror: the app ships a strict CSP (script-src without
+            // 'unsafe-inline'), so an inline handler is blocked and the broken
+            // image icon stays visible. A delegated listener does the swap.
             return `
                 <div class="lyrics-thumb-wrapper" style="width:${size}px; height:${size}px; flex-shrink:0;">
-                    <img src="${this.escape(thumb)}" alt="Cover" class="lyrics-track-thumb" style="width:${size}px; height:${size}px;" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';" />
+                    <img src="${this.escape(thumb)}" alt="Cover" class="lyrics-track-thumb" data-fallback="1" style="width:${size}px; height:${size}px;" />
                     <div class="lyrics-track-thumb-placeholder" style="display:none; width:${size}px; height:${size}px;">
                         <svg width="${Math.round(size * 0.45)}" height="${Math.round(size * 0.45)}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M9 18V5l12-2v13"></path>
@@ -763,7 +793,7 @@ class JamriLyricsManager {
             return;
         }
 
-        if (this.player.mode === 'jamming' && this.ws && this.ws.isConnected) {
+        if (this.player.isSynced && this.player.isSynced() && this.ws && this.ws.isConnected) {
             this.ws.sendSeek(time);
         } else {
             this.player.seek(time);
@@ -1018,6 +1048,16 @@ class JamriLyricsManager {
         });
     }
 
+    /**
+     * Popup-window PiP used by browsers without Document PiP (Firefox) and as a
+     * fallback when requestWindow() is unavailable.
+     */
+    openFallbackPiPWindow(width, height) {
+        const left = Math.max(0, (window.screen.width || 1200) - width - 30);
+        const top = 50;
+        return window.open('', 'JamriLyricsPiP', `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=no,status=no,toolbar=no,menubar=no`);
+    }
+
     async openPiP(mode = 'full') {
         this.pipMode = mode;
         try {
@@ -1040,17 +1080,24 @@ class JamriLyricsManager {
                     height: height
                 });
             } else {
-                // Fallback popup window for browsers without Document PiP (e.g. Firefox)
-                const left = Math.max(0, (window.screen.width || 1200) - width - 30);
-                const top = 50;
-                this.pipWindow = window.open('', 'JamriLyricsPiP', `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=no,status=no,toolbar=no,menubar=no`);
+                this.pipWindow = this.openFallbackPiPWindow(width, height);
             }
         } catch (err) {
-            console.error('[Lyrics PiP] Failed to open PiP window:', err);
-            if (window.JAMRI_APP && window.JAMRI_APP.showToast) {
-                window.JAMRI_APP.showToast('Gagal membuka Picture-in-Picture: ' + (err.message || err), 'error');
+            // requestWindow() rejects with InvalidStateError when the browser has
+            // no eligible window (some embedded/automation contexts). Fall back to
+            // a popup instead of surfacing a hard error to the user.
+            console.warn('[Lyrics PiP] Document PiP unavailable, using popup:', err && err.message);
+            try {
+                this.pipWindow = this.openFallbackPiPWindow(width, height);
+            } catch (e) {
+                this.pipWindow = null;
             }
-            return;
+            if (!this.pipWindow) {
+                if (window.JAMRI_APP && window.JAMRI_APP.showToast) {
+                    window.JAMRI_APP.showToast('Gagal membuka Picture-in-Picture: ' + (err.message || err), 'error');
+                }
+                return;
+            }
         }
 
         if (!this.pipWindow) {
@@ -1067,9 +1114,45 @@ class JamriLyricsManager {
             this.pipWindow = null;
             this.updatePiPButtonState();
         };
+        this.pipCloseHandler = handleClose;
         this.pipWindow.addEventListener('pagehide', handleClose);
         this.pipWindow.addEventListener('unload', handleClose);
 
+        this.updatePiPButtonState();
+    }
+
+    /**
+     * Release every listener/timer the lyrics engine holds for the PiP window
+     * and the modal. Called when a room/solo session is torn down so the
+     * pagehide/unload handlers, the scroll debounce timer and the embedded
+     * container registry do not accumulate across re-renders.
+     */
+    teardown() {
+        if (this.pipWindow) {
+            if (this.pipCloseHandler) {
+                try {
+                    this.pipWindow.removeEventListener('pagehide', this.pipCloseHandler);
+                    this.pipWindow.removeEventListener('unload', this.pipCloseHandler);
+                } catch (e) {}
+            }
+            try {
+                if (!this.pipWindow.closed) this.pipWindow.close();
+            } catch (e) {}
+        }
+        this.pipWindow = null;
+        this.pipCloseHandler = null;
+
+        if (this.scrollDebounceTimer) {
+            clearTimeout(this.scrollDebounceTimer);
+            this.scrollDebounceTimer = null;
+        }
+        this.isUserScrolling = false;
+
+        this.embeddedContainers.clear();
+
+        if (this.isOpen) {
+            this.closeModal();
+        }
         this.updatePiPButtonState();
     }
 
@@ -1414,7 +1497,7 @@ class JamriLyricsManager {
                 <div class="pip-container pip-container-mini">
                     <!-- Mini Track Card -->
                     <div class="pip-mini-card">
-                        ${thumb ? `<img src="${thumb}" alt="" class="pip-mini-thumb" onerror="this.style.display='none'" />` : `<div class="pip-mini-thumb-placeholder">🎵</div>`}
+                        ${thumb ? `<img src="${this.safeImageUrl(thumb)}" alt="" class="pip-mini-thumb" data-fallback="1" />` : `<div class="pip-mini-thumb-placeholder">🎵</div>`}
                         <div class="pip-mini-meta">
                             <div class="pip-track-title" title="${this.escape(title)}">${this.escape(title)}</div>
                             <div class="pip-track-artist">${this.escape(artist)}</div>
@@ -1585,16 +1668,14 @@ class JamriLyricsManager {
         if (seekSlider) {
             seekSlider.addEventListener('input', () => {
                 this.pipIsDraggingSeek = true;
-                const track = this.currentTrack || (this.player && this.player.currentTrack);
-                const dur = track ? (track.duration_seconds || track.duration || 0) : 0;
+                const dur = (this.player && typeof this.player.getDuration === 'function') ? this.player.getDuration() : 0;
                 const previewSec = (parseFloat(seekSlider.value) / 100) * dur;
                 if (curTimeEl) curTimeEl.textContent = this.formatTime(previewSec);
             });
             seekSlider.addEventListener('change', () => {
                 this.pipIsDraggingSeek = false;
                 if (!checkPerm()) return;
-                const track = this.currentTrack || (this.player && this.player.currentTrack);
-                const dur = track ? (track.duration_seconds || track.duration || 0) : 0;
+                const dur = (this.player && typeof this.player.getDuration === 'function') ? this.player.getDuration() : 0;
                 const targetSec = (parseFloat(seekSlider.value) / 100) * dur;
                 this.handleSeekClick(targetSec);
             });
@@ -1678,6 +1759,20 @@ class JamriLyricsManager {
             '"': '&quot;',
             "'": '&#039;'
         }[m]));
+    }
+
+    /** Restrict artwork to YouTube image hosts (blocks javascript:/data: srcs). */
+    safeImageUrl(url) {
+        if (typeof url !== 'string' || url.length === 0 || url.length > 512) return '';
+        if (/[<>"'\s]/.test(url)) return '';
+        try {
+            const u = new URL(url, window.location.origin);
+            if (u.protocol !== 'https:') return '';
+            const allowed = ['i.ytimg.com', 'img.youtube.com', 'yt3.ggpht.com', 'i9.ytimg.com'];
+            return allowed.includes(u.hostname.toLowerCase()) ? u.href : '';
+        } catch (e) {
+            return '';
+        }
     }
 }
 

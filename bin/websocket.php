@@ -18,7 +18,11 @@ use Ratchet\WebSocket\WsServer;
 use React\EventLoop\Loop;
 use React\Socket\SocketServer;
 
-$port = 8080;
+$port = 8081;
+$appConfig = require dirname(__DIR__) . '/config/app.php';
+if (is_array($appConfig) && isset($appConfig['ws_port'])) {
+    $port = (int)$appConfig['ws_port'];
+}
 if (isset($argv[1]) && is_numeric($argv[1])) {
     $port = (int)$argv[1];
 }
@@ -40,6 +44,11 @@ $loop->addPeriodicTimer(3.0, function () use ($wsHandler) {
     $wsHandler->persistRuntimeState();
 });
 
+// World presence tick: one compact snapshot broadcast at 15 Hz.
+$loop->addPeriodicTimer(1 / 15, function () use ($wsHandler) {
+    $wsHandler->tickWorlds();
+});
+
 $socket = new SocketServer("127.0.0.1:{$port}", [], $loop);
 $server = new IoServer(
     new HttpServer(
@@ -51,8 +60,9 @@ $server = new IoServer(
 
 echo "====================================================\n";
 echo "   JAMRI REAL-TIME WEBSOCKET DAEMON\n";
-echo "   Listening on: ws://0.0.0.0:{$port}\n";
+echo "   Listening on: ws://127.0.0.1:{$port}\n";
 echo "   Auto-destroy empty rooms: 10 minutes (600s)\n";
+echo "   World presence tick: 15 Hz\n";
 echo "   Status: RUNNING\n";
 echo "====================================================\n";
 

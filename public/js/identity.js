@@ -1,5 +1,5 @@
 /**
- * fingerprint.js
+ * identity.js
  * Device fingerprinting & User Profile (Nickname & Avatar Emoji)
  * Pengguna bebas memilih nama & emoji serta bisa mengubahnya kapan saja!
  */
@@ -191,7 +191,7 @@ class JamriAuth {
         const el = document.getElementById('user-profile-badge');
         if (el) {
             el.innerHTML = `
-                <span class="user-emoji">${user.emoji || '🎧'}</span>
+                <span class="user-emoji">${(typeof safeEmoji === 'function' ? safeEmoji(user.emoji) : '🎧')}</span>
                 <span class="user-nickname">${this.escapeHtml(user.nickname || 'Pengguna')}</span>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--text-muted); margin-left:2px;">
                     <path d="M12 20h9"></path>

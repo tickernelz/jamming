@@ -8,34 +8,40 @@ require_once dirname(__DIR__) . '/vendor/autoload.php';
 require_once dirname(__DIR__) . '/config/database.php';
 
 use Jamri\Database;
+use Jamri\Http;
+use Jamri\RateLimiter;
+use Jamri\Validator;
 use Jamri\YouTubeService;
+
+Http::securityHeaders();
 
 $pdo = Database::getConnection();
 $ytService = new YouTubeService($pdo);
+$rateLimiter = new RateLimiter();
 
-$id = trim((string)($_GET['id'] ?? ''));
-if ($id === '' || !preg_match('/^[a-zA-Z0-9_-]{11}$/', $id)) {
-    http_response_code(400);
-    header('Content-Type: application/json');
-    echo json_encode(['error' => 'Invalid or missing YouTube ID']);
-    exit;
+$id = Validator::youtubeId($_GET['id'] ?? '');
+if ($id === '') {
+    Http::error('Invalid or missing YouTube ID', 400);
+}
+
+if (!$rateLimiter->allow(RateLimiter::key('stream', Http::clientKey()), 60, 60)) {
+    Http::error('Terlalu banyak permintaan. Coba lagi sebentar.', 429);
 }
 
 try {
     $info = $ytService->getVideoInfo($id);
-    header('Content-Type: application/json; charset=utf-8');
-    echo json_encode([
+    Http::json([
         'success' => true,
         'stream' => [
             'youtube_id' => $id,
             'title' => $info['title'] ?? 'YouTube Audio',
             'channel' => $info['channel'] ?? 'Artist',
             'duration' => $info['duration'] ?? 0,
-            'thumbnail' => $info['thumbnail'] ?? "https://i.ytimg.com/vi/{$id}/mqdefault.jpg",
+            'thumbnail' => Validator::thumbnailUrl($info['thumbnail'] ?? '')
+                ?: "https://i.ytimg.com/vi/{$id}/mqdefault.jpg",
         ]
     ]);
 } catch (\Throwable $e) {
-    http_response_code(500);
-    header('Content-Type: application/json');
-    echo json_encode(['error' => 'Error: ' . $e->getMessage()]);
+    error_log('[stream.php] ' . $e->getMessage());
+    Http::error('Gagal mengambil info lagu.', 502);
 }

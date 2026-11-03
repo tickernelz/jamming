@@ -435,7 +435,7 @@ class JamriSoundboard {
         const el = document.createElement('div');
         el.className = 'soundboard-floating-bubble';
         el.innerHTML = `
-            <span class="bubble-emoji">${data.emoji || '🔊'}</span>
+            <span class="bubble-emoji">${escapeHtml(data.emoji || '🔊')}</span>
             <span class="bubble-title">${escapeHtml(data.title || 'Sound')}</span>
             <span class="bubble-author">${escapeHtml(data.triggered_by || 'Member')}</span>
         `;
@@ -465,7 +465,7 @@ class JamriSoundboard {
         this.builtInSounds.forEach(sound => {
             html += `
                 <button type="button" class="soundboard-card" data-id="${sound.id}" title="Klik untuk bunyikan ${escapeHtml(sound.title)}">
-                    <span class="sound-emoji">${sound.emoji}</span>
+                    <span class="sound-emoji">${escapeHtml(sound.emoji)}</span>
                     <span class="sound-name">${escapeHtml(sound.title)}</span>
                     <span class="sound-duration">${sound.duration}s</span>
                 </button>
@@ -502,7 +502,7 @@ class JamriSoundboard {
                 html += `
                     <div class="soundboard-card custom-sound" data-id="${sound.id}" title="Klik untuk bunyikan ${escapeHtml(sound.title)} ke seluruh room">
                         <button type="button" class="soundboard-play-area" data-id="${sound.id}">
-                            <span class="sound-emoji">${sound.emoji || '🔊'}</span>
+                            <span class="sound-emoji">${escapeHtml(sound.emoji || '🔊')}</span>
                             <span class="sound-name">${escapeHtml(sound.title)}</span>
                             <span class="sound-uploader">Lokal • ${Math.round(sound.duration || 0)}s</span>
                         </button>
