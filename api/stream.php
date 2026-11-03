@@ -17,7 +17,7 @@ Http::securityHeaders();
 
 $pdo = Database::getConnection();
 $ytService = new YouTubeService($pdo);
-$rateLimiter = new RateLimiter();
+$rateLimiter = RateLimiter::shared();
 
 $id = Validator::youtubeId($_GET['id'] ?? '');
 if ($id === '') {

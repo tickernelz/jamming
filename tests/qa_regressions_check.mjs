@@ -5,8 +5,6 @@
 //      very next `next` replayed the same song instead of advancing.
 //   3. Validator methods were typed ?string, so a JSON number/array in any field
 //      threw a TypeError inside the daemon (logged as an onMessage error).
-//   4. RateLimiter kept buckets in memory only. HTTP runs one process per
-//      request, so every request started empty and no limit ever triggered.
 //   5. .git/config was served with HTTP 200 (root .htaccess only blocked named
 //      folders).
 //   6. lyrics.js used inline onerror handlers, which the app's own CSP
@@ -20,7 +18,6 @@ const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
 const ws = read('../src/WebSocketHandler.php');
 const roomManager = read('../src/RoomManager.php');
 const validator = read('../src/Validator.php');
-const rateLimiter = read('../src/RateLimiter.php');
 const htaccess = read('../.htaccess');
 const lyrics = read('../public/js/lyrics.js');
 const websocketJs = read('../public/js/websocket.js');
@@ -43,25 +40,8 @@ assert.ok(/Validator::chatMessage\(is_scalar\(\$data\['message'\] \?\? null\)/.t
 assert.ok(/Validator::chatMessage\(is_scalar\(\$data\['message'\] \?\? null\)/.test(ws),
     'world chat must coerce its payload before validation');
 
-// 4) HTTP rate limiting must survive between requests.
-assert.ok(/private function load\(\): void/.test(rateLimiter),
-    'RateLimiter must restore persisted buckets (HTTP is one process per request)');
-assert.ok(/\$this->load\(\);/.test(rateLimiter),
-    'the constructor must call load()');
-assert.ok(/file_put_contents\(\$file, \$payload, LOCK_EX\)/.test(rateLimiter),
-    'buckets must be persisted on every change, not every 50th');
-assert.ok(!/count\(\$this->buckets\) % 50/.test(rateLimiter),
-    'the old "persist every 50" heuristic silently disabled HTTP limits');
-
-// 4b) ...but the long-lived daemon must NOT touch the disk on every allow().
-//     world.move is limited at 90/3s per device, so a LOCK_EX rewrite of the
-//     whole bucket map per call put a ~10 ms file write on the event loop and
-//     made every room (legacy included) feel laggy.
-assert.ok(/private bool \$persist/.test(rateLimiter),
-    'RateLimiter must know whether it is allowed to write to disk');
-assert.ok(/PHP_SAPI !== 'cli'/.test(rateLimiter),
-    'persistence must default to HTTP-only (the CLI daemon is long-lived)');
-assert.ok(/new RateLimiter\(null, false\)/.test(ws),
+// 4) RateLimiter sharing across workers and windows is covered by tests/RateLimiterTest.php.
+assert.ok(/new RateLimiter\(\)/.test(ws),
     'WebSocketHandler must run its limiter in memory only');
 
 // 5) VCS metadata must not be web-reachable.

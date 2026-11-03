@@ -17,7 +17,7 @@ Http::securityHeaders();
 
 $pdo = Database::getConnection();
 $ytService = new YouTubeService($pdo);
-$rateLimiter = new RateLimiter();
+$rateLimiter = RateLimiter::shared();
 
 $raw = $_GET['url'] ?? $_GET['list'] ?? $_GET['playlist'] ?? '';
 $playlistId = Validator::playlistId($raw);

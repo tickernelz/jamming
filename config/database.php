@@ -17,7 +17,7 @@ class Database
     public static function getConnection(): PDO
     {
         if (self::$instance === null) {
-            $dbDir = getenv('JAMRI_DATA_DIR') ?: dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data';
+            $dbDir = self::dataDir();
             $dbPath = $dbDir . DIRECTORY_SEPARATOR . 'jamri.sqlite';
             if (!is_dir($dbDir)) {
                 mkdir($dbDir, 0755, true);
@@ -34,6 +34,11 @@ class Database
         }
 
         return self::$instance;
+    }
+
+    public static function dataDir(): string
+    {
+        return getenv('JAMRI_DATA_DIR') ?: dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data';
     }
 
     public static function open(string $dsn): PDO

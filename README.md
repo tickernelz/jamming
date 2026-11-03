@@ -57,10 +57,11 @@ Backups: `jamri-backup.timer` runs `deploy/jamri-backup.sh` daily, writing an in
 - Private rooms: passcodes are stored with `password_hash` and never serialized. A correct passcode (POST to `api/room_detail.php`) records a grant for that session; attempts are throttled per client network (IPv4 address or IPv6 /64), per room and network, and failures per room across all networks; chat history, playlist actions and the socket require the grant or host status.
 - Room control: only the host can play, pause, seek, skip, change the queue or Bank Musik, start games, or clear penalties, until the host switches on "Kontrol Bersama". A guest's `track_ended` only advances the queue near the end of the track.
 - Output: nickname, emoji, chat, track fields and thumbnails are validated server-side and escaped client-side; `index.php` and the API send a CSP without `unsafe-inline` scripts whose `connect-src` allows only this origin's WebSocket.
-- Limits: per-endpoint and per-socket rate limits, 16 KB JSON request bodies, 256 KB WebSocket messages enforced before buffering.
+- Limits: per-endpoint and per-socket rate limits (HTTP buckets are atomic upserts in `data/rate_limits.sqlite`, shared by every php-fpm worker; the daemon keeps its own in memory), 16 KB JSON request bodies, 256 KB WebSocket messages enforced before buffering.
 
 ## Known security issues
 
+- The cap of 30 failed passcodes per room per 10 minutes counts every network, so anyone who sees a private room in the public list can keep new guests from joining it by sending wrong passcodes; the host and guests already granted are not affected. The cap can overshoot by the number of concurrent php-fpm workers (6), since the check happens before the password is verified.
 - Losing the browser's cookie means losing the identity (no account recovery); a new profile is created instead.
 - Rooms created before the session migration keep their old host id, which no new session can claim; such rooms expire after 10 minutes empty.
 - The `.htaccess` files only protect Apache setups (Richie's XAMPP); nginx relies on the location rules in `deploy/nginx-jamri.conf`.

@@ -22,9 +22,6 @@ for ($i = 0; $i < 500; $i++) {
 $t3 = microtime(true);
 printf("distinct-key 500    : %6.1f ms  (%.4f ms/call)\n", ($t3 - $t2) * 1000, ($t3 - $t2) * 1000 / 500);
 
-$file = __DIR__ . '/../../data/rate_limit.json';
-printf("bucket file size    : %d bytes\n", is_file($file) ? filesize($file) : -1);
-
 // 3) Simulate 60 seconds of a busy world: 10 devices * 30 moves/s = 1800 calls
 $rl3 = new Jamri\RateLimiter();
 $t4 = microtime(true);

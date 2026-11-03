@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once dirname(__DIR__) . '/vendor/autoload.php';
+require_once dirname(__DIR__) . '/config/database.php';
 
 use Jamri\Http;
 use Jamri\RateLimiter;
@@ -10,7 +11,7 @@ use Jamri\Validator;
 Http::securityHeaders();
 header('Cache-Control: public, max-age=86400');
 
-$rateLimiter = new RateLimiter();
+$rateLimiter = RateLimiter::shared();
 if (!$rateLimiter->allow(RateLimiter::key('lyrics', Http::clientKey()), 40, 60)) {
     Http::error('Terlalu banyak permintaan lirik. Coba lagi sebentar.', 429);
 }

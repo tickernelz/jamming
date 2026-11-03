@@ -26,7 +26,7 @@ final class PasscodeGateTest extends TestCase
         $host = $users->register('Host', '🎧')['user']['device_id'];
         $this->guest = $users->register('Guest', '🎸')['user']['device_id'];
         $this->roomId = $this->rooms->createRoom('Vault', true, 'correct-horse', $host)['id'];
-        $this->gate = new PasscodeGate($this->rooms, new RateLimiter(sys_get_temp_dir(), false));
+        $this->gate = new PasscodeGate($this->rooms, new RateLimiter(RateLimiter::openStore(':memory:')));
     }
 
     private static function client(string $ip): string

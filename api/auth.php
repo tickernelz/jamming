@@ -28,7 +28,7 @@ if ($method !== 'POST') {
 $input = Http::input();
 $nickname = (string)($input['nickname'] ?? '');
 $emoji = (string)($input['emoji'] ?? '');
-$rateLimiter = new RateLimiter();
+$rateLimiter = RateLimiter::shared();
 $current = Http::currentUser($userManager);
 
 if ($current !== null) {

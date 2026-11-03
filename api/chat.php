@@ -17,7 +17,7 @@ Http::securityHeaders();
 $pdo = Database::getConnection();
 $user = Http::requireUser(new UserManager($pdo));
 $roomManager = new RoomManager($pdo);
-$rateLimiter = new RateLimiter();
+$rateLimiter = RateLimiter::shared();
 
 $roomId = Validator::roomId($_GET['room_id'] ?? '');
 $beforeId = isset($_GET['before_id']) ? max(0, (int)$_GET['before_id']) : null;

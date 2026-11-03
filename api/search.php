@@ -16,7 +16,7 @@ Http::securityHeaders();
 
 $pdo = Database::getConnection();
 $ytService = new YouTubeService($pdo);
-$rateLimiter = new RateLimiter();
+$rateLimiter = RateLimiter::shared();
 
 $q = Validator::clean($_GET['q'] ?? '', 120);
 $limit = min(20, max(1, (int)($_GET['limit'] ?? 12)));

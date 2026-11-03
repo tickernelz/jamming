@@ -1,144 +1,107 @@
 <?php
-// src/RateLimiter.php
 
 declare(strict_types=1);
 
 namespace Jamri;
 
+use Closure;
+use PDO;
+
 /**
- * Lightweight file-backed token bucket / sliding-window rate limiter.
- *
- * Purpose: stop anonymous clients from flooding chat, voice, soundboard or
- * expensive upstream calls. No user identity is stored — buckets are keyed by a
- * short-lived hash of the caller (device id or IP) plus an action name, and the
- * backing file is periodically compacted so no personal data accumulates.
- *
- * Two modes, because the two callers have opposite lifetimes:
- *
- *  - Per-request (HTTP APIs): the process dies after one request, so buckets
- *    MUST be shared through the file or every request would start empty and no
- *    limit would ever trigger.
- *  - Long-lived (the Ratchet daemon): one process serves every socket, so the
- *    in-memory map already holds the truth. Writing the whole bucket map to disk
- *    on every allow() put a LOCK_EX file write on the hot path (world.move is
- *    rate limited at 90/3s per device), which stalled the event loop and made
- *    every room feel laggy. Those instances use `persist: false`. */
+ * Fixed-window rate limiter keyed by hashed caller identity.
+ * With a PDO the buckets live in SQLite and every update is one atomic upsert, so concurrent
+ * PHP workers share exact counts; without one they live in this process (the WebSocket daemon).
+ */
 final class RateLimiter
 {
-    private string $storageDir;
     private array $buckets = [];
-    private bool $persist;
+    private Closure $clock;
 
-    public function __construct(?string $storageDir = null, ?bool $persist = null)
+    public function __construct(private ?PDO $pdo = null, ?Closure $clock = null)
     {
-        $this->storageDir = $storageDir ?? (getenv('JAMRI_DATA_DIR') ?: dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data');
-        // Auto-detect by SAPI: HTTP (apache/fpm) runs one process per request and
-        // therefore must share buckets through the file, while the WebSocket
-        // daemon (CLI, long-lived) keeps the authoritative map in memory.
-        $this->persist = $persist ?? (PHP_SAPI !== 'cli');
-        if ($this->persist) {
-            $this->load();
-        }
+        $this->clock = $clock ?? static fn (): float => microtime(true);
+    }
+
+    /** Limiter shared by all PHP workers, kept in its own SQLite file in the data directory. */
+    public static function shared(): self
+    {
+        return new self(self::openStore(Database::dataDir() . DIRECTORY_SEPARATOR . 'rate_limits.sqlite'));
     }
 
     /**
-     * Restore buckets written by a previous PHP worker.
-     *
-     * HTTP endpoints run in a fresh process per request, so an in-memory-only
-     * map meant every request started with an empty bucket and the limits never
-     * triggered (room creation, chat, search, ...). The WS daemon is long-lived
-     * and simply keeps its map in memory.
+     * Open the bucket store without fsync: losing counters on an OS crash is harmless, while
+     * a synced journal costs about 3 ms per request because each worker closes its connection.
      */
-    private function load(): void
+    public static function openStore(string $path): PDO
     {
-        $file = $this->storageFile();
-        if (!is_file($file)) {
-            return;
-        }
-        $raw = @file_get_contents($file);
-        if (!is_string($raw) || $raw === '') {
-            return;
-        }
-        // Guard against a corrupted/huge file turning into a memory problem.
-        if (strlen($raw) > 512 * 1024) {
-            @unlink($file);
-            return;
-        }
-        $decoded = json_decode($raw, true);
-        if (!is_array($decoded)) {
-            @unlink($file);
-            return;
-        }
-        $now = microtime(true);
-        foreach ($decoded as $key => $bucket) {
-            if (!is_string($key) || !is_array($bucket)) {
-                continue;
-            }
-            $start = (float)($bucket['start'] ?? 0);
-            $count = (int)($bucket['count'] ?? 0);
-            // Drop entries that are already far past any window we use.
-            if ($start <= 0 || $count <= 0 || ($now - $start) > 3600) {
-                continue;
-            }
-            $this->buckets[$key] = ['start' => $start, 'count' => $count];
-        }
+        $pdo = new PDO('sqlite:' . $path);
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $pdo->exec('PRAGMA busy_timeout = 5000; PRAGMA journal_mode = DELETE; PRAGMA synchronous = OFF;');
+        $pdo->exec('CREATE TABLE IF NOT EXISTS rate_limits (
+            bucket TEXT PRIMARY KEY,
+            window_start REAL NOT NULL,
+            hits INTEGER NOT NULL,
+            window_seconds INTEGER NOT NULL
+        )');
+        return $pdo;
     }
 
-    private function storageFile(): string
-    {
-        return $this->storageDir . DIRECTORY_SEPARATOR . 'rate_limit.json';
-    }
-
-    /**
-     * @param string $key    Logical bucket identity (e.g. "chat:device_abc").
-     * @param int    $limit  Max events allowed inside the window.
-     * @param int    $window Window length in seconds.
-     * @return bool  true when the action is allowed, false when throttled.
-     */
+    /** Count one event; false once more than $limit events fall inside the current $window seconds. */
     public function allow(string $key, int $limit, int $window): bool
     {
-        $now = microtime(true);
-        $bucket = $this->buckets[$key] ?? null;
-
-        if ($bucket === null || ($now - $bucket['start']) >= $window) {
-            $this->buckets[$key] = ['start' => $now, 'count' => 1];
-            $this->maybePersist();
-            return true;
+        $now = ($this->clock)();
+        if ($this->pdo === null) {
+            $bucket = $this->buckets[$key] ?? null;
+            if ($bucket === null || $now - $bucket['start'] >= $bucket['window']) {
+                $bucket = ['start' => $now, 'hits' => 0, 'window' => $window];
+            }
+            $bucket['hits']++;
+            $this->buckets[$key] = $bucket;
+            return $bucket['hits'] <= $limit;
         }
 
-        if ($bucket['count'] >= $limit) {
-            return false;
-        }
+        $stmt = $this->pdo->prepare('
+            INSERT INTO rate_limits (bucket, window_start, hits, window_seconds) VALUES (:bucket, :now, 1, :window)
+            ON CONFLICT(bucket) DO UPDATE SET
+                hits = CASE WHEN :now - rate_limits.window_start >= rate_limits.window_seconds THEN 1 ELSE rate_limits.hits + 1 END,
+                window_start = CASE WHEN :now - rate_limits.window_start >= rate_limits.window_seconds THEN :now ELSE rate_limits.window_start END,
+                window_seconds = :window
+            RETURNING hits
+        ');
+        $stmt->execute([':bucket' => $key, ':now' => $now, ':window' => $window]);
+        $hits = (int)$stmt->fetchColumn();
+        $stmt->closeCursor();
 
-        $this->buckets[$key]['count']++;
-        $this->maybePersist();
-        return true;
+        if (random_int(1, 200) === 1) {
+            $this->gc();
+        }
+        return $hits <= $limit;
     }
 
-    /** Whether the bucket is already full, without counting this call. */
+    /** Whether the bucket already holds $limit events in its current window, without counting this call. */
     public function exceeded(string $key, int $limit, int $window): bool
     {
-        $bucket = $this->buckets[$key] ?? null;
-        return $bucket !== null && (microtime(true) - $bucket['start']) < $window && $bucket['count'] >= $limit;
-    }
-
-    /** Remaining seconds until the window resets (0 when allowed immediately). */
-    public function retryAfter(string $key, int $window): int
-    {
-        $bucket = $this->buckets[$key] ?? null;
-        if ($bucket === null) {
-            return 0;
+        $now = ($this->clock)();
+        if ($this->pdo === null) {
+            $bucket = $this->buckets[$key] ?? null;
+        } else {
+            $stmt = $this->pdo->prepare('SELECT window_start AS start, hits, window_seconds AS window FROM rate_limits WHERE bucket = :bucket');
+            $stmt->execute([':bucket' => $key]);
+            $bucket = $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
         }
-        $remaining = (int)ceil($window - (microtime(true) - $bucket['start']));
-        return max(0, $remaining);
+        return $bucket !== null && $now - (float)$bucket['start'] < (int)$bucket['window'] && (int)$bucket['hits'] >= $limit;
     }
 
-    /** Drop expired buckets so the in-memory map cannot grow forever. */
-    public function gc(int $maxWindow = 300): void
+    /** Drop buckets whose own window has ended. */
+    public function gc(): void
     {
-        $now = microtime(true);
+        $now = ($this->clock)();
+        if ($this->pdo !== null) {
+            $this->pdo->prepare('DELETE FROM rate_limits WHERE :now - window_start >= window_seconds')->execute([':now' => $now]);
+            return;
+        }
         foreach ($this->buckets as $key => $bucket) {
-            if (($now - $bucket['start']) > $maxWindow) {
+            if ($now - $bucket['start'] >= $bucket['window']) {
                 unset($this->buckets[$key]);
             }
         }
@@ -148,27 +111,5 @@ final class RateLimiter
     public static function key(string $action, string $identity): string
     {
         return $action . ':' . substr(hash('sha256', $identity), 0, 16);
-    }
-
-    private function maybePersist(): void
-    {
-        if (!$this->persist) {
-            return;
-        }
-        // Per-request mode: persist on every change, otherwise the increment is
-        // lost when this short-lived worker exits and the limit never triggers.
-        // The daemon never reaches here (persist=false), so this write is not on
-        // any hot path.
-        $this->gc();
-        if (!is_dir($this->storageDir)) {
-            @mkdir($this->storageDir, 0755, true);
-        }
-        $file = $this->storageFile();
-        $payload = json_encode($this->buckets);
-        if (!is_string($payload)) {
-            return;
-        }
-        @file_put_contents($file, $payload, LOCK_EX);
-        @chmod($file, 0600);
     }
 }

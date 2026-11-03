@@ -30,7 +30,7 @@ if ($method !== 'POST') {
 
 $user = Http::requireUser(new UserManager($pdo));
 $deviceId = $user['device_id'];
-$rateLimiter = new RateLimiter();
+$rateLimiter = RateLimiter::shared();
 $input = Http::input();
 $action = is_string($input['action'] ?? null) ? $input['action'] : 'create';
 

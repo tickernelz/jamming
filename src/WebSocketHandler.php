@@ -75,11 +75,8 @@ class WebSocketHandler implements MessageComponentInterface
         $this->roomManager = $roomManager;
         $this->userManager = $userManager;
         $this->allowedOrigins = $allowedOrigins;
-        $this->runtimeStatePath = $runtimeStatePath ?? (getenv('JAMRI_DATA_DIR') ?: dirname(__DIR__) . '/data') . '/runtime_rooms.json';
-        // persist=false: this process is long-lived, so the in-memory bucket map
-        // is already authoritative. File I/O here would sit on the message hot
-        // path (world.move is limited per device) and stall the event loop.
-        $this->rateLimiter = new RateLimiter(null, false);
+        $this->runtimeStatePath = $runtimeStatePath ?? Database::dataDir() . '/runtime_rooms.json';
+        $this->rateLimiter = new RateLimiter();
         $this->worldManager = $worldManager ?? new WorldManager($roomManager->pdo(), $roomManager);
         $this->restoreRuntimeState();
         register_shutdown_function([$this, 'persistRuntimeState']);

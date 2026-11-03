@@ -20,7 +20,7 @@ Http::securityHeaders();
 $pdo = Database::getConnection();
 $roomManager = new RoomManager($pdo);
 $userManager = new UserManager($pdo);
-$rateLimiter = new RateLimiter();
+$rateLimiter = RateLimiter::shared();
 $method = $_SERVER['REQUEST_METHOD'];
 
 if ($method === 'GET') {
