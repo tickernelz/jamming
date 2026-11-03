@@ -19,7 +19,7 @@ final class ApiTest extends TestCase
         $port = random_int(20000, 40000);
         self::$base = "http://127.0.0.1:{$port}";
         self::$server = proc_open(
-            [PHP_BINARY, '-S', "127.0.0.1:{$port}", '-t', dirname(__DIR__)],
+            [PHP_BINARY, '-S', "127.0.0.1:{$port}", '-t', dirname(__DIR__), dirname(__DIR__) . '/bin/dev-router.php'],
             [['pipe', 'r'], ['file', '/dev/null', 'w'], ['file', '/dev/null', 'w']],
             $pipes,
             null,
@@ -161,6 +161,26 @@ final class ApiTest extends TestCase
         self::assertNotContains('ws:', $sources);
         self::assertNotContains('wss:', $sources);
         self::assertContains('ws://127.0.0.1:8081', $sources);
+    }
+
+    public function testShellLinksEveryAssetByVersionedPathWithoutQueryString(): void
+    {
+        $html = (string)file_get_contents(self::$base . '/');
+        preg_match_all('#(?:src|href)="([^"]+\.(?:js|css))"#', $html, $m);
+
+        self::assertCount(19, $m[1]);
+        foreach ($m[1] as $url) {
+            self::assertMatchesRegularExpression('#^v/[1-9][0-9]*/public/(js|css)/[a-z-]+\.(js|css)$#', $url);
+            $res = $this->request('GET', '/' . $url);
+            self::assertSame(200, $res['status'], $url);
+            self::assertSame(
+                filesize(dirname(__DIR__) . '/' . preg_replace('#^v/[0-9]+/#', '', $url)),
+                (int)current(preg_replace('/^content-length:\s*/i', '', preg_grep('/^content-length:/i', $res['headers']))),
+                $url
+            );
+        }
+        self::assertSame(404, $this->request('GET', '/v/1/public/../index.php')['status']);
+        self::assertSame(404, $this->request('GET', '/v/1/config/database.php')['status']);
     }
 
     public function testOversizedBodyIsRejected(): void

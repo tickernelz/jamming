@@ -5,12 +5,9 @@ require_once __DIR__ . '/vendor/autoload.php';
 
 Jamri\Http::securityHeaders(false);
 
-// Content-hash cache-busting: assets are cached by the browser & service worker
-// and only invalidated when the file actually changes (no more ?v=time()).
-$assetVersion = static function (string $relativePath): string {
-    $abs = __DIR__ . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $relativePath);
-    $mtime = @filemtime($abs);
-    return $mtime !== false ? (string)$mtime : '1';
+$asset = static function (string $relativePath): string {
+    $mtime = @filemtime(__DIR__ . '/' . $relativePath);
+    return 'v/' . ($mtime !== false ? $mtime : 0) . '/' . $relativePath;
 };
 ?>
 <!DOCTYPE html>
@@ -29,9 +26,9 @@ $assetVersion = static function (string $relativePath): string {
     <link rel="apple-touch-icon" href="public/icon-192.svg" />
 
     <!-- Stylesheets -->
-    <link rel="stylesheet" href="public/css/main.css?v=<?= $assetVersion('public/css/main.css') ?>" />
-    <link rel="stylesheet" href="public/css/components.css?v=<?= $assetVersion('public/css/components.css') ?>" />
-    <link rel="stylesheet" href="public/css/world.css?v=<?= $assetVersion('public/css/world.css') ?>" />
+    <link rel="stylesheet" href="<?= $asset('public/css/main.css') ?>" />
+    <link rel="stylesheet" href="<?= $asset('public/css/components.css') ?>" />
+    <link rel="stylesheet" href="<?= $asset('public/css/world.css') ?>" />
 </head>
 <body>
 
@@ -292,21 +289,21 @@ $assetVersion = static function (string $relativePath): string {
     <script src="https://www.youtube.com/iframe_api"></script>
 
     <!-- JAVASCRIPT LIBRARIES & CLIENT SCRIPTS -->
-    <script src="public/js/jamri-format.js?v=<?= $assetVersion('public/js/jamri-format.js') ?>"></script>
-    <script src="public/js/identity.js?v=<?= $assetVersion('public/js/identity.js') ?>"></script>
-    <script src="public/js/websocket.js?v=<?= $assetVersion('public/js/websocket.js') ?>"></script>
-    <script src="public/js/player.js?v=<?= $assetVersion('public/js/player.js') ?>"></script>
-    <script src="public/js/chat.js?v=<?= $assetVersion('public/js/chat.js') ?>"></script>
-    <script src="public/js/search.js?v=<?= $assetVersion('public/js/search.js') ?>"></script>
-    <script src="public/js/soundboard.js?v=<?= $assetVersion('public/js/soundboard.js') ?>"></script>
-    <script src="public/js/voice-ptt.js?v=<?= $assetVersion('public/js/voice-ptt.js') ?>"></script>
-    <script src="public/js/games.js?v=<?= $assetVersion('public/js/games.js') ?>"></script>
-    <script src="public/js/lyrics.js?v=<?= $assetVersion('public/js/lyrics.js') ?>"></script>
-    <script src="public/js/world.js?v=<?= $assetVersion('public/js/world.js') ?>"></script>
-    <script src="public/js/app-util.js?v=<?= $assetVersion('public/js/app-util.js') ?>"></script>
-    <script src="public/js/app-room.js?v=<?= $assetVersion('public/js/app-room.js') ?>"></script>
-    <script src="public/js/app-solo.js?v=<?= $assetVersion('public/js/app-solo.js') ?>"></script>
-    <script src="public/js/app-dock.js?v=<?= $assetVersion('public/js/app-dock.js') ?>"></script>
-    <script src="public/js/app.js?v=<?= $assetVersion('public/js/app.js') ?>"></script>
+    <script src="<?= $asset('public/js/jamri-format.js') ?>"></script>
+    <script src="<?= $asset('public/js/identity.js') ?>"></script>
+    <script src="<?= $asset('public/js/websocket.js') ?>"></script>
+    <script src="<?= $asset('public/js/player.js') ?>"></script>
+    <script src="<?= $asset('public/js/chat.js') ?>"></script>
+    <script src="<?= $asset('public/js/search.js') ?>"></script>
+    <script src="<?= $asset('public/js/soundboard.js') ?>"></script>
+    <script src="<?= $asset('public/js/voice-ptt.js') ?>"></script>
+    <script src="<?= $asset('public/js/games.js') ?>"></script>
+    <script src="<?= $asset('public/js/lyrics.js') ?>"></script>
+    <script src="<?= $asset('public/js/world.js') ?>"></script>
+    <script src="<?= $asset('public/js/app-util.js') ?>"></script>
+    <script src="<?= $asset('public/js/app-room.js') ?>"></script>
+    <script src="<?= $asset('public/js/app-solo.js') ?>"></script>
+    <script src="<?= $asset('public/js/app-dock.js') ?>"></script>
+    <script src="<?= $asset('public/js/app.js') ?>"></script>
 </body>
 </html>
