@@ -179,8 +179,11 @@ final class ApiTest extends TestCase
                 $url
             );
         }
-        self::assertSame(404, $this->request('GET', '/v/1/public/../index.php')['status']);
-        self::assertSame(404, $this->request('GET', '/v/1/config/database.php')['status']);
+        foreach (['/v/1/public/../composer.json', '/v/1/public/%2e%2e/composer.json', '/v/1/public/../config/database.php', '/v/1/config/database.php'] as $path) {
+            $raw = (string)@file_get_contents(self::$base . $path, false, stream_context_create(['http' => ['ignore_errors' => true]]));
+            self::assertStringNotContainsString('cboden/ratchet', $raw, $path);
+            self::assertStringNotContainsString('<?php', $raw, $path);
+        }
     }
 
     public function testOversizedBodyIsRejected(): void
