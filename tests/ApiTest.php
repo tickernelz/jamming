@@ -19,7 +19,7 @@ final class ApiTest extends TestCase
         $port = random_int(20000, 40000);
         self::$base = "http://127.0.0.1:{$port}";
         self::$server = proc_open(
-            [PHP_BINARY, '-S', "127.0.0.1:{$port}", '-t', dirname(__DIR__)],
+            [PHP_BINARY, '-S', "127.0.0.1:{$port}", '-t', dirname(__DIR__), dirname(__DIR__) . '/bin/dev-router.php'],
             [['pipe', 'r'], ['file', '/dev/null', 'w'], ['file', '/dev/null', 'w']],
             $pipes,
             null,
@@ -161,6 +161,30 @@ final class ApiTest extends TestCase
         self::assertNotContains('ws:', $sources);
         self::assertNotContains('wss:', $sources);
         self::assertContains('ws://127.0.0.1:8081', $sources);
+    }
+
+    public function testShellLinksEveryAssetByVersionedPathWithoutQueryString(): void
+    {
+        $html = (string)file_get_contents(self::$base . '/');
+        preg_match_all('#(?:src|href)="(?!https?:)([^"?]+\.(?:js|css)(?:\?[^"]*)?)"#', $html, $m);
+
+        self::assertNotEmpty($m[1]);
+        foreach ($m[1] as $url) {
+            self::assertStringNotContainsString('?', $url);
+            self::assertMatchesRegularExpression('#^v/[0-9a-f]+/public/(js|css)/[A-Za-z0-9_.-]+\.(js|css)$#', $url);
+            $res = $this->request('GET', '/' . $url);
+            self::assertSame(200, $res['status'], $url);
+            self::assertSame(
+                filesize(dirname(__DIR__) . '/' . preg_replace('#^v/[0-9a-f]+/#', '', $url)),
+                (int)current(preg_replace('/^content-length:\s*/i', '', preg_grep('/^content-length:/i', $res['headers']))),
+                $url
+            );
+        }
+        foreach (['/v/1/public/../composer.json', '/v/1/public/%2e%2e/composer.json', '/v/1/public/../config/database.php', '/v/1/config/database.php'] as $path) {
+            $raw = (string)@file_get_contents(self::$base . $path, false, stream_context_create(['http' => ['ignore_errors' => true]]));
+            self::assertStringNotContainsString('cboden/ratchet', $raw, $path);
+            self::assertStringNotContainsString('<?php', $raw, $path);
+        }
     }
 
     public function testOversizedBodyIsRejected(): void

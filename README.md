@@ -24,7 +24,7 @@ Live: https://jamming.zhafron.my.id
 
 ```bash
 composer install
-php -S 127.0.0.1:8000 &
+php -S 127.0.0.1:8000 bin/dev-router.php &
 php bin/websocket.php
 ```
 
@@ -46,7 +46,7 @@ for f in tests/*.mjs; do node "$f"; done
 3. With SELinux enforcing: label `/opt/jamri` as `httpd_sys_content_t`, `/opt/jamri/data` as `httpd_sys_rw_content_t`, and set `httpd_can_network_connect=1` so nginx can proxy `/ws`.
 4. `install -d -o jamri -g jamri -m 700 /var/backups/jamri && systemctl enable --now php-fpm nginx jamri-ws jamri-backup.timer`. The backup unit runs as `jamri`, the same account that owns `/opt/jamri`, so root never executes a file the service account can write.
 
-nginx serves only `/`, `index.php`, `api/*.php`, `public/` and the `/ws` proxy; everything else (source, vendor, composer files, data, dotfiles) returns 404. It trusts `CF-Connecting-IP` only from Cloudflare ranges (refresh `nginx-cloudflare-realip.conf` from https://www.cloudflare.com/ips/ when they change), rate-limits `api/*.php` per client (IPv4 address or IPv6 /64), caps request bodies at 1 MB, and sends HSTS. `api/health.php` returns 200 when the database and the WebSocket port answer, 503 otherwise.
+`index.php` links every script and stylesheet as `v/<xxh3 of the file>/public/...`, so the version is part of the path: Cloudflare caches URLs without a query string at the edge (the `zhafron.my.id` zone does not cache query-string URLs), a deploy only changes the URLs of files whose content changed, and nginx serves `/v/<hash>/public/...` from `public/` with a one-year immutable `Cache-Control`; `bin/dev-router.php` does the same for `php -S`. Unversioned `/public/` URLs (service worker precache, manifest, icons) get one hour. nginx serves only `/`, `index.php`, `api/*.php`, `public/`, `/v/<hash>/public/` and the `/ws` proxy; everything else (source, vendor, composer files, data, dotfiles) returns 404. It trusts `CF-Connecting-IP` only from Cloudflare ranges (refresh `nginx-cloudflare-realip.conf` from https://www.cloudflare.com/ips/ when they change), rate-limits `api/*.php` per client (IPv4 address or IPv6 /64), caps request bodies at 1 MB, and sends HSTS. `api/health.php` returns 200 when the database and the WebSocket port answer, 503 otherwise.
 
 Backups: `jamri-backup.timer` runs `deploy/jamri-backup.sh` daily, writing an integrity-checked `VACUUM INTO` copy to `/var/backups/jamri/jamri-<timestamp>.sqlite.gz` and keeping 14 days. Logs: nginx writes `/var/log/nginx/jamri.{access,error}.log`; PHP errors from the pool reach the php-fpm master log `/var/log/php-fpm/error.log` through `catch_workers_output` (the pool user cannot write inside `/var/log/php-fpm`); both are rotated by the stock `/etc/logrotate.d/nginx` and `/etc/logrotate.d/php-fpm` rules. The daemon logs to the journal.
 
