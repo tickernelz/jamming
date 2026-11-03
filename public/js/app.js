@@ -286,12 +286,8 @@ async function refreshLobbyRooms(searchQuery = '') {
             card.addEventListener('click', () => {
                 if (isWorld) {
                     enterWorld(room.id);
-                } else if (room.is_private) {
-                    promptPasscodeModal(room.name, (enteredPasscode) => {
-                        joinRoom(room.id, true, enteredPasscode);
-                    });
                 } else {
-                    joinRoom(room.id, false, '');
+                    joinRoom(room.id);
                 }
             });
 
@@ -483,8 +479,6 @@ function showCreateRoomModal() {
         const isPrivate = !isWorld && modal.querySelector('input[name="room_access"]:checked').value === 'private';
         const passcode = modal.querySelector('#new-room-passcode').value.trim();
 
-        const deviceId = window.JAMRI_USER ? window.JAMRI_USER.device_id : JamriAuth.getOrCreateDeviceId();
-
         const submitBtn = modal.querySelector('#btn-submit-create');
         submitBtn.disabled = true;
         submitBtn.textContent = 'Membuat...';
@@ -494,7 +488,7 @@ function showCreateRoomModal() {
                 const res = await fetch('api/worlds.php', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name, device_id: deviceId })
+                    body: JSON.stringify({ name })
                 });
                 const data = await res.json();
                 if (data.success && data.world) {
@@ -514,15 +508,14 @@ function showCreateRoomModal() {
                 body: JSON.stringify({
                     name,
                     is_private: isPrivate ? 1 : 0,
-                    passcode: isPrivate ? passcode : '',
-                    device_id: deviceId
+                    passcode: isPrivate ? passcode : ''
                 })
             });
 
             const data = await res.json();
             if (data.success && data.room) {
                 closeModal();
-                joinRoom(data.room.id, isPrivate, passcode);
+                joinRoom(data.room.id);
             } else {
                 alert(data.error || 'Gagal membuat room.');
                 submitBtn.disabled = false;
@@ -589,26 +582,26 @@ function leaveRoom() {
     switchView('lobby');
 }
 
-async function joinRoom(roomId, isPrivate = false, passcode = '') {
+async function joinRoom(roomId, passcode = '') {
     // Hangatkan audio bridge langsung dari gesture klik pengguna agar browser mengizinkan autoplay
     if (window.JAMRI_APP && window.JAMRI_APP.player) {
         window.JAMRI_APP.player.warmup();
     }
 
-    if (isPrivate && !passcode) {
-        promptPasscodeModal('Private Jamming', (code) => {
-            joinRoom(roomId, true, code);
-        });
-        return;
-    }
-
     try {
-        const url = `api/room_detail.php?room_id=${encodeURIComponent(roomId)}${passcode ? '&passcode=' + encodeURIComponent(passcode) : ''}`;
-        const res = await fetch(url);
+        const url = `api/room_detail.php?room_id=${encodeURIComponent(roomId)}`;
+        const res = passcode
+            ? await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ passcode }) })
+            : await fetch(url);
         const data = await res.json();
 
         if (!data.success) {
-            alert(data.message || 'Gagal masuk ke room. Pastikan passcode benar.');
+            if (data.error === 'invalid_passcode') {
+                if (passcode) alert(data.message || 'Passcode room salah.');
+                promptPasscodeModal((data.room && data.room.name) || 'Private Jamming', (code) => joinRoom(roomId, code));
+                return;
+            }
+            alert(data.message || data.error || 'Gagal masuk ke room.');
             return;
         }
 
@@ -642,7 +635,7 @@ async function joinRoom(roomId, isPrivate = false, passcode = '') {
         bindRoomWebSocketEvents(ws, player, roomDetail);
 
         // Connect WebSocket
-        ws.connect(roomId, window.JAMRI_USER, 'room', passcode);
+        ws.connect(roomId, window.JAMRI_USER, 'room');
 
         switchView('room');
     } catch (err) {
@@ -664,10 +657,7 @@ function enterWorld(worldId) {
     // player used to be flipped to 'world' mode with a dead socket).
     if (!window.JAMRI_USER) {
         if (typeof JamriAuth !== 'undefined' && JamriAuth.showProfileModal) {
-            JamriAuth.showProfileModal(
-                { device_id: JamriAuth.getOrCreateDeviceId(), nickname: '', emoji: '🎧' },
-                false
-            );
+            JamriAuth.showProfileModal({ nickname: '', emoji: '🎧' }, false);
         }
         return;
     }
@@ -704,6 +694,22 @@ function leaveWorld() {
     switchView('lobby');
 }
 
+function renderRoomControl(controlMode, isHost) {
+    window.JAMRI_APP.roomControlMode = controlMode;
+    const label = document.getElementById('room-control-label');
+    if (!label) return;
+    const shared = controlMode === 'everyone';
+    label.textContent = shared ? 'Kontrol: Bersama' : 'Kontrol: Host';
+    const btn = document.getElementById('btn-room-control');
+    if (btn) {
+        btn.classList.toggle('btn-primary', shared);
+        btn.classList.toggle('btn-outline', !shared);
+        btn.title = isHost
+            ? (shared ? 'Klik untuk mengembalikan kontrol musik ke host saja' : 'Klik untuk mengizinkan semua peserta mengatur musik')
+            : (shared ? 'Semua peserta boleh mengatur musik' : 'Hanya host yang mengatur musik');
+    }
+}
+
 function renderRoomShell(roomDetail) {
     const room = roomDetail.room;
     const container = document.getElementById('room-view');
@@ -729,6 +735,9 @@ function renderRoomShell(roomDetail) {
             </div>
             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
                 <div id="room-ptt-slot"></div>
+                <button type="button" id="btn-room-control" class="btn btn-outline btn-sm" title="Atur siapa yang boleh mengontrol musik">
+                    <span id="room-control-label">Kontrol: Host</span>
+                </button>
                 <button type="button" id="btn-room-search" class="btn btn-primary btn-sm">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="11" cy="11" r="8"></circle>
@@ -844,6 +853,16 @@ function renderRoomShell(roomDetail) {
         leaveRoom();
     });
 
+    container.querySelector('#btn-room-control').addEventListener('click', () => {
+        if (!window.JAMRI_USER || !window.JAMRI_USER.is_host) {
+            if (typeof showToast === 'function') showToast('Hanya host yang bisa mengubah Kontrol Bersama.', 'warning');
+            return;
+        }
+        const next = window.JAMRI_APP.roomControlMode === 'everyone' ? 'owner' : 'everyone';
+        window.JAMRI_APP.wsClient.sendRoomControl(next);
+    });
+    renderRoomControl(room.box_control || 'owner', !!room.is_host);
+
     // Search trigger
     container.querySelector('#btn-room-search').addEventListener('click', () => {
         window.JAMRI_APP.searchModule.showModal();
@@ -950,7 +969,28 @@ function bindRoomWebSocketEvents(ws, player, roomDetail) {
         leaveRoom();
     });
 
+    ws.on('error', (data) => {
+        if (!data || !data.code) return;
+        ws.disconnect();
+        alert(data.message || 'Koneksi room ditolak server.');
+        leaveRoom();
+        if (data.code === 'auth_required' && typeof JamriAuth !== 'undefined') {
+            window.JAMRI_USER = null;
+            JamriAuth.showProfileModal({ nickname: '', emoji: '🎧' }, false);
+        }
+    });
+
+    ws.on('control_mode_changed', (data) => {
+        renderRoomControl(data.control_mode, !!(window.JAMRI_USER && window.JAMRI_USER.is_host));
+        if (window.JAMRI_APP.currentChat) {
+            const label = data.control_mode === 'everyone' ? 'menyalakan Kontrol Bersama' : 'mengembalikan kontrol musik ke host';
+            window.JAMRI_APP.currentChat.appendActivityNotice(label, '', data.triggered_by);
+        }
+    });
+
     ws.on('room_init', (data) => {
+        if (window.JAMRI_USER) window.JAMRI_USER.is_host = !!data.is_host;
+        renderRoomControl(data.control_mode || 'owner', !!data.is_host);
         if (data.queue) renderRoomQueue(data.queue);
         // A reconnect re-sends room_init without re-fetching room_detail, so the
         // Bank Musik tab would keep whatever it rendered on first join.

@@ -10,33 +10,22 @@ use PDOException;
 
 class Database
 {
+    private const DATA_VERSION = 1;
+
     private static ?PDO $instance = null;
 
     public static function getConnection(): PDO
     {
         if (self::$instance === null) {
-            $dbDir = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data';
+            $dbDir = getenv('JAMRI_DATA_DIR') ?: dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data';
+            $dbPath = $dbDir . DIRECTORY_SEPARATOR . 'jamri.sqlite';
             if (!is_dir($dbDir)) {
                 mkdir($dbDir, 0755, true);
             }
-            $dbPath = $dbDir . DIRECTORY_SEPARATOR . 'jamri.sqlite';
 
             try {
-                $pdo = new PDO('sqlite:' . $dbPath);
-                $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-                $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
-
-                // Enable Write-Ahead Logging for better concurrent read/write and foreign keys
-                $pdo->exec('PRAGMA journal_mode = WAL;');
-                $pdo->exec('PRAGMA foreign_keys = ON;');
-                $pdo->exec('PRAGMA synchronous = NORMAL;');
-                $pdo->exec('PRAGMA busy_timeout = 5000;');
-
-                self::$instance = $pdo;
-                self::initSchema($pdo);
+                self::$instance = self::open('sqlite:' . $dbPath);
             } catch (PDOException $e) {
-                // Log the detail, but never expose internals (paths, driver info)
-                // to the client.
                 error_log('[Database] Connection failed: ' . $e->getMessage());
                 http_response_code(500);
                 echo json_encode(['success' => false, 'error' => 'Database tidak tersedia saat ini.']);
@@ -47,6 +36,19 @@ class Database
         return self::$instance;
     }
 
+    public static function open(string $dsn): PDO
+    {
+        $pdo = new PDO($dsn);
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+        $pdo->exec('PRAGMA journal_mode = WAL;');
+        $pdo->exec('PRAGMA foreign_keys = ON;');
+        $pdo->exec('PRAGMA synchronous = NORMAL;');
+        $pdo->exec('PRAGMA busy_timeout = 5000;');
+        self::initSchema($pdo);
+        return $pdo;
+    }
+
     private static function initSchema(PDO $pdo): void
     {
         $sql = "
@@ -55,7 +57,8 @@ class Database
             nickname TEXT NOT NULL,
             emoji TEXT NOT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            last_active DATETIME DEFAULT CURRENT_TIMESTAMP
+            last_active DATETIME DEFAULT CURRENT_TIMESTAMP,
+            session_hash TEXT NULL
         );
 
         CREATE TABLE IF NOT EXISTS rooms (
@@ -125,18 +128,6 @@ class Database
             expires_at INTEGER NOT NULL
         );
 
-        CREATE TABLE IF NOT EXISTS room_soundboard (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            room_id TEXT NOT NULL,
-            title TEXT NOT NULL,
-            emoji TEXT DEFAULT '🔊',
-            file_url TEXT NOT NULL,
-            duration_seconds REAL DEFAULT 0,
-            added_by_nickname TEXT NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
-        );
-        CREATE INDEX IF NOT EXISTS idx_soundboard_room ON room_soundboard(room_id, id);
         ";
 
         $pdo->exec($sql);
@@ -150,17 +141,15 @@ class Database
      */
     private static function migrate(PDO $pdo): void
     {
-        $columns = [];
-        foreach ($pdo->query('PRAGMA table_info(rooms)')->fetchAll() as $row) {
-            $columns[$row['name']] = true;
-        }
-
-        $addColumn = static function (string $name, string $definition) use ($pdo, &$columns): void {
-            if (!isset($columns[$name])) {
-                $pdo->exec("ALTER TABLE rooms ADD COLUMN {$name} {$definition}");
-                $columns[$name] = true;
+        $addColumnTo = static function (string $table, string $name, string $definition) use ($pdo): void {
+            foreach ($pdo->query("PRAGMA table_info({$table})")->fetchAll() as $row) {
+                if ($row['name'] === $name) {
+                    return;
+                }
             }
+            $pdo->exec("ALTER TABLE {$table} ADD COLUMN {$name} {$definition}");
         };
+        $addColumn = static fn (string $name, string $definition) => $addColumnTo('rooms', $name, $definition);
 
         // World mode support (additive; legacy rooms keep working unchanged).
         $addColumn('mode', "TEXT DEFAULT 'legacy'");
@@ -187,5 +176,54 @@ class Database
         );
         CREATE INDEX IF NOT EXISTS idx_boxes_world ON world_boxes(world_id);
         ");
+
+        $addColumnTo('users', 'session_hash', 'TEXT NULL');
+        $pdo->exec('DROP TABLE IF EXISTS room_soundboard');
+        $pdo->exec("
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_users_session ON users(session_hash);
+        CREATE TABLE IF NOT EXISTS room_access (
+            room_id TEXT NOT NULL,
+            device_id TEXT NOT NULL,
+            granted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (room_id, device_id),
+            FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+        );
+        ");
+
+        if ((int)$pdo->query('PRAGMA user_version')->fetchColumn() < self::DATA_VERSION) {
+            self::migrateData($pdo);
+        }
+    }
+
+    private static function migrateData(PDO $pdo): void
+    {
+        $pdo->exec('BEGIN IMMEDIATE');
+        try {
+            if ((int)$pdo->query('PRAGMA user_version')->fetchColumn() < self::DATA_VERSION) {
+                $rows = $pdo->query('SELECT id, passcode FROM rooms WHERE passcode IS NOT NULL')->fetchAll();
+                $hash = $pdo->prepare('UPDATE rooms SET passcode = :hash WHERE id = :id');
+                foreach ($rows as $row) {
+                    if (password_get_info((string)$row['passcode'])['algo'] === null) {
+                        $hash->execute([':hash' => password_hash((string)$row['passcode'], PASSWORD_DEFAULT), ':id' => $row['id']]);
+                    }
+                }
+
+                foreach (['users' => 'emoji', 'chat_messages' => 'sender_emoji'] as $table => $column) {
+                    $scrub = $pdo->prepare("UPDATE {$table} SET {$column} = :clean WHERE {$column} = :dirty");
+                    foreach ($pdo->query("SELECT DISTINCT {$column} FROM {$table}")->fetchAll(PDO::FETCH_COLUMN) as $value) {
+                        $clean = Validator::emoji($value);
+                        if ($clean !== $value) {
+                            $scrub->execute([':clean' => $clean, ':dirty' => $value]);
+                        }
+                    }
+                }
+
+                $pdo->exec('PRAGMA user_version = ' . self::DATA_VERSION);
+            }
+            $pdo->exec('COMMIT');
+        } catch (\Throwable $e) {
+            $pdo->exec('ROLLBACK');
+            throw $e;
+        }
     }
 }

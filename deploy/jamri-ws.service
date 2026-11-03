@@ -8,12 +8,16 @@ Type=simple
 User=jamri
 Group=jamri
 WorkingDirectory=/opt/jamri
-ExecStart=/usr/bin/php /opt/jamri/bin/websocket.php 8080
+Environment=JAMRI_ALLOWED_ORIGINS=https://jamming.zhafron.my.id
+Environment=JAMRI_WS_PORT=8080
+ExecStart=/usr/bin/php -d memory_limit=256M /opt/jamri/bin/websocket.php
 Restart=on-failure
 RestartSec=3
 MemoryMax=320M
 StandardOutput=journal
 StandardError=journal
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=300
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=full

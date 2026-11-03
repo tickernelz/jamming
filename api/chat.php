@@ -1,5 +1,4 @@
 <?php
-// api/chat.php
 
 declare(strict_types=1);
 
@@ -10,11 +9,13 @@ use Jamri\Database;
 use Jamri\Http;
 use Jamri\RateLimiter;
 use Jamri\RoomManager;
+use Jamri\UserManager;
 use Jamri\Validator;
 
 Http::securityHeaders();
 
 $pdo = Database::getConnection();
+$user = Http::requireUser(new UserManager($pdo));
 $roomManager = new RoomManager($pdo);
 $rateLimiter = new RateLimiter();
 
@@ -26,9 +27,12 @@ if ($roomId === '') {
     Http::error('room_id is required', 400);
 }
 
-// Chat history is cheap per call but should still not be enumerable at will.
-if (!$rateLimiter->allow(RateLimiter::key('chat_read', Http::clientKey()), 60, 60)) {
+if (!$rateLimiter->allow(RateLimiter::key('chat_read', $user['device_id']), 60, 60)) {
     Http::error('Terlalu banyak permintaan. Coba lagi sebentar.', 429);
+}
+
+if (!$roomManager->canAccess($roomId, $user['device_id'])) {
+    Http::error('forbidden', 403);
 }
 
 $messages = $roomManager->getChatMessages($roomId, $beforeId, $limit);

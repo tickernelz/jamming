@@ -25,7 +25,7 @@ $method = $_SERVER['REQUEST_METHOD'];
 
 if ($method === 'GET') {
     $stmt = $pdo->prepare("
-        SELECT r.id, r.name, r.created_at, r.host_device_id,
+        SELECT r.id, r.name, r.created_at,
                u.nickname AS host_nickname, u.emoji AS host_emoji
         FROM rooms r
         LEFT JOIN users u ON u.device_id = r.host_device_id
@@ -44,20 +44,16 @@ if ($method === 'GET') {
 }
 
 if ($method === 'POST') {
+    $deviceId = Http::requireUser($userManager)['device_id'];
     $input = Http::input();
     $name = Validator::roomName($input['name'] ?? '');
-    $deviceId = Validator::deviceId($input['device_id'] ?? '');
 
-    if ($name === '' || $deviceId === '') {
-        Http::error('Nama world dan device_id diperlukan.', 400);
+    if ($name === '') {
+        Http::error('Nama world diperlukan.', 400);
     }
 
     if (!$rateLimiter->allow(RateLimiter::key('world_create', $deviceId), 5, 300)) {
         Http::error('Terlalu banyak world dibuat. Coba lagi nanti.', 429);
-    }
-
-    if (!$userManager->getUser($deviceId)) {
-        $userManager->registerOrUpdate($deviceId, 'Kawan Jamming', '🎧');
     }
 
     $world = $roomManager->createRoom($name, false, null, $deviceId, 'world');

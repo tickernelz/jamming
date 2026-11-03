@@ -18,51 +18,56 @@ class UserManager
 
     public function getUser(string $deviceId): ?array
     {
-        $stmt = $this->pdo->prepare('SELECT * FROM users WHERE device_id = :id');
+        $stmt = $this->pdo->prepare('SELECT device_id, nickname, emoji FROM users WHERE device_id = :id');
         $stmt->execute([':id' => $deviceId]);
         $user = $stmt->fetch();
         return $user ?: null;
     }
 
+    public function userForToken(?string $token): ?array
+    {
+        if ($token === null || preg_match('/^[a-f0-9]{64}$/', $token) !== 1) {
+            return null;
+        }
+        $stmt = $this->pdo->prepare('SELECT device_id, nickname, emoji FROM users WHERE session_hash = :hash');
+        $stmt->execute([':hash' => hash('sha256', $token)]);
+        return $stmt->fetch() ?: null;
+    }
+
     /**
-     * Nickname does not need to be unique anymore (cuman buat seru-seruan)
+     * Create a user with a server-chosen device id; only the session token's hash is stored.
+     * @return array{user: array{device_id: string, nickname: string, emoji: string}, token: string}
      */
-    public function isNicknameAvailable(string $nickname, ?string $excludeDeviceId = null): bool
+    public function register(string $nickname, string $emoji): array
     {
-        return trim($nickname) !== '';
-    }
-
-    public function registerOrUpdate(string $deviceId, string $nickname, string $emoji): array
-    {
-        // Centralised sanitation: nicknames/emojis are broadcast to every client
-        // in a room, so they must never carry markup or control characters.
-        $nickname = Validator::nickname($nickname, 'Kawan Jamming');
-        $emoji = Validator::emoji($emoji);
-
-        $stmt = $this->pdo->prepare('
-            INSERT INTO users (device_id, nickname, emoji, last_active)
-            VALUES (:id, :nick, :emoji, datetime("now"))
-            ON CONFLICT(device_id) DO UPDATE SET
-                nickname = excluded.nickname,
-                emoji = excluded.emoji,
-                last_active = datetime("now")
-        ');
-        $stmt->execute([
-            ':id' => $deviceId,
-            ':nick' => $nickname,
-            ':emoji' => $emoji,
-        ]);
-
-        return [
-            'device_id' => $deviceId,
-            'nickname' => $nickname,
-            'emoji' => $emoji,
+        $token = bin2hex(random_bytes(32));
+        $user = [
+            'device_id' => 'dev_' . bin2hex(random_bytes(12)),
+            'nickname' => Validator::nickname($nickname, 'Kawan Jamming'),
+            'emoji' => Validator::emoji($emoji),
         ];
+        $this->pdo->prepare('
+            INSERT INTO users (device_id, nickname, emoji, session_hash, last_active)
+            VALUES (:id, :nick, :emoji, :hash, datetime("now"))
+        ')->execute([
+            ':id' => $user['device_id'],
+            ':nick' => $user['nickname'],
+            ':emoji' => $user['emoji'],
+            ':hash' => hash('sha256', $token),
+        ]);
+        return ['user' => $user, 'token' => $token];
     }
 
-    public function touch(string $deviceId): void
+    public function updateProfile(string $deviceId, string $nickname, string $emoji): array
     {
-        $stmt = $this->pdo->prepare('UPDATE users SET last_active = datetime("now") WHERE device_id = :id');
-        $stmt->execute([':id' => $deviceId]);
+        $user = [
+            'device_id' => $deviceId,
+            'nickname' => Validator::nickname($nickname, 'Kawan Jamming'),
+            'emoji' => Validator::emoji($emoji),
+        ];
+        $this->pdo->prepare('
+            UPDATE users SET nickname = :nick, emoji = :emoji, last_active = datetime("now") WHERE device_id = :id
+        ')->execute([':id' => $deviceId, ':nick' => $user['nickname'], ':emoji' => $user['emoji']]);
+        return $user;
     }
 }

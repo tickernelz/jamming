@@ -6,21 +6,29 @@ declare(strict_types=1);
 namespace Jamri;
 
 use Exception;
+use Psr\Http\Message\RequestInterface;
 use Ratchet\ConnectionInterface;
 use Ratchet\MessageComponentInterface;
-use SplObjectStorage;
 
 class WebSocketHandler implements MessageComponentInterface
 {
     /** Hard ceiling for an inbound websocket frame (~256 KB). */
-    private const MAX_FRAME_BYTES = 262144;
+    public const MAX_FRAME_BYTES = 262144;
+    public const MAX_CONNECTIONS_PER_IP = 20;
+    public const MUSIC_CONTROL_ACTIONS = [
+        'play', 'pause', 'seek', 'set_track', 'next', 'prev',
+        'set_loop', 'queue_add', 'queue_reorder', 'queue_remove',
+        'queue_shuffle', 'playlist_add', 'playlist_remove',
+    ];
     /** Base64 audio payload ceiling for voice/soundboard (~96 KB decoded). */
     private const MAX_AUDIO_CHARS = 131072;
     /** Cap the in-memory play history to prevent unbounded growth. */
     private const MAX_HISTORY = 50;
 
     private RoomManager $roomManager;
-    private YouTubeService $ytService;
+    private UserManager $userManager;
+    private array $allowedOrigins;
+    private string $runtimeStatePath;
     private RateLimiter $rateLimiter;
     private WorldManager $worldManager;
 
@@ -57,10 +65,17 @@ class WebSocketHandler implements MessageComponentInterface
     /** worldId => [resId => true]: mats whose choice dialog is already open client-side. */
     private array $pendingChoice = [];
 
-    public function __construct(RoomManager $roomManager, YouTubeService $ytService, ?WorldManager $worldManager = null)
-    {
+    public function __construct(
+        RoomManager $roomManager,
+        UserManager $userManager,
+        array $allowedOrigins = [],
+        ?WorldManager $worldManager = null,
+        ?string $runtimeStatePath = null
+    ) {
         $this->roomManager = $roomManager;
-        $this->ytService = $ytService;
+        $this->userManager = $userManager;
+        $this->allowedOrigins = $allowedOrigins;
+        $this->runtimeStatePath = $runtimeStatePath ?? dirname(__DIR__) . '/data/runtime_rooms.json';
         // persist=false: this process is long-lived, so the in-memory bucket map
         // is already authoritative. File I/O here would sit on the message hot
         // path (world.move is limited per device) and stall the event loop.
@@ -72,19 +87,34 @@ class WebSocketHandler implements MessageComponentInterface
 
     public function onOpen(ConnectionInterface $conn): void
     {
-        // Parse query params from request
-        $queryString = $conn->httpRequest->getUri()->getQuery();
-        parse_str($queryString, $params);
+        $request = $conn->httpRequest;
+        parse_str($request->getUri()->getQuery(), $params);
 
         $roomId = Validator::roomId($params['room_id'] ?? '');
-        $deviceId = Validator::deviceId($params['device_id'] ?? '');
-        $nickname = Validator::nickname($params['nickname'] ?? 'Guest', 'Guest');
-        $emoji = Validator::emoji($params['emoji'] ?? '');
         $worldMode = ($params['mode'] ?? '') === 'world';
 
-        if ($roomId === '' || $deviceId === '') {
-            $conn->send(json_encode(['type' => 'error', 'message' => 'room_id and device_id are required']));
-            $conn->close();
+        if (!$this->originAllowed($request)) {
+            $this->reject($conn, 'forbidden', 'Origin tidak diizinkan.');
+            return;
+        }
+
+        $user = $this->userManager->userForToken(self::sessionToken($request));
+        if ($user === null) {
+            $this->reject($conn, 'auth_required', 'Sesi tidak ditemukan. Muat ulang halaman lalu isi profil.');
+            return;
+        }
+        $deviceId = $user['device_id'];
+        $nickname = $user['nickname'];
+        $emoji = $user['emoji'];
+
+        if ($roomId === '') {
+            $this->reject($conn, 'bad_request', 'room_id is required');
+            return;
+        }
+
+        $ip = $request->getHeaderLine('X-Real-IP') ?: (string)($conn->remoteAddress ?? '');
+        if ($this->connectionCountForIp($ip) >= self::MAX_CONNECTIONS_PER_IP) {
+            $this->reject($conn, 'rate_limited', 'Terlalu banyak koneksi dari alamat ini.');
             return;
         }
 
@@ -96,17 +126,14 @@ class WebSocketHandler implements MessageComponentInterface
         }
 
         if ($worldMode) {
-            $this->openWorld($conn, $roomId, $deviceId, $nickname, $emoji);
+            $this->openWorld($conn, $roomId, $deviceId, $nickname, $emoji, $ip);
             return;
         }
 
-        // Private rooms must be verified here too: the HTTP gate only protects the
-        // UI flow, and the socket URL is trivially forgeable.
-        $passcode = Validator::passcode($params['passcode'] ?? '');
-        if (!$this->roomManager->canAccessRoom($roomId, $passcode)) {
+        if (!$this->roomManager->canAccess($roomId, $deviceId)) {
             $conn->send(json_encode([
                 'type' => 'room_not_found',
-                'message' => 'Room ini private atau sudah tidak aktif. Periksa passcode Anda.'
+                'message' => 'Room ini private atau sudah tidak aktif. Masukkan passcode lewat daftar room.'
             ]));
             $conn->close();
             return;
@@ -119,6 +146,7 @@ class WebSocketHandler implements MessageComponentInterface
             'device_id' => $deviceId,
             'nickname' => $nickname,
             'emoji' => $emoji,
+            'ip' => $ip,
         ];
 
         if (!$this->attachToRoom($conn, $roomId)) {
@@ -182,6 +210,15 @@ class WebSocketHandler implements MessageComponentInterface
             ];
         }
 
+        if (!isset($this->rooms[$roomId]['control_mode'])) {
+            $roomSummary = $this->roomManager->getRoomSummary($roomId);
+            if (!$roomSummary) {
+                return false;
+            }
+            $this->rooms[$roomId]['host_device_id'] = (string)($roomSummary['host_device_id'] ?? '');
+            $this->rooms[$roomId]['control_mode'] = (string)($roomSummary['box_control'] ?? 'owner');
+        }
+
         $this->rooms[$roomId]['clients'][$resId] = $conn;
         $this->rooms[$roomId]['empty_since'] = null;
         $this->roomManager->markEmptySince($roomId, false);
@@ -207,6 +244,8 @@ class WebSocketHandler implements MessageComponentInterface
             'online_users' => $this->getOnlineUsers($roomId),
             'punishments' => $this->getActivePunishments($roomId),
             'control_mode' => $this->rooms[$roomId]['control_mode'] ?? 'everyone',
+            'is_host' => $this->isHost($roomId, $deviceId),
+            'you' => ['device_id' => $deviceId, 'nickname' => $nickname, 'emoji' => $emoji],
         ]));
 
         // Broadcast to others that a user joined
@@ -331,32 +370,29 @@ class WebSocketHandler implements MessageComponentInterface
             $roomId = $meta['room_id'];
         }
 
-        // Guard: Check if music control action is attempted by a currently punished user
-        $musicControlActions = [
-            'play', 'pause', 'seek', 'set_track', 'next', 'prev',
-            'set_loop', 'queue_add', 'queue_reorder', 'queue_remove',
-            'queue_shuffle', 'playlist_add', 'playlist_remove'
-        ];
+        $musicControlActions = self::MUSIC_CONTROL_ACTIONS;
 
         // Control policy: when a room/mat is set to 'owner', only the owner may
         // drive playback. Enforced server-side (never trust the client) and NOT
         // gated on world mode — the flag lives on the room row, so a legacy room
         // carrying control_mode='owner' must be honoured too instead of silently
         // letting everyone control it.
-        if (in_array($type, $musicControlActions, true)) {
-            $control = $this->rooms[$roomId]['control_mode'] ?? 'everyone';
-            if ($control === 'owner') {
-                $summary = $this->roomManager->getRoomSummary($roomId);
-                $owner = $summary['host_device_id'] ?? '';
-                if ($owner !== '' && $owner !== $meta['device_id']) {
-                    $from->send(json_encode([
-                        'type' => 'notice',
-                        'message' => 'Sesi ini hanya bisa dikontrol oleh pemiliknya.',
-                        'level' => 'warning',
-                    ]));
-                    return;
-                }
-            }
+        if ((in_array($type, $musicControlActions, true) || $type === 'game_start') && !$this->canControl($roomId, $meta['device_id'])) {
+            $from->send(json_encode([
+                'type' => 'notice',
+                'message' => 'Hanya host yang bisa mengatur musik. Minta host menyalakan Kontrol Bersama.',
+                'level' => 'warning',
+            ]));
+            return;
+        }
+
+        if (in_array($type, ['set_room_control', 'punishment_clear'], true) && !$this->isHost($roomId, $meta['device_id'])) {
+            $from->send(json_encode([
+                'type' => 'notice',
+                'message' => 'Hanya host yang bisa melakukan ini.',
+                'level' => 'warning',
+            ]));
+            return;
         }
 
         if (in_array($type, $musicControlActions, true)) {
@@ -491,6 +527,9 @@ class WebSocketHandler implements MessageComponentInterface
                 break;
 
             case 'track_ended':
+                if (!$this->canControl($roomId, $meta['device_id']) && !$this->isNearTrackEnd($roomId)) {
+                    break;
+                }
                 $now = microtime(true);
                 $lastTrans = $this->rooms[$roomId]['last_track_transition'] ?? 0.0;
                 if ($now - $lastTrans < 3.0) {
@@ -809,22 +848,21 @@ class WebSocketHandler implements MessageComponentInterface
                 $this->handleGameStart($roomId, $meta, $data);
                 break;
 
+            case 'set_room_control':
+                $mode = ($data['control_mode'] ?? '') === 'everyone' ? 'everyone' : 'owner';
+                $this->rooms[$roomId]['control_mode'] = $mode;
+                $this->roomManager->setControlMode($roomId, $mode);
+                $this->broadcastToRoom($roomId, [
+                    'type' => 'control_mode_changed',
+                    'control_mode' => $mode,
+                    'triggered_by' => $meta['nickname'],
+                ]);
+                break;
+
             case 'punishment_clear':
                 $targetDevId = Validator::deviceId($data['device_id'] ?? '');
                 if ($targetDevId !== '') {
-                    // Only the room host, or the punished user themselves, may clear
-                    // a penalty. This stops anyone from lifting another player's
-                    // (or their own) sanction.
-                    $hostDeviceId = (string)($this->rooms[$roomId]['host_device_id'] ?? '');
-                    if ($hostDeviceId === '') {
-                        $roomSummary = $this->roomManager->getRoomSummary($roomId);
-                        $hostDeviceId = $roomSummary ? (string)$roomSummary['host_device_id'] : '';
-                        $this->rooms[$roomId]['host_device_id'] = $hostDeviceId;
-                    }
-                    $isHost = $hostDeviceId !== '' && $hostDeviceId === $meta['device_id'];
-                    $isSelf = $targetDevId === $meta['device_id'];
-
-                    if ((!$isHost && !$isSelf) || !isset($this->rooms[$roomId]['punishments'][$targetDevId])) {
+                    if (!isset($this->rooms[$roomId]['punishments'][$targetDevId])) {
                         $from->send(json_encode([
                             'type' => 'notice',
                             'message' => 'Hanya host yang bisa membatalkan sanksi pemain lain.',
@@ -1439,9 +1477,70 @@ class WebSocketHandler implements MessageComponentInterface
         }
     }
 
+    public static function sessionToken(RequestInterface $request): ?string
+    {
+        foreach (explode(';', $request->getHeaderLine('Cookie')) as $pair) {
+            [$name, $value] = array_pad(explode('=', trim($pair), 2), 2, '');
+            if ($name === Http::SESSION_COOKIE) {
+                return urldecode($value);
+            }
+        }
+        return null;
+    }
+
+    private function originAllowed(RequestInterface $request): bool
+    {
+        $origin = $request->getHeaderLine('Origin');
+        if ($origin === '') {
+            return false;
+        }
+        if ($this->allowedOrigins !== []) {
+            return in_array($origin, $this->allowedOrigins, true);
+        }
+        $originHost = parse_url($origin, PHP_URL_HOST);
+        return is_string($originHost) && $originHost !== '' && $originHost === parse_url('ws://' . $request->getHeaderLine('Host'), PHP_URL_HOST);
+    }
+
+    private function reject(ConnectionInterface $conn, string $code, string $message): void
+    {
+        $conn->send(json_encode(['type' => 'error', 'code' => $code, 'message' => $message]));
+        $conn->close();
+    }
+
+    private function connectionCountForIp(string $ip): int
+    {
+        $count = 0;
+        foreach ($this->clientMeta as $meta) {
+            if (($meta['ip'] ?? null) === $ip) {
+                $count++;
+            }
+        }
+        return $count;
+    }
+
+    private function isHost(string $roomId, string $deviceId): bool
+    {
+        if (($this->rooms[$roomId]['host_device_id'] ?? '') === '') {
+            $summary = $this->roomManager->getRoomSummary($roomId);
+            $this->rooms[$roomId]['host_device_id'] = (string)($summary['host_device_id'] ?? '');
+        }
+        return $deviceId !== '' && $this->rooms[$roomId]['host_device_id'] === $deviceId;
+    }
+
+    private function canControl(string $roomId, string $deviceId): bool
+    {
+        return ($this->rooms[$roomId]['control_mode'] ?? 'owner') === 'everyone' || $this->isHost($roomId, $deviceId);
+    }
+
+    private function isNearTrackEnd(string $roomId): bool
+    {
+        $duration = (float)($this->rooms[$roomId]['current_track']['duration_seconds'] ?? 0);
+        return $duration > 0 && $this->getCurrentPosition($roomId) >= $duration - 5.0;
+    }
+
     public function persistRuntimeState(): void
     {
-        $file = dirname(__DIR__) . '/data/runtime_rooms.json';
+        $file = $this->runtimeStatePath;
         $data = [
             'saved_at' => microtime(true),
             'rooms' => [],
@@ -1464,7 +1563,7 @@ class WebSocketHandler implements MessageComponentInterface
 
     private function restoreRuntimeState(): void
     {
-        $file = dirname(__DIR__) . '/data/runtime_rooms.json';
+        $file = $this->runtimeStatePath;
         if (!file_exists($file)) {
             return;
         }
@@ -1519,7 +1618,7 @@ class WebSocketHandler implements MessageComponentInterface
     // =====================================================================
 
     /** Handle a WS connection that joined a world (pixel map) instead of a room. */
-    private function openWorld(ConnectionInterface $conn, string $worldId, string $deviceId, string $nickname, string $emoji): void
+    private function openWorld(ConnectionInterface $conn, string $worldId, string $deviceId, string $nickname, string $emoji, string $ip): void
     {
         $summary = $this->roomManager->getRoomSummary($worldId);
         if (!$summary || ($summary['mode'] ?? 'legacy') !== 'world') {
@@ -1550,6 +1649,7 @@ class WebSocketHandler implements MessageComponentInterface
             'device_id' => $deviceId,
             'nickname' => $nickname,
             'emoji' => $emoji,
+            'ip' => $ip,
         ];
         $this->worldConnections[$resId] = $conn;
 

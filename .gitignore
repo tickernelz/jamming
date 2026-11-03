@@ -41,3 +41,4 @@ desktop.ini
 /bin/tunnel_gateway.js
 /start_tunnel.bat
 
+.phpunit.result.cache

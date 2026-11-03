@@ -31,7 +31,7 @@ final class RateLimiter
 
     public function __construct(?string $storageDir = null, ?bool $persist = null)
     {
-        $this->storageDir = $storageDir ?? (dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data');
+        $this->storageDir = $storageDir ?? (getenv('JAMRI_DATA_DIR') ?: dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data');
         // Auto-detect by SAPI: HTTP (apache/fpm) runs one process per request and
         // therefore must share buckets through the file, while the WebSocket
         // daemon (CLI, long-lived) keeps the authoritative map in memory.

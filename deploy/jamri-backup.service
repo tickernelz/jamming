@@ -1,0 +1,12 @@
+[Unit]
+Description=Jamri SQLite backup
+
+[Service]
+Type=oneshot
+ExecStart=/opt/jamri/deploy/jamri-backup.sh
+Nice=10
+IOSchedulingClass=idle
+ProtectSystem=strict
+ReadWritePaths=/var/backups/jamri /opt/jamri/data
+PrivateTmp=yes
+NoNewPrivileges=yes

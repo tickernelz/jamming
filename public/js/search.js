@@ -343,11 +343,10 @@ class JamriSearch {
                             if (window.showToast) window.showToast('Menyambung ulang ke sesi. Coba lagi sebentar.', 'warning');
                             return;
                         }
-                        const deviceId = (window.JAMRI_USER && window.JAMRI_USER.device_id) || '';
                         fetch('api/rooms.php', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ action: 'add_playlist', track, room_id: roomId, device_id: deviceId })
+                            body: JSON.stringify({ action: 'add_playlist', track, room_id: roomId })
                         }).then(r => r.json()).then(data => {
                             if (!data.success && data.message) {
                                 if (window.showToast) window.showToast(data.message, 'warning');
@@ -495,12 +494,11 @@ class JamriSearch {
                     if (window.showToast) window.showToast('Menyambung ulang ke sesi. Coba lagi sebentar.', 'warning');
                     return 0;
                 }
-                const deviceId = (window.JAMRI_USER && window.JAMRI_USER.device_id) || '';
                 fresh.forEach(track => {
                     fetch('api/rooms.php', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ action: 'add_playlist', track, room_id: roomId, device_id: deviceId })
+                        body: JSON.stringify({ action: 'add_playlist', track, room_id: roomId })
                     }).catch(console.warn);
                 });
             }

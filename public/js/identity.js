@@ -1,6 +1,5 @@
 /**
  * identity.js
- * Device fingerprinting & User Profile (Nickname & Avatar Emoji)
  * Pengguna bebas memilih nama & emoji serta bisa mengubahnya kapan saja!
  */
 
@@ -12,11 +11,11 @@ class JamriAuth {
     ];
 
     static async init() {
-        const deviceId = this.getOrCreateDeviceId();
-        const user = await this.checkUser(deviceId);
+        localStorage.removeItem('jamri_device_id');
+        const user = await this.checkUser();
 
         if (!user) {
-            this.showProfileModal({ device_id: deviceId, nickname: '', emoji: this.EMOJI_AVATARS[0] }, false);
+            this.showProfileModal({ nickname: '', emoji: this.EMOJI_AVATARS[0] }, false);
         } else {
             window.JAMRI_USER = user;
             document.dispatchEvent(new CustomEvent('jamri:user_ready', { detail: user }));
@@ -36,33 +35,9 @@ class JamriAuth {
         }
     }
 
-    static getOrCreateDeviceId() {
-        let id = localStorage.getItem('jamri_device_id');
-        if (!id) {
-            const raw = [
-                navigator.userAgent,
-                navigator.language,
-                screen.width + 'x' + screen.height,
-                screen.colorDepth,
-                navigator.hardwareConcurrency || 4,
-                Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
-                Math.random().toString(36).substring(2) + Date.now().toString(36)
-            ].join('###');
-
-            let hash = 0;
-            for (let i = 0; i < raw.length; i++) {
-                hash = ((hash << 5) - hash) + raw.charCodeAt(i);
-                hash |= 0;
-            }
-            id = 'dev_' + Math.abs(hash).toString(16) + '_' + Math.random().toString(36).substring(2, 10);
-            localStorage.setItem('jamri_device_id', id);
-        }
-        return id;
-    }
-
-    static async checkUser(deviceId) {
+    static async checkUser() {
         try {
-            const res = await fetch(`api/auth.php?device_id=${encodeURIComponent(deviceId)}`);
+            const res = await fetch('api/auth.php', { credentials: 'same-origin' });
             const data = await res.json();
             return data.exists ? data.user : null;
         } catch (e) {
@@ -156,8 +131,8 @@ class JamriAuth {
                 const res = await fetch('api/auth.php', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
                     body: JSON.stringify({
-                        device_id: currentUser.device_id,
                         nickname: nickname,
                         emoji: selectedEmoji
                     })

@@ -9,6 +9,11 @@ use PDO;
 
 class RoomManager
 {
+    private const PUBLIC_ROOM_FIELDS = [
+        'id', 'name', 'slug', 'is_private', 'playback_state', 'playback_position', 'current_track_id',
+        'created_at', 'mode', 'parent_world_id', 'box_control', 'host_nickname', 'host_emoji', 'queue_count',
+    ];
+
     private PDO $pdo;
 
     public function __construct(PDO $pdo)
@@ -98,7 +103,7 @@ class RoomManager
             ':box_control' => $boxControl,
         ]);
 
-        return $this->getRoomSummary($id) ?? ['id' => $id, 'name' => $name, 'slug' => $slug];
+        return $this->publicView($this->getRoomSummary($id) ?? ['id' => $id, 'name' => $name, 'slug' => $slug], $hostDeviceId);
     }
 
     public function getPublicRooms(string $search = ''): array
@@ -147,65 +152,57 @@ class RoomManager
         return $room ?: null;
     }
 
-    /** Internal lookup that also returns the (hashed) passcode for verification. */
-    private function getRoomWithPasscode(string $roomId): ?array
+    /** Room fields safe to send to any client: no passcode hash, no host device id. */
+    public function publicView(array $room, ?string $viewerDeviceId = null): array
     {
-        $stmt = $this->pdo->prepare('SELECT id, name, is_private, passcode FROM rooms WHERE id = :id');
-        $stmt->execute([':id' => $roomId]);
-        $room = $stmt->fetch();
-        return $room ?: null;
+        $view = array_intersect_key($room, array_flip(self::PUBLIC_ROOM_FIELDS));
+        if ($viewerDeviceId !== null) {
+            $view['is_host'] = ($room['host_device_id'] ?? null) === $viewerDeviceId;
+        }
+        return $view;
     }
 
-    /**
-     * Cheap access check for the WebSocket handshake. The HTTP flow verifies the
-     * passcode before opening the room, but a client can dial the socket directly
-     * with any room_id, so the server must enforce it independently.
-     */
-    public function canAccessRoom(string $roomId, ?string $passcode = null): bool
+    public function verifyPasscode(string $roomId, string $passcode): bool
+    {
+        $stmt = $this->pdo->prepare('SELECT passcode FROM rooms WHERE id = :id AND is_private = 1');
+        $stmt->execute([':id' => $roomId]);
+        $hash = $stmt->fetchColumn();
+        $provided = Validator::passcode($passcode);
+        return is_string($hash) && $hash !== '' && $provided !== '' && password_verify($provided, $hash);
+    }
+
+    /** Public rooms are open to everyone; private rooms to the host and to devices granted after a passcode check. */
+    public function canAccess(string $roomId, string $deviceId): bool
     {
         $room = $this->getRoomSummary($roomId);
         if (!$room) {
             return false;
         }
-        if ((int)$room['is_private'] !== 1) {
+        if ((int)$room['is_private'] !== 1 || ($deviceId !== '' && $room['host_device_id'] === $deviceId)) {
             return true;
         }
-
-        $secret = $this->getRoomWithPasscode($roomId);
-        $hash = $secret['passcode'] ?? null;
-        if (!is_string($hash) || $hash === '') {
-            return false;
-        }
-        $provided = Validator::passcode($passcode ?? '');
-        if (str_starts_with($hash, '$2y$') || str_starts_with($hash, '$argon2')) {
-            return password_verify($provided, $hash);
-        }
-        return hash_equals($hash, $provided);
+        $stmt = $this->pdo->prepare('SELECT 1 FROM room_access WHERE room_id = :room AND device_id = :device');
+        $stmt->execute([':room' => $roomId, ':device' => $deviceId]);
+        return (bool)$stmt->fetchColumn();
     }
 
-    public function getRoomDetail(string $roomId, ?string $passcode = null): ?array
+    public function grantAccess(string $roomId, string $deviceId): void
+    {
+        $this->pdo->prepare('INSERT OR IGNORE INTO room_access (room_id, device_id) VALUES (:room, :device)')
+            ->execute([':room' => $roomId, ':device' => $deviceId]);
+    }
+
+    public function setControlMode(string $roomId, string $mode): void
+    {
+        $this->pdo->prepare('UPDATE rooms SET box_control = :mode WHERE id = :id')
+            ->execute([':mode' => $mode === 'everyone' ? 'everyone' : 'owner', ':id' => $roomId]);
+    }
+
+    public function getRoomDetail(string $roomId, string $viewerDeviceId): ?array
     {
         $room = $this->getRoomSummary($roomId);
         if (!$room) {
             return null;
-        }
-
-        if ((int)$room['is_private'] === 1 && $room['is_private']) {
-            $secret = $this->getRoomWithPasscode($roomId);
-            $hash = $secret['passcode'] ?? null;
-            $provided = $passcode !== null ? Validator::passcode($passcode) : '';
-            $ok = false;
-            if (is_string($hash) && $hash !== '') {
-                if (str_starts_with($hash, '$2y$') || str_starts_with($hash, '$argon2')) {
-                    $ok = password_verify($provided, $hash);
-                } else {
-                    // Legacy plaintext passcode (pre-hash rooms): constant-time compare.
-                    $ok = hash_equals($hash, $provided);
-                }
-            }
-            if (!$ok) {
-                return ['error' => 'invalid_passcode', 'room' => ['id' => $room['id'], 'name' => $room['name'], 'is_private' => 1]];
-            }
         }
 
         // Get unplayed queue
@@ -230,7 +227,7 @@ class RoomManager
         $messages = $this->getChatMessages($roomId, null, 10);
 
         return [
-            'room' => $room,
+            'room' => $this->publicView($room, $viewerDeviceId),
             'queue' => $queue,
             'playlist' => $playlist,
             'chat' => $messages,
@@ -625,69 +622,6 @@ class RoomManager
         $rows = $stmt->fetchAll();
         // Return chronological order
         return array_reverse($rows);
-    }
-
-    public function getSoundboards(string $roomId): array
-    {
-        $stmt = $this->pdo->prepare('
-            SELECT * FROM room_soundboard
-            WHERE room_id = :room_id
-            ORDER BY id ASC
-        ');
-        $stmt->execute([':room_id' => $roomId]);
-        return $stmt->fetchAll();
-    }
-
-    public function addSoundboard(
-        string $roomId,
-        string $title,
-        string $emoji,
-        string $fileUrl,
-        float $duration,
-        string $nickname
-    ): array {
-        $stmt = $this->pdo->prepare('
-            INSERT INTO room_soundboard (room_id, title, emoji, file_url, duration_seconds, added_by_nickname)
-            VALUES (:room_id, :title, :emoji, :file_url, :duration_seconds, :added_by_nickname)
-        ');
-        $stmt->execute([
-            ':room_id' => $roomId,
-            ':title' => $title,
-            ':emoji' => $emoji ?: '🔊',
-            ':file_url' => $fileUrl,
-            ':duration_seconds' => $duration,
-            ':added_by_nickname' => $nickname,
-        ]);
-
-        $id = (int)$this->pdo->lastInsertId();
-        return [
-            'id' => $id,
-            'room_id' => $roomId,
-            'title' => $title,
-            'emoji' => $emoji ?: '🔊',
-            'file_url' => $fileUrl,
-            'duration_seconds' => $duration,
-            'added_by_nickname' => $nickname,
-            'created_at' => date('Y-m-d H:i:s'),
-        ];
-    }
-
-    public function deleteSoundboard(string $roomId, int $soundboardId): bool
-    {
-        // Retrieve file to delete
-        $stmt = $this->pdo->prepare('SELECT file_url FROM room_soundboard WHERE id = :id AND room_id = :room_id');
-        $stmt->execute([':id' => $soundboardId, ':room_id' => $roomId]);
-        $row = $stmt->fetch();
-        if ($row && !empty($row['file_url'])) {
-            $baseDir = dirname(__DIR__);
-            $localPath = $baseDir . '/' . ltrim($row['file_url'], '/');
-            if (file_exists($localPath) && is_file($localPath)) {
-                @unlink($localPath);
-            }
-        }
-
-        $delStmt = $this->pdo->prepare('DELETE FROM room_soundboard WHERE id = :id AND room_id = :room_id');
-        return $delStmt->execute([':id' => $soundboardId, ':room_id' => $roomId]);
     }
 
     private function generateUuid(): string

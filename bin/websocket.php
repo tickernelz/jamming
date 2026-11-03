@@ -8,13 +8,14 @@ error_reporting(E_ALL & ~E_DEPRECATED);
 require_once dirname(__DIR__) . '/vendor/autoload.php';
 require_once dirname(__DIR__) . '/config/database.php';
 
+use Jamri\BoundedWsServer;
 use Jamri\Database;
 use Jamri\RoomManager;
 use Jamri\WebSocketHandler;
-use Jamri\YouTubeService;
+use Jamri\UserManager;
 use Ratchet\Http\HttpServer;
 use Ratchet\Server\IoServer;
-use Ratchet\WebSocket\WsServer;
+
 use React\EventLoop\Loop;
 use React\Socket\SocketServer;
 
@@ -28,9 +29,8 @@ if (isset($argv[1]) && is_numeric($argv[1])) {
 }
 
 $pdo = Database::getConnection();
-$roomManager = new RoomManager($pdo);
-$ytService = new YouTubeService($pdo);
-$wsHandler = new WebSocketHandler($roomManager, $ytService);
+$allowedOrigins = array_values(array_filter(array_map('trim', explode(',', (string)getenv('JAMRI_ALLOWED_ORIGINS')))));
+$wsHandler = new WebSocketHandler(new RoomManager($pdo), new UserManager($pdo), $allowedOrigins);
 
 $loop = Loop::get();
 
@@ -52,7 +52,7 @@ $loop->addPeriodicTimer(1 / 15, function () use ($wsHandler) {
 $socket = new SocketServer("127.0.0.1:{$port}", [], $loop);
 $server = new IoServer(
     new HttpServer(
-        new WsServer($wsHandler)
+        new BoundedWsServer($wsHandler, WebSocketHandler::MAX_FRAME_BYTES)
     ),
     $socket,
     $loop

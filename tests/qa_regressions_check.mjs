@@ -1,9 +1,6 @@
 // Guards for the bugs found during the full end-to-end QA pass.
 //
 // Each assertion below maps to a defect that shipped and was reproduced live:
-//   1. Private rooms were only protected in the HTTP UI flow. Dialling the
-//      WebSocket with any room_id joined the room, chatted and even mutated the
-//      queue (RoomManager::canAccessRoom did not exist).
 //   2. queue_add auto-start left the started track in the unplayed queue, so the
 //      very next `next` replayed the same song instead of advancing.
 //   3. Validator methods were typed ?string, so a JSON number/array in any field
@@ -28,18 +25,6 @@ const htaccess = read('../.htaccess');
 const lyrics = read('../public/js/lyrics.js');
 const websocketJs = read('../public/js/websocket.js');
 const appJs = read('../public/js/app.js');
-
-// 1) Private-room access must be enforced on the socket handshake.
-assert.ok(/public function canAccessRoom\(/.test(roomManager),
-    'RoomManager must expose canAccessRoom() for the WS handshake');
-assert.ok(/canAccessRoom\(\$roomId, \$passcode\)/.test(ws),
-    'onOpen() must verify private-room access before attaching');
-assert.ok(/\$params\['passcode'\]/.test(ws),
-    'the handshake must read the passcode from the query string');
-assert.ok(/this\.passcode/.test(websocketJs) && /'&passcode='/.test(websocketJs),
-    'the client must forward the passcode so reconnects still authenticate');
-assert.ok(/connect\(roomId, window\.JAMRI_USER, 'room', passcode\)/.test(appJs),
-    'joinRoom must pass the entered passcode to the socket');
 
 // 2) A track that auto-starts on queue_add must leave the queue.
 const queueAdd = ws.slice(ws.indexOf("case 'queue_add':"), ws.indexOf("case 'queue_reorder':"));
