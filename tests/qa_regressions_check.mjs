@@ -40,7 +40,6 @@ assert.ok(/Validator::chatMessage\(is_scalar\(\$data\['message'\] \?\? null\)/.t
 assert.ok(/Validator::chatMessage\(is_scalar\(\$data\['message'\] \?\? null\)/.test(ws),
     'world chat must coerce its payload before validation');
 
-// 4) RateLimiter sharing across workers and windows is covered by tests/RateLimiterTest.php.
 assert.ok(/new RateLimiter\(\)/.test(ws),
     'WebSocketHandler must run its limiter in memory only');
 

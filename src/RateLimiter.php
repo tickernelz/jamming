@@ -7,11 +7,7 @@ namespace Jamri;
 use Closure;
 use PDO;
 
-/**
- * Fixed-window rate limiter keyed by hashed caller identity.
- * With a PDO the buckets live in SQLite and every update is one atomic upsert, so concurrent
- * PHP workers share exact counts; without one they live in this process (the WebSocket daemon).
- */
+/** Fixed-window rate limiter: shared across PHP workers through a SQLite store, or held in memory without one. */
 final class RateLimiter
 {
     private array $buckets = [];
@@ -28,10 +24,7 @@ final class RateLimiter
         return new self(self::openStore(Database::dataDir() . DIRECTORY_SEPARATOR . 'rate_limits.sqlite'));
     }
 
-    /**
-     * Open the bucket store without fsync: losing counters on an OS crash is harmless, while
-     * a synced journal costs about 3 ms per request because each worker closes its connection.
-     */
+    /** Open the bucket store without fsync; counters may be lost on an OS crash. */
     public static function openStore(string $path): PDO
     {
         $pdo = new PDO('sqlite:' . $path);
