@@ -115,6 +115,13 @@ final class RateLimiter
         return true;
     }
 
+    /** Whether the bucket is already full, without counting this call. */
+    public function exceeded(string $key, int $limit, int $window): bool
+    {
+        $bucket = $this->buckets[$key] ?? null;
+        return $bucket !== null && (microtime(true) - $bucket['start']) < $window && $bucket['count'] >= $limit;
+    }
+
     /** Remaining seconds until the window resets (0 when allowed immediately). */
     public function retryAfter(string $key, int $window): int
     {

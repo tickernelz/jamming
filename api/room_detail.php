@@ -7,6 +7,7 @@ require_once dirname(__DIR__) . '/config/database.php';
 
 use Jamri\Database;
 use Jamri\Http;
+use Jamri\PasscodeGate;
 use Jamri\RateLimiter;
 use Jamri\RoomManager;
 use Jamri\UserManager;
@@ -39,16 +40,13 @@ if (!$roomManager->canAccess($roomId, $user['device_id'])) {
     if ($passcode === '') {
         Http::error('invalid_passcode', 403, $denied);
     }
-    if (
-        !$rateLimiter->allow(RateLimiter::key('passcode_ip', Http::clientKey()), 20, 600)
-        || !$rateLimiter->allow(RateLimiter::key('passcode_room', $roomId . '|' . Http::clientKey()), 8, 600)
-    ) {
+    $outcome = (new PasscodeGate($roomManager, $rateLimiter))->attempt($roomId, $user['device_id'], $passcode, Http::clientKey());
+    if ($outcome === PasscodeGate::THROTTLED) {
         Http::error('Terlalu banyak percobaan passcode. Coba lagi 10 menit lagi.', 429);
     }
-    if (!$roomManager->verifyPasscode($roomId, $passcode)) {
+    if ($outcome === PasscodeGate::INVALID) {
         Http::error('invalid_passcode', 403, $denied);
     }
-    $roomManager->grantAccess($roomId, $user['device_id']);
 }
 
 Http::json(['success' => true, 'data' => $roomManager->getRoomDetail($roomId, $user['device_id'])]);

@@ -10,7 +10,7 @@ use PDOException;
 
 class Database
 {
-    private const DATA_VERSION = 1;
+    private const SCHEMA_VERSION = 2;
 
     private static ?PDO $instance = null;
 
@@ -49,7 +49,28 @@ class Database
         return $pdo;
     }
 
+    /** Bring the schema to SCHEMA_VERSION once; an up-to-date database costs one PRAGMA per connection. */
     private static function initSchema(PDO $pdo): void
+    {
+        if ((int)$pdo->query('PRAGMA user_version')->fetchColumn() >= self::SCHEMA_VERSION) {
+            return;
+        }
+        $pdo->exec('BEGIN IMMEDIATE');
+        try {
+            if ((int)$pdo->query('PRAGMA user_version')->fetchColumn() < self::SCHEMA_VERSION) {
+                self::createSchema($pdo);
+                self::migrate($pdo);
+                self::migrateData($pdo);
+                $pdo->exec('PRAGMA user_version = ' . self::SCHEMA_VERSION);
+            }
+            $pdo->exec('COMMIT');
+        } catch (\Throwable $e) {
+            $pdo->exec('ROLLBACK');
+            throw $e;
+        }
+    }
+
+    private static function createSchema(PDO $pdo): void
     {
         $sql = "
         CREATE TABLE IF NOT EXISTS users (
@@ -131,8 +152,6 @@ class Database
         ";
 
         $pdo->exec($sql);
-
-        self::migrate($pdo);
     }
 
     /**
@@ -189,41 +208,26 @@ class Database
             FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
         );
         ");
-
-        if ((int)$pdo->query('PRAGMA user_version')->fetchColumn() < self::DATA_VERSION) {
-            self::migrateData($pdo);
-        }
     }
 
     private static function migrateData(PDO $pdo): void
     {
-        $pdo->exec('BEGIN IMMEDIATE');
-        try {
-            if ((int)$pdo->query('PRAGMA user_version')->fetchColumn() < self::DATA_VERSION) {
-                $rows = $pdo->query('SELECT id, passcode FROM rooms WHERE passcode IS NOT NULL')->fetchAll();
-                $hash = $pdo->prepare('UPDATE rooms SET passcode = :hash WHERE id = :id');
-                foreach ($rows as $row) {
-                    if (password_get_info((string)$row['passcode'])['algo'] === null) {
-                        $hash->execute([':hash' => password_hash((string)$row['passcode'], PASSWORD_DEFAULT), ':id' => $row['id']]);
-                    }
-                }
-
-                foreach (['users' => 'emoji', 'chat_messages' => 'sender_emoji'] as $table => $column) {
-                    $scrub = $pdo->prepare("UPDATE {$table} SET {$column} = :clean WHERE {$column} = :dirty");
-                    foreach ($pdo->query("SELECT DISTINCT {$column} FROM {$table}")->fetchAll(PDO::FETCH_COLUMN) as $value) {
-                        $clean = Validator::emoji($value);
-                        if ($clean !== $value) {
-                            $scrub->execute([':clean' => $clean, ':dirty' => $value]);
-                        }
-                    }
-                }
-
-                $pdo->exec('PRAGMA user_version = ' . self::DATA_VERSION);
+        $rows = $pdo->query('SELECT id, passcode FROM rooms WHERE passcode IS NOT NULL')->fetchAll();
+        $hash = $pdo->prepare('UPDATE rooms SET passcode = :hash WHERE id = :id');
+        foreach ($rows as $row) {
+            if (password_get_info((string)$row['passcode'])['algo'] === null) {
+                $hash->execute([':hash' => password_hash((string)$row['passcode'], PASSWORD_DEFAULT), ':id' => $row['id']]);
             }
-            $pdo->exec('COMMIT');
-        } catch (\Throwable $e) {
-            $pdo->exec('ROLLBACK');
-            throw $e;
+        }
+
+        foreach (['users' => 'emoji', 'chat_messages' => 'sender_emoji'] as $table => $column) {
+            $scrub = $pdo->prepare("UPDATE {$table} SET {$column} = :clean WHERE {$column} = :dirty");
+            foreach ($pdo->query("SELECT DISTINCT {$column} FROM {$table}")->fetchAll(PDO::FETCH_COLUMN) as $value) {
+                $clean = Validator::emoji($value);
+                if ($clean !== $value) {
+                    $scrub->execute([':clean' => $clean, ':dirty' => $value]);
+                }
+            }
         }
     }
 }

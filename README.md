@@ -44,18 +44,19 @@ for f in tests/*.mjs; do node "$f"; done
 1. Copy the app to `/opt/jamri` and run `composer install --no-dev --optimize-autoloader` there, owned by a `jamri` system user.
 2. Install `deploy/php-fpm-jamri.conf` to `/etc/php-fpm.d/jamri.conf`, `deploy/nginx-jamri.conf` to `/etc/nginx/conf.d/jamri.conf`, `deploy/nginx-cloudflare-realip.conf` to `/etc/nginx/jamri-cloudflare-realip.conf`, and `deploy/jamri-ws.service`, `deploy/jamri-backup.service`, `deploy/jamri-backup.timer` to `/etc/systemd/system/`.
 3. With SELinux enforcing: label `/opt/jamri` as `httpd_sys_content_t`, `/opt/jamri/data` as `httpd_sys_rw_content_t`, and set `httpd_can_network_connect=1` so nginx can proxy `/ws`.
-4. `install -d -m 700 /var/backups/jamri && systemctl enable --now php-fpm nginx jamri-ws jamri-backup.timer`.
+4. `install -d -o jamri -g jamri -m 700 /var/backups/jamri && systemctl enable --now php-fpm nginx jamri-ws jamri-backup.timer`. The backup unit runs as `jamri`, the same account that owns `/opt/jamri`, so root never executes a file the service account can write.
 
-nginx serves only `/`, `index.php`, `api/*.php`, `public/` and the `/ws` proxy; everything else (source, vendor, composer files, data, dotfiles) returns 404. It trusts `CF-Connecting-IP` only from Cloudflare ranges (refresh `nginx-cloudflare-realip.conf` from https://www.cloudflare.com/ips/ when they change), rate-limits `api/*.php` per client IP, caps request bodies at 1 MB, and sends HSTS. `api/health.php` returns 200 when the database and the WebSocket port answer, 503 otherwise.
+nginx serves only `/`, `index.php`, `api/*.php`, `public/` and the `/ws` proxy; everything else (source, vendor, composer files, data, dotfiles) returns 404. It trusts `CF-Connecting-IP` only from Cloudflare ranges (refresh `nginx-cloudflare-realip.conf` from https://www.cloudflare.com/ips/ when they change), rate-limits `api/*.php` per client (IPv4 address or IPv6 /64), caps request bodies at 1 MB, and sends HSTS. `api/health.php` returns 200 when the database and the WebSocket port answer, 503 otherwise.
 
 Backups: `jamri-backup.timer` runs `deploy/jamri-backup.sh` daily, writing an integrity-checked `VACUUM INTO` copy to `/var/backups/jamri/jamri-<timestamp>.sqlite.gz` and keeping 14 days. Logs: nginx writes `/var/log/nginx/jamri.{access,error}.log` and php-fpm `/var/log/php-fpm/jamri-error.log`; both are rotated by the stock `/etc/logrotate.d/nginx` and `/etc/logrotate.d/php-fpm` rules. The daemon logs to the journal.
 
 ## Security model
 
+- Requests: every request body must be same-origin JSON (`Sec-Fetch-Site`/`Origin` checked, form and text/plain bodies refused), so another site cannot replace a visitor's session by posting to `api/auth.php`.
 - Identity is a server session: `api/auth.php` creates the user with a server-chosen id and sets `jamri_session` (HttpOnly, SameSite=Strict, Secure over HTTPS). Only the token's SHA-256 is stored. A client-supplied `device_id` is ignored everywhere, including the WebSocket handshake, which also checks `Origin` and caps connections per IP.
-- Private rooms: passcodes are stored with `password_hash` and never serialized. A correct passcode (POST to `api/room_detail.php`, throttled per IP and per room) records a grant for that session; chat history, playlist actions and the socket require the grant or host status.
+- Private rooms: passcodes are stored with `password_hash` and never serialized. A correct passcode (POST to `api/room_detail.php`) records a grant for that session; attempts are throttled per client network (IPv4 address or IPv6 /64), per room and network, and failures per room across all networks; chat history, playlist actions and the socket require the grant or host status.
 - Room control: only the host can play, pause, seek, skip, change the queue or Bank Musik, start games, or clear penalties, until the host switches on "Kontrol Bersama". A guest's `track_ended` only advances the queue near the end of the track.
-- Output: nickname, emoji, chat, track fields and thumbnails are validated server-side and escaped client-side; `index.php` and the API send a CSP without `unsafe-inline` scripts.
+- Output: nickname, emoji, chat, track fields and thumbnails are validated server-side and escaped client-side; `index.php` and the API send a CSP without `unsafe-inline` scripts whose `connect-src` allows only this origin's WebSocket.
 - Limits: per-endpoint and per-socket rate limits, 16 KB JSON request bodies, 256 KB WebSocket messages enforced before buffering.
 
 ## Known security issues

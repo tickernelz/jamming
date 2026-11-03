@@ -38,7 +38,7 @@ if ($current !== null) {
     Http::json(['success' => true, 'user' => $userManager->updateProfile($current['device_id'], $nickname, $emoji)]);
 }
 
-if (!$rateLimiter->allow(RateLimiter::key('auth_register', Http::clientKey()), 20, 3600)) {
+if (!$rateLimiter->allow(RateLimiter::key('auth_register', Http::clientKey()), 60, 3600)) {
     Http::error('Terlalu banyak profil dibuat dari alamat ini. Coba lagi nanti.', 429);
 }
 

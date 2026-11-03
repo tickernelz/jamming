@@ -1,24 +1,9 @@
 <?php
 declare(strict_types=1);
 
-// Security headers for the HTML shell (mirrors the API hardening in Jamri\Http).
-header('X-Content-Type-Options: nosniff');
-header('X-Frame-Options: DENY');
-header('Referrer-Policy: strict-origin-when-cross-origin');
-header('Permissions-Policy: geolocation=(), camera=(), microphone=(self)');
-header(
-    "Content-Security-Policy: "
-    . "default-src 'self'; "
-    . "script-src 'self' https://www.youtube.com https://www.youtube-nocookie.com; "
-    . "style-src 'self' 'unsafe-inline'; "
-    . "img-src 'self' data: https:; "
-    . "media-src 'self' blob: data: https:; "
-    . "connect-src 'self' ws: wss: https://www.youtube.com https://www.youtube-nocookie.com https://i.ytimg.com; "
-    . "frame-src https://www.youtube.com https://www.youtube-nocookie.com; "
-    . "object-src 'none'; "
-    . "base-uri 'self'; "
-    . "form-action 'self'"
-);
+require_once __DIR__ . '/vendor/autoload.php';
+
+Jamri\Http::securityHeaders(false);
 
 // Content-hash cache-busting: assets are cached by the browser & service worker
 // and only invalidated when the file actually changes (no more ?v=time()).

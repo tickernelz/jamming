@@ -3,6 +3,8 @@ Description=Jamri SQLite backup
 
 [Service]
 Type=oneshot
+User=jamri
+Group=jamri
 ExecStart=/opt/jamri/deploy/jamri-backup.sh
 Nice=10
 IOSchedulingClass=idle

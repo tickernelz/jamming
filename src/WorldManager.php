@@ -537,7 +537,7 @@ class WorldManager
         }
 
         $label = Validator::clean($label, 40) ?: ($nickname . "'s Tikar");
-        $controlMode = in_array($controlMode, ['owner', 'everyone'], true) ? $controlMode : 'everyone';
+        $controlMode = in_array($controlMode, ['owner', 'everyone'], true) ? $controlMode : 'owner';
 
         // A mat's audio room is a hidden 'box' room owned by the placer.
         $room = $this->roomManager->createRoom(

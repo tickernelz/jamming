@@ -42,9 +42,13 @@ final class DatabaseMigrationTest extends TestCase
         self::assertFalse($pdo->query("SELECT 1 FROM sqlite_master WHERE name = 'room_soundboard'")->fetchColumn());
         self::assertSame(1, (int)$pdo->query("SELECT COUNT(*) FROM sqlite_master WHERE name = 'room_access'")->fetchColumn());
 
+        self::assertSame(2, (int)$pdo->query('PRAGMA user_version')->fetchColumn());
+
+        $pdo->exec("INSERT INTO rooms (id, name, slug, is_private, passcode, host_device_id) VALUES ('r2', 'Late', 'late', 1, 'plain', 'dev_old')");
         unset($pdo);
         $again = Database::open('sqlite:' . $path);
         self::assertSame($passcode, $again->query("SELECT passcode FROM rooms WHERE id = 'r1'")->fetchColumn());
+        self::assertSame('plain', $again->query("SELECT passcode FROM rooms WHERE id = 'r2'")->fetchColumn(), 'an up-to-date database must not rerun migrations');
         unset($again);
         @unlink($path);
     }

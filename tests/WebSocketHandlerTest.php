@@ -11,6 +11,7 @@ use PHPUnit\Framework\TestCase;
 
 final class WebSocketHandlerTest extends TestCase
 {
+    private \PDO $pdo;
     private RoomManager $rooms;
     private WebSocketHandler $ws;
     private array $host;
@@ -20,6 +21,7 @@ final class WebSocketHandlerTest extends TestCase
     protected function setUp(): void
     {
         $pdo = TestDatabase::memory();
+        $this->pdo = $pdo;
         $this->rooms = new RoomManager($pdo);
         $users = new UserManager($pdo);
         $this->host = $users->register('Host', '🎧');
@@ -178,6 +180,33 @@ final class WebSocketHandlerTest extends TestCase
         self::assertTrue($extra->closed);
         self::assertSame('rate_limited', $extra->messages()[0]['code']);
         self::assertFalse($this->join($roomId, $this->host, [], '198.51.100.10')->closed);
+    }
+
+    public function testIpv6ConnectionsAreCappedPerSlash64(): void
+    {
+        $roomId = $this->room();
+        for ($i = 1; $i <= WebSocketHandler::MAX_CONNECTIONS_PER_IP; $i++) {
+            self::assertFalse($this->join($roomId, $this->guest, [], '2001:db8:1:1::' . dechex($i))->closed);
+        }
+
+        $sameNetwork = $this->join($roomId, $this->guest, [], '2001:db8:1:1:ffff:ffff:ffff:ffff');
+        self::assertTrue($sameNetwork->closed);
+        self::assertSame('rate_limited', $sameNetwork->messages()[0]['code']);
+        self::assertFalse($this->join($roomId, $this->guest, [], '2001:db8:1:2::1')->closed);
+    }
+
+    public function testRoomWithoutControlModeIsHostOnly(): void
+    {
+        $roomId = $this->room(false, 'everyone');
+        $this->pdo->exec("UPDATE rooms SET box_control = NULL WHERE id = '{$roomId}'");
+        $host = $this->join($roomId, $this->host);
+        $guest = $this->join($roomId, $this->guest);
+        $host->clear();
+
+        $this->send($guest, ['type' => 'pause']);
+
+        self::assertSame('owner', $guest->messagesOfType('room_init')[0]['control_mode']);
+        self::assertSame([], $host->messagesOfType('pause'));
     }
 
     public function testWorldIdentityComesFromSession(): void

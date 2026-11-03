@@ -75,7 +75,7 @@ class WebSocketHandler implements MessageComponentInterface
         $this->roomManager = $roomManager;
         $this->userManager = $userManager;
         $this->allowedOrigins = $allowedOrigins;
-        $this->runtimeStatePath = $runtimeStatePath ?? dirname(__DIR__) . '/data/runtime_rooms.json';
+        $this->runtimeStatePath = $runtimeStatePath ?? (getenv('JAMRI_DATA_DIR') ?: dirname(__DIR__) . '/data') . '/runtime_rooms.json';
         // persist=false: this process is long-lived, so the in-memory bucket map
         // is already authoritative. File I/O here would sit on the message hot
         // path (world.move is limited per device) and stall the event loop.
@@ -112,7 +112,7 @@ class WebSocketHandler implements MessageComponentInterface
             return;
         }
 
-        $ip = $request->getHeaderLine('X-Real-IP') ?: (string)($conn->remoteAddress ?? '');
+        $ip = Http::networkKey($request->getHeaderLine('X-Real-IP') ?: (string)($conn->remoteAddress ?? ''));
         if ($this->connectionCountForIp($ip) >= self::MAX_CONNECTIONS_PER_IP) {
             $this->reject($conn, 'rate_limited', 'Terlalu banyak koneksi dari alamat ini.');
             return;
@@ -206,7 +206,7 @@ class WebSocketHandler implements MessageComponentInterface
                 'is_shuffled' => false,
                 'punishments' => [],
                 'host_device_id' => (string)($roomSummary['host_device_id'] ?? ''),
-                'control_mode' => (string)($roomSummary['box_control'] ?? 'everyone'),
+                'control_mode' => (string)($roomSummary['box_control'] ?? 'owner'),
             ];
         }
 
@@ -243,7 +243,7 @@ class WebSocketHandler implements MessageComponentInterface
             'server_time' => (int)(microtime(true) * 1000),
             'online_users' => $this->getOnlineUsers($roomId),
             'punishments' => $this->getActivePunishments($roomId),
-            'control_mode' => $this->rooms[$roomId]['control_mode'] ?? 'everyone',
+            'control_mode' => $this->rooms[$roomId]['control_mode'] ?? 'owner',
             'is_host' => $this->isHost($roomId, $deviceId),
             'you' => ['device_id' => $deviceId, 'nickname' => $nickname, 'emoji' => $emoji],
         ]));
@@ -865,7 +865,7 @@ class WebSocketHandler implements MessageComponentInterface
                     if (!isset($this->rooms[$roomId]['punishments'][$targetDevId])) {
                         $from->send(json_encode([
                             'type' => 'notice',
-                            'message' => 'Hanya host yang bisa membatalkan sanksi pemain lain.',
+                            'message' => 'Sanksi pemain itu sudah berakhir.',
                             'level' => 'warning',
                         ]));
                         break;
@@ -1762,7 +1762,7 @@ class WebSocketHandler implements MessageComponentInterface
                     break;
                 }
                 $label = Validator::clean($data['label'] ?? ($meta['nickname'] . "'s Tikar"), 40);
-                $control = in_array($data['control_mode'] ?? '', ['owner', 'everyone'], true) ? $data['control_mode'] : 'everyone';
+                $control = in_array($data['control_mode'] ?? '', ['owner', 'everyone'], true) ? $data['control_mode'] : 'owner';
                 $box = $this->worldManager->placeBox(
                     $worldId,
                     $meta['device_id'],

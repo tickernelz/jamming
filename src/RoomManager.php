@@ -59,7 +59,7 @@ class RoomManager
         string $mode = 'legacy',
         ?string $parentWorldId = null,
         ?string $mapJson = null,
-        string $boxControl = 'everyone'
+        string $boxControl = 'owner'
     ): array {
         $name = Validator::roomName($name);
         if ($name === '') {
@@ -68,7 +68,7 @@ class RoomManager
 
         $passcode = $passcode !== null ? Validator::passcode($passcode) : '';
         $mode = in_array($mode, ['legacy', 'world', 'box'], true) ? $mode : 'legacy';
-        $boxControl = in_array($boxControl, ['owner', 'everyone'], true) ? $boxControl : 'everyone';
+        $boxControl = in_array($boxControl, ['owner', 'everyone'], true) ? $boxControl : 'owner';
 
         $id = $this->generateUuid();
         $slugBase = preg_replace('/[^a-z0-9]+/i', '-', strtolower($name));

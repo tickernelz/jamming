@@ -42,9 +42,9 @@ final class ApiTest extends TestCase
         @rmdir(self::$dataDir);
     }
 
-    private function request(string $method, string $path, ?array $body = null, ?string $cookie = null, ?string $raw = null): array
+    private function request(string $method, string $path, ?array $body = null, ?string $cookie = null, ?string $raw = null, array $extraHeaders = [], string $contentType = 'application/json'): array
     {
-        $headers = ['Content-Type: application/json'];
+        $headers = array_merge(['Content-Type: ' . $contentType], $extraHeaders);
         if ($cookie !== null) {
             $headers[] = 'Cookie: jamri_session=' . $cookie;
         }
@@ -122,6 +122,44 @@ final class ApiTest extends TestCase
         self::assertSame(array_fill(0, 8, 403), array_slice($statuses, 0, 8));
         self::assertSame(429, $statuses[8]);
         self::assertSame(429, $this->request('POST', '/api/room_detail.php?room_id=' . $roomId, ['passcode' => 'correct-horse'], $attacker['token'])['status']);
+    }
+
+    public function testCrossSitePostCannotReplaceTheSession(): void
+    {
+        $evil = ['Origin: https://evil.example'];
+        $attempts = [
+            $this->request('POST', '/api/auth.php', null, null, 'nickname=pwned&emoji=x', $evil, 'application/x-www-form-urlencoded'),
+            $this->request('POST', '/api/auth.php', null, null, '{"nickname":"pwned"}', $evil, 'text/plain'),
+            $this->request('POST', '/api/auth.php', ['nickname' => 'pwned'], null, null, $evil),
+            $this->request('POST', '/api/auth.php', ['nickname' => 'pwned'], null, null, ['Sec-Fetch-Site: cross-site']),
+            $this->request('POST', '/api/auth.php', ['nickname' => 'pwned'], null, null, ['Origin: null']),
+        ];
+
+        foreach ($attempts as $i => $res) {
+            self::assertSame(403, $res['status'], "attempt {$i}");
+            self::assertSame([], preg_grep('/^Set-Cookie:/i', $res['headers']), "attempt {$i}");
+        }
+
+        $form = $this->request('POST', '/api/auth.php', null, null, 'nickname=x', [], 'application/x-www-form-urlencoded');
+        self::assertSame(415, $form['status']);
+
+        $sameOrigin = $this->request('POST', '/api/auth.php', ['nickname' => 'Real'], null, null, [
+            'Origin: ' . self::$base,
+            'Sec-Fetch-Site: same-origin',
+        ]);
+        self::assertSame(200, $sameOrigin['status']);
+        self::assertNotSame([], preg_grep('/^Set-Cookie: jamri_session=/i', $sameOrigin['headers']));
+    }
+
+    public function testCspAllowsOnlyThisOriginsWebSocket(): void
+    {
+        $csp = current(preg_grep('/^Content-Security-Policy:/i', $this->request('GET', '/')['headers']));
+        preg_match("/connect-src ([^;]+);/", $csp, $m);
+        $sources = explode(' ', trim($m[1]));
+
+        self::assertNotContains('ws:', $sources);
+        self::assertNotContains('wss:', $sources);
+        self::assertContains('ws://127.0.0.1:8081', $sources);
     }
 
     public function testOversizedBodyIsRejected(): void

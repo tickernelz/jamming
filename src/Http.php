@@ -21,28 +21,71 @@ final class Http
         header('X-Frame-Options: DENY');
         header('Referrer-Policy: strict-origin-when-cross-origin');
         header('Permissions-Policy: geolocation=(), camera=(), microphone=(self)');
-        header(
-            "Content-Security-Policy: "
-            . "default-src 'self'; "
+        header('Content-Security-Policy: ' . self::contentSecurityPolicy());
+        header('Cross-Origin-Resource-Policy: same-site');
+    }
+
+    public static function contentSecurityPolicy(): string
+    {
+        return "default-src 'self'; "
             . "script-src 'self' https://www.youtube.com https://www.youtube-nocookie.com; "
             . "style-src 'self' 'unsafe-inline'; "
             . "img-src 'self' data: https:; "
             . "media-src 'self' blob: data: https:; "
-            . "connect-src 'self' ws: wss: https://www.youtube.com https://www.youtube-nocookie.com https://i.ytimg.com; "
+            . "connect-src 'self' " . self::socketSource() . 'https://www.youtube.com https://www.youtube-nocookie.com https://i.ytimg.com; '
             . "frame-src https://www.youtube.com https://www.youtube-nocookie.com; "
             . "object-src 'none'; "
             . "base-uri 'self'; "
-            . "form-action 'self'"
-        );
-        header('Cross-Origin-Resource-Policy: same-site');
+            . "form-action 'self'";
+    }
+
+    /** The one WebSocket origin the page may open: wss://<host>/ws over HTTPS, ws://<host>:<ws_port> for local HTTP. */
+    private static function socketSource(): string
+    {
+        $host = strtolower((string)($_SERVER['HTTP_HOST'] ?? ''));
+        if (preg_match('/^([a-z0-9.-]+)(:\d{1,5})?$/', $host, $m) !== 1) {
+            return '';
+        }
+        if (self::isHttps()) {
+            return "wss://{$host} ";
+        }
+        $config = require dirname(__DIR__) . '/config/app.php';
+        return "ws://{$m[1]}:" . (int)$config['ws_port'] . ' ';
+    }
+
+    private static function isHttps(): bool
+    {
+        return ($_SERVER['HTTPS'] ?? '') !== '' && ($_SERVER['HTTPS'] ?? '') !== 'off';
+    }
+
+    /** Refuse bodies a cross-site page can send: non-JSON types, or a foreign Sec-Fetch-Site or Origin. */
+    public static function requireSameOriginJson(): void
+    {
+        $site = (string)($_SERVER['HTTP_SEC_FETCH_SITE'] ?? '');
+        if ($site !== '' && $site !== 'same-origin') {
+            self::error('cross_site_request', 403);
+        }
+        $origin = (string)($_SERVER['HTTP_ORIGIN'] ?? '');
+        if ($origin !== '') {
+            $parts = parse_url($origin);
+            $authority = isset($parts['host']) ? $parts['host'] . (isset($parts['port']) ? ':' . $parts['port'] : '') : '';
+            if ($authority === '' || strcasecmp($authority, (string)($_SERVER['HTTP_HOST'] ?? '')) !== 0) {
+                self::error('cross_site_request', 403);
+            }
+        }
+        $type = strtolower(trim(explode(';', (string)($_SERVER['CONTENT_TYPE'] ?? ''))[0]));
+        if ($type !== 'application/json') {
+            self::error('Content-Type harus application/json.', 415);
+        }
     }
 
     public const SESSION_COOKIE = 'jamri_session';
     public const MAX_BODY_BYTES = 16384;
 
-    /** Decode the JSON request body (bounded), falling back to form-encoded POST data. */
+    /** Decode a same-origin JSON request body of at most $maxBytes. */
     public static function input(int $maxBytes = self::MAX_BODY_BYTES): array
     {
+        self::requireSameOriginJson();
         if ((int)($_SERVER['CONTENT_LENGTH'] ?? 0) > $maxBytes) {
             self::error('Request terlalu besar.', 413);
         }
@@ -50,13 +93,14 @@ final class Http
         if (strlen($raw) > $maxBytes) {
             self::error('Request terlalu besar.', 413);
         }
-        if ($raw !== '') {
-            $decoded = json_decode($raw, true);
-            if (is_array($decoded)) {
-                return $decoded;
-            }
+        if ($raw === '') {
+            return [];
         }
-        return $_POST;
+        $decoded = json_decode($raw, true);
+        if (!is_array($decoded)) {
+            self::error('Body JSON tidak valid.', 400);
+        }
+        return $decoded;
     }
 
     public static function json(mixed $data, int $status = 200): never
@@ -89,23 +133,34 @@ final class Http
 
     public static function startSession(string $token): void
     {
-        $https = ($_SERVER['HTTPS'] ?? '') !== '' && ($_SERVER['HTTPS'] ?? '') !== 'off';
         setcookie(self::SESSION_COOKIE, $token, [
             'expires' => time() + 365 * 86400,
             'path' => '/',
-            'secure' => $https,
+            'secure' => self::isHttps(),
             'httponly' => true,
             'samesite' => 'Strict',
         ]);
     }
 
-    /** Best-effort client identity for rate limiting (never persisted raw). */
-    public static function clientKey(string $deviceId = ''): string
+    /** Rate-limit identity of the calling network (never persisted raw). */
+    public static function clientKey(): string
     {
-        if ($deviceId !== '') {
-            return 'dev:' . $deviceId;
+        return 'ip:' . self::networkKey((string)($_SERVER['REMOTE_ADDR'] ?? ''));
+    }
+
+    /** IPv4 address as-is, IPv6 reduced to its /64 so one host cannot rotate through its prefix. */
+    public static function networkKey(string $ip): string
+    {
+        $packed = @inet_pton(trim($ip));
+        if ($packed === false) {
+            return 'unknown';
         }
-        $ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
-        return 'ip:' . $ip;
+        if (strlen($packed) === 4) {
+            return inet_ntop($packed);
+        }
+        if (str_starts_with($packed, str_repeat("\0", 10) . "\xff\xff")) {
+            return inet_ntop(substr($packed, 12));
+        }
+        return inet_ntop(substr($packed, 0, 8) . str_repeat("\0", 8)) . '/64';
     }
 }
