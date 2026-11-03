@@ -48,7 +48,7 @@ for f in tests/*.mjs; do node "$f"; done
 
 nginx serves only `/`, `index.php`, `api/*.php`, `public/` and the `/ws` proxy; everything else (source, vendor, composer files, data, dotfiles) returns 404. It trusts `CF-Connecting-IP` only from Cloudflare ranges (refresh `nginx-cloudflare-realip.conf` from https://www.cloudflare.com/ips/ when they change), rate-limits `api/*.php` per client (IPv4 address or IPv6 /64), caps request bodies at 1 MB, and sends HSTS. `api/health.php` returns 200 when the database and the WebSocket port answer, 503 otherwise.
 
-Backups: `jamri-backup.timer` runs `deploy/jamri-backup.sh` daily, writing an integrity-checked `VACUUM INTO` copy to `/var/backups/jamri/jamri-<timestamp>.sqlite.gz` and keeping 14 days. Logs: nginx writes `/var/log/nginx/jamri.{access,error}.log` and php-fpm `/var/log/php-fpm/jamri-error.log`; both are rotated by the stock `/etc/logrotate.d/nginx` and `/etc/logrotate.d/php-fpm` rules. The daemon logs to the journal.
+Backups: `jamri-backup.timer` runs `deploy/jamri-backup.sh` daily, writing an integrity-checked `VACUUM INTO` copy to `/var/backups/jamri/jamri-<timestamp>.sqlite.gz` and keeping 14 days. Logs: nginx writes `/var/log/nginx/jamri.{access,error}.log`; PHP errors from the pool reach the php-fpm master log `/var/log/php-fpm/error.log` through `catch_workers_output` (the pool user cannot write inside `/var/log/php-fpm`); both are rotated by the stock `/etc/logrotate.d/nginx` and `/etc/logrotate.d/php-fpm` rules. The daemon logs to the journal.
 
 ## Security model
 
