@@ -136,12 +136,8 @@ function switchView(viewName) {
         btn.classList.toggle('active', btn.dataset.view === viewName);
     });
 
-    // Rigid viewport lock untuk jamming room / world di desktop
-    if (viewName === 'room' || viewName === 'world') {
-        document.body.classList.add('in-room');
-    } else {
-        document.body.classList.remove('in-room');
-    }
+    document.body.classList.toggle('in-room', viewName === 'room');
+    document.body.classList.toggle('in-world', viewName === 'world');
 
     if (viewName === 'solo') {
         renderSoloView();
