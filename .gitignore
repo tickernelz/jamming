@@ -1,0 +1,43 @@
+# Composer dependencies
+/vendor/
+
+# Database runtime files (SQLite) & runtime state
+/data/*.sqlite
+/data/*.sqlite-shm
+/data/*.sqlite-wal
+/data/*.db
+/data/*.json
+/data/lyrics_cache/*
+!/data/lyrics_cache/.gitkeep
+!/data/.htaccess
+!/data/.gitkeep
+
+# Environment & Local secrets
+.env
+.env.local
+.env.*.local
+
+# Runtime logs
+*.log
+websocket.log
+error_log
+
+# Temporary, Uploads & Archive files
+/scratch/
+/public/uploads/
+*.zip
+*.tar.gz
+*.rar
+
+# Operating System & IDE files
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.sublime-workspace
+
+# Local tunnel helpers (ngrok development only)
+/bin/tunnel_gateway.js
+/start_tunnel.bat
+

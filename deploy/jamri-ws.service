@@ -1,0 +1,23 @@
+[Unit]
+Description=Jamri WebSocket daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jamri
+Group=jamri
+WorkingDirectory=/opt/jamri
+ExecStart=/usr/bin/php /opt/jamri/bin/websocket.php 8080
+Restart=on-failure
+RestartSec=3
+MemoryMax=320M
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ReadWritePaths=/opt/jamri/data
+
+[Install]
+WantedBy=multi-user.target
