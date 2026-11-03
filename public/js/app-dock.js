@@ -15,7 +15,7 @@ function bindPlayerDock(player) {
     const mobileVolumeSlider = document.getElementById('dock-mobile-volume-slider');
     const mobileVolumeVal = document.getElementById('dock-mobile-volume-val');
     const progressBar = document.getElementById('dock-progress-bar');
-    const progressFill = document.getElementById('dock-progress-fill');
+    const progressTooltip = document.getElementById('dock-progress-tooltip');
     const currentTimeLabel = document.getElementById('dock-current-time');
     const totalTimeLabel = document.getElementById('dock-total-time');
 
@@ -71,9 +71,20 @@ function bindPlayerDock(player) {
     // Initialize local volume display
     updateVolumeUi(player.volume);
 
+    function isHostOnlyLocked() {
+        const app = window.JAMRI_APP;
+        return !!app && app.currentView === 'room'
+            && app.roomControlMode !== 'everyone'
+            && !(window.JAMRI_USER && window.JAMRI_USER.is_host);
+    }
+
     function checkControlPermitted() {
         if (window.JAMRI_APP && window.JAMRI_APP.currentView === 'room' && window.JAMRI_APP.games && window.JAMRI_APP.games.isPunished()) {
             window.JAMRI_APP.games.notifyPunishedAction('mengontrol pemutaran musik');
+            return false;
+        }
+        if (isHostOnlyLocked()) {
+            showToast('Hanya host yang bisa mengatur musik. Minta host menyalakan Kontrol Bersama.', 'warning');
             return false;
         }
         return true;
@@ -157,19 +168,101 @@ function bindPlayerDock(player) {
         updateVolumeUi(vol);
     });
 
-    // Progress Scrubber Click
-    progressBar.addEventListener('click', (e) => {
-        if (!checkControlPermitted()) return;
+    const scrub = { dragging: false, pointerId: null, preview: 0, current: 0, duration: 0 };
+
+    function renderProgress(seconds, duration) {
+        const pct = duration > 0 ? Math.max(0, Math.min(100, (seconds / duration) * 100)) : 0;
+        progressBar.style.setProperty('--progress', pct + '%');
+        currentTimeLabel.textContent = formatSeconds(seconds);
+        totalTimeLabel.textContent = formatSeconds(duration);
+        progressBar.setAttribute('aria-valuemax', String(Math.round(duration)));
+        progressBar.setAttribute('aria-valuenow', String(Math.round(seconds)));
+        progressBar.setAttribute('aria-valuetext', formatSeconds(seconds) + ' dari ' + formatSeconds(duration));
+    }
+
+    function syncScrubberState() {
+        const disabled = !(scrub.duration > 0);
+        const locked = !disabled && isHostOnlyLocked();
+        progressBar.classList.toggle('is-disabled', disabled);
+        progressBar.classList.toggle('is-locked', locked);
+        progressBar.setAttribute('aria-disabled', String(disabled || locked));
+        progressBar.title = locked ? 'Hanya host yang bisa menggeser lagu' : '';
+    }
+
+    function secondsAt(clientX) {
         const rect = progressBar.getBoundingClientRect();
-        const clickX = e.clientX - rect.left;
-        const width = rect.width;
-        // Use the real player duration (metadata duration can be 0 for long tracks,
-        // which previously made the progress bar unclickable).
-        const duration = player.getDuration();
-        if (duration > 0 && width > 0) {
-            const seekTo = Math.max(0, Math.min(duration, (clickX / width) * duration));
-            player.seek(seekTo);
+        if (!(rect.width > 0) || !(scrub.duration > 0)) return 0;
+        const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+        progressTooltip.style.left = (ratio * 100) + '%';
+        return ratio * scrub.duration;
+    }
+
+    function resetScrubber() {
+        scrub.dragging = false;
+        scrub.current = 0;
+        scrub.duration = 0;
+        progressBar.classList.remove('is-dragging');
+        renderProgress(0, 0);
+        syncScrubberState();
+    }
+
+    progressBar.addEventListener('pointermove', (e) => {
+        if (scrub.duration > 0) {
+            const sec = secondsAt(e.clientX);
+            progressTooltip.textContent = formatSeconds(sec);
+            if (scrub.dragging && e.pointerId === scrub.pointerId) {
+                scrub.preview = sec;
+                renderProgress(sec, scrub.duration);
+            }
         }
+    });
+
+    progressBar.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0 || !(scrub.duration > 0)) return;
+        if (!checkControlPermitted()) return;
+        e.preventDefault();
+        scrub.dragging = true;
+        scrub.pointerId = e.pointerId;
+        progressBar.setPointerCapture(e.pointerId);
+        progressBar.classList.add('is-dragging');
+        scrub.preview = secondsAt(e.clientX);
+        progressTooltip.textContent = formatSeconds(scrub.preview);
+        renderProgress(scrub.preview, scrub.duration);
+    });
+
+    function endDrag(commit) {
+        if (!scrub.dragging) return;
+        scrub.dragging = false;
+        progressBar.classList.remove('is-dragging');
+        if (commit) {
+            scrub.current = scrub.preview;
+            player.seek(scrub.preview);
+        } else {
+            renderProgress(scrub.current, scrub.duration);
+        }
+    }
+
+    progressBar.addEventListener('pointerup', (e) => {
+        if (e.pointerId === scrub.pointerId) endDrag(true);
+    });
+    progressBar.addEventListener('pointercancel', (e) => {
+        if (e.pointerId === scrub.pointerId) endDrag(false);
+    });
+    progressBar.addEventListener('lostpointercapture', () => endDrag(true));
+
+    progressBar.addEventListener('keydown', (e) => {
+        if (!(scrub.duration > 0)) return;
+        const steps = { ArrowLeft: -5, ArrowDown: -5, ArrowRight: 5, ArrowUp: 5, PageDown: -30, PageUp: 30 };
+        let target = null;
+        if (e.key in steps) target = scrub.current + steps[e.key];
+        else if (e.key === 'Home') target = 0;
+        else if (e.key === 'End') target = scrub.duration - 1;
+        if (target === null) return;
+        e.preventDefault();
+        if (!checkControlPermitted()) return;
+        scrub.current = Math.max(0, Math.min(scrub.duration, target));
+        renderProgress(scrub.current, scrub.duration);
+        player.seek(scrub.current);
     });
 
     // Download as .jamri Click
@@ -215,12 +308,19 @@ function bindPlayerDock(player) {
 
     player.on('track_change', (track) => {
         updateDockTrackDisplay(track);
+        if (!track) resetScrubber();
     });
 
-    player.on('time_update', ({ currentTime, duration, progress }) => {
-        progressFill.style.width = `${progress}%`;
-        currentTimeLabel.textContent = formatSeconds(currentTime);
-        totalTimeLabel.textContent = formatSeconds(duration);
+    player.on('playback_stopped', () => {
+        if (!player.currentTrack) resetScrubber();
+    });
+
+    player.on('time_update', ({ currentTime, duration }) => {
+        scrub.duration = duration > 0 ? duration : 0;
+        syncScrubberState();
+        if (scrub.dragging) return;
+        scrub.current = currentTime;
+        renderProgress(currentTime, scrub.duration);
     });
 
     player.on('shuffle_change', (isShuffled) => {

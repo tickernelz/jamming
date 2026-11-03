@@ -193,8 +193,12 @@ $asset = static function (string $relativePath): string {
             <!-- Scrubber timeline -->
             <div class="dock-scrubber-row">
                 <span class="time-label" id="dock-current-time">0:00</span>
-                <div class="progress-track" id="dock-progress-bar">
-                    <div class="progress-fill" id="dock-progress-fill"></div>
+                <div class="progress-track is-disabled" id="dock-progress-bar" role="slider" tabindex="0" aria-label="Posisi lagu" aria-disabled="true" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="0:00">
+                    <div class="progress-rail">
+                        <div class="progress-fill" id="dock-progress-fill"></div>
+                    </div>
+                    <div class="progress-thumb" id="dock-progress-thumb"></div>
+                    <div class="progress-tooltip" id="dock-progress-tooltip">0:00</div>
                 </div>
                 <span class="time-label" id="dock-total-time">0:00</span>
             </div>
