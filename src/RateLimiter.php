@@ -6,10 +6,14 @@ namespace Jamri;
 
 use Closure;
 use PDO;
+use PDOException;
 
 /** Fixed-window rate limiter: shared across PHP workers through a SQLite store, or held in memory without one. */
 final class RateLimiter
 {
+    private const SQLITE_CORRUPT = 11;
+    private const SQLITE_NOTADB = 26;
+
     private array $buckets = [];
     private Closure $clock;
 
@@ -24,18 +28,35 @@ final class RateLimiter
         return new self(self::openStore(Database::dataDir() . DIRECTORY_SEPARATOR . 'rate_limits.sqlite'));
     }
 
-    /** Open the bucket store without fsync; counters may be lost on an OS crash. */
+    /** Open the bucket store without fsync; a store an OS crash left unreadable is recreated empty. */
     public static function openStore(string $path): PDO
+    {
+        try {
+            return self::connectStore($path);
+        } catch (PDOException $e) {
+            if (!in_array($e->errorInfo[1] ?? null, [self::SQLITE_CORRUPT, self::SQLITE_NOTADB], true)) {
+                throw $e;
+            }
+            error_log('[RateLimiter] recreating unreadable store ' . $path . ': ' . $e->getMessage());
+            @unlink($path);
+            @unlink($path . '-journal');
+            return self::connectStore($path);
+        }
+    }
+
+    private static function connectStore(string $path): PDO
     {
         $pdo = new PDO('sqlite:' . $path);
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-        $pdo->exec('PRAGMA busy_timeout = 5000; PRAGMA journal_mode = DELETE; PRAGMA synchronous = OFF;');
-        $pdo->exec('CREATE TABLE IF NOT EXISTS rate_limits (
-            bucket TEXT PRIMARY KEY,
-            window_start REAL NOT NULL,
-            hits INTEGER NOT NULL,
-            window_seconds INTEGER NOT NULL
-        )');
+        $pdo->exec('PRAGMA busy_timeout = 5000; PRAGMA synchronous = OFF;');
+        if ((int)$pdo->query('PRAGMA user_version')->fetchColumn() !== 1) {
+            $pdo->exec('CREATE TABLE IF NOT EXISTS rate_limits (
+                bucket TEXT PRIMARY KEY,
+                window_start REAL NOT NULL,
+                hits INTEGER NOT NULL,
+                window_seconds INTEGER NOT NULL
+            ); PRAGMA user_version = 1;');
+        }
         return $pdo;
     }
 

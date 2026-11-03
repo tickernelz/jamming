@@ -37,7 +37,7 @@ vendor/bin/phpunit
 for f in tests/*.mjs; do node "$f"; done
 ```
 
-`tests/ApiTest.php` starts `php -S` against a temporary data directory and drives the HTTP API; `tests/WebSocketHandlerTest.php` drives the socket handler with fake connections. CI (`.github/workflows/ci.yml`) runs lint, PHPUnit on PHP 8.1 and 8.4, `composer audit`, the JS syntax and source checks, and shellcheck.
+`tests/ApiTest.php` starts `php -S` against a temporary data directory and drives the HTTP API; `tests/WebSocketHandlerTest.php` drives the socket handler with fake connections. CI (`.github/workflows/ci.yml`) runs lint, PHPUnit on PHP 8.1, 8.4 and 8.5 (production), `composer audit`, the JS syntax and source checks, and shellcheck.
 
 ## Production (Fedora + nginx + php-fpm)
 
@@ -57,7 +57,7 @@ Backups: `jamri-backup.timer` runs `deploy/jamri-backup.sh` daily, writing an in
 - Private rooms: passcodes are stored with `password_hash` and never serialized. A correct passcode (POST to `api/room_detail.php`) records a grant for that session; attempts are throttled per client network (IPv4 address or IPv6 /64), per room and network, and failures per room across all networks; chat history, playlist actions and the socket require the grant or host status.
 - Room control: only the host can play, pause, seek, skip, change the queue or Bank Musik, start games, or clear penalties, until the host switches on "Kontrol Bersama". A guest's `track_ended` only advances the queue near the end of the track.
 - Output: nickname, emoji, chat, track fields and thumbnails are validated server-side and escaped client-side; `index.php` and the API send a CSP without `unsafe-inline` scripts whose `connect-src` allows only this origin's WebSocket.
-- Limits: per-endpoint and per-socket rate limits (HTTP buckets are atomic upserts in `data/rate_limits.sqlite`, shared by every php-fpm worker; the daemon keeps its own in memory), 16 KB JSON request bodies, 256 KB WebSocket messages enforced before buffering.
+- Limits: per-endpoint and per-socket rate limits (HTTP buckets are atomic upserts in `data/rate_limits.sqlite`, shared by every php-fpm worker and recreated empty if it becomes unreadable, so deleting it at any time only resets counters; the daemon keeps its own in memory), 16 KB JSON request bodies, 256 KB WebSocket messages enforced before buffering.
 
 ## Known security issues
 

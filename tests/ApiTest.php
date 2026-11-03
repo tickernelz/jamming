@@ -55,8 +55,9 @@ final class ApiTest extends TestCase
             'ignore_errors' => true,
         ]]);
         $response = file_get_contents(self::$base . $path, false, $context);
-        $status = (int)explode(' ', $http_response_header[0])[1];
-        return ['status' => $status, 'body' => json_decode((string)$response, true), 'headers' => $http_response_header];
+        $headers = function_exists('http_get_last_response_headers') ? http_get_last_response_headers() : $http_response_header;
+        $status = (int)explode(' ', $headers[0])[1];
+        return ['status' => $status, 'body' => json_decode((string)$response, true), 'headers' => $headers];
     }
 
     private function register(string $nickname): array

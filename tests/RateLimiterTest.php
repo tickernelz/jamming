@@ -67,6 +67,16 @@ final class RateLimiterTest extends TestCase
         self::assertTrue($a->allow('register:x', 1, 3600));
     }
 
+    public function testUnreadableStoreIsRecreated(): void
+    {
+        file_put_contents($this->path, str_repeat("\x5a", 4096));
+
+        $limiter = $this->worker();
+
+        self::assertTrue($limiter->allow('passcode:x', 1, 600));
+        self::assertFalse($limiter->allow('passcode:x', 1, 600));
+    }
+
     public function testInMemoryLimiterKeepsPerBucketWindow(): void
     {
         $limiter = new RateLimiter(null, fn (): float => $this->now);
