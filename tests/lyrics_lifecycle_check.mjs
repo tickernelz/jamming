@@ -7,6 +7,7 @@
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert';
 import vm from 'node:vm';
+import { appSource } from './lib/app-source.mjs';
 
 const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
 
@@ -92,7 +93,7 @@ assert.strictEqual(mgr.embeddedContainers.has('stale-container'), false,
     'renderAllViews must prune containers that no longer exist in the DOM');
 
 // app.js must actually call teardown() when a room or world session ends.
-const app = read('../public/js/app.js');
+const app = appSource();
 const body = (name, nextName) => {
     const start = app.indexOf(`function ${name}(`);
     assert.ok(start !== -1, `${name} must exist`);

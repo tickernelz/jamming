@@ -303,6 +303,10 @@ $assetVersion = static function (string $relativePath): string {
     <script src="public/js/games.js?v=<?= $assetVersion('public/js/games.js') ?>"></script>
     <script src="public/js/lyrics.js?v=<?= $assetVersion('public/js/lyrics.js') ?>"></script>
     <script src="public/js/world.js?v=<?= $assetVersion('public/js/world.js') ?>"></script>
+    <script src="public/js/app-util.js?v=<?= $assetVersion('public/js/app-util.js') ?>"></script>
+    <script src="public/js/app-room.js?v=<?= $assetVersion('public/js/app-room.js') ?>"></script>
+    <script src="public/js/app-solo.js?v=<?= $assetVersion('public/js/app-solo.js') ?>"></script>
+    <script src="public/js/app-dock.js?v=<?= $assetVersion('public/js/app-dock.js') ?>"></script>
     <script src="public/js/app.js?v=<?= $assetVersion('public/js/app.js') ?>"></script>
 </body>
 </html>

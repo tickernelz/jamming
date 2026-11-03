@@ -12,6 +12,7 @@
 //      labelled "Tutup (Esc)" while Escape did nothing.
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert';
+import { appSource } from './lib/app-source.mjs';
 
 const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
 
@@ -21,7 +22,7 @@ const validator = read('../src/Validator.php');
 const htaccess = read('../.htaccess');
 const lyrics = read('../public/js/lyrics.js');
 const websocketJs = read('../public/js/websocket.js');
-const appJs = read('../public/js/app.js');
+const appJs = appSource();
 
 // 2) A track that auto-starts on queue_add must leave the queue.
 const queueAdd = ws.slice(ws.indexOf("case 'queue_add':"), ws.indexOf("case 'queue_reorder':"));

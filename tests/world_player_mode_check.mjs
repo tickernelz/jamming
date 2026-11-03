@@ -9,9 +9,10 @@
 //   - room_init's paused state was ignored
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert';
+import { appSource } from './lib/app-source.mjs';
 
 const player = readFileSync(new URL('../public/js/player.js', import.meta.url), 'utf8');
-const app = readFileSync(new URL('../public/js/app.js', import.meta.url), 'utf8');
+const app = appSource();
 const search = readFileSync(new URL('../public/js/search.js', import.meta.url), 'utf8');
 const lyrics = readFileSync(new URL('../public/js/lyrics.js', import.meta.url), 'utf8');
 

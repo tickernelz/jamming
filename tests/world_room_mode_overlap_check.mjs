@@ -3,10 +3,10 @@
 // other. Previously joinRoom() never cleared activeWorldId and enterWorld()
 // never cleared activeRoomId, so both ids stayed set and one session's socket
 // kept running hidden / got overwritten on the next entry.
-import { readFileSync } from 'node:fs';
 import assert from 'node:assert';
+import { appSource } from './lib/app-source.mjs';
 
-const src = readFileSync(new URL('../public/js/app.js', import.meta.url), 'utf8');
+const src = appSource();
 
 const body = (name, nextName) => {
     const start = src.indexOf(`function ${name}(`);

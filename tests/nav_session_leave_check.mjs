@@ -1,10 +1,10 @@
 // Guard: leaving the world via the nav tabs / logo must actually end the world
 // session. Navigation previously only checked activeRoomId, so the world socket
 // and its render loop kept running hidden (and stacked on re-entry).
-import { readFileSync } from 'node:fs';
 import assert from 'node:assert';
+import { appSource } from './lib/app-source.mjs';
 
-const src = readFileSync(new URL('../public/js/app.js', import.meta.url), 'utf8');
+const src = appSource();
 
 const nav = src.slice(src.indexOf('function bindNavigation'), src.indexOf('LOBBY ROOMS'));
 assert.ok(nav.includes('leaveActiveSession()'),
