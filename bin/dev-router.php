@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 $path = (string)parse_url((string)($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH);
-if (preg_match('#^/v/[0-9]+/(public/[A-Za-z0-9_.\-/]+)$#', $path, $m) !== 1 || str_contains($m[1], '..')) {
+if (preg_match('#^/v/[0-9a-f]+/(public/[A-Za-z0-9_.\-/]+)$#', $path, $m) !== 1 || str_contains($m[1], '..')) {
     return false;
 }
 

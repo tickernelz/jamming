@@ -6,8 +6,8 @@ require_once __DIR__ . '/vendor/autoload.php';
 Jamri\Http::securityHeaders(false);
 
 $asset = static function (string $relativePath): string {
-    $mtime = @filemtime(__DIR__ . '/' . $relativePath);
-    return 'v/' . ($mtime !== false ? $mtime : 0) . '/' . $relativePath;
+    $hash = @hash_file('xxh3', __DIR__ . '/' . $relativePath);
+    return 'v/' . ($hash !== false ? $hash : '0') . '/' . $relativePath;
 };
 ?>
 <!DOCTYPE html>

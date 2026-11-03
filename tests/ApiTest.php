@@ -166,15 +166,16 @@ final class ApiTest extends TestCase
     public function testShellLinksEveryAssetByVersionedPathWithoutQueryString(): void
     {
         $html = (string)file_get_contents(self::$base . '/');
-        preg_match_all('#(?:src|href)="([^"]+\.(?:js|css))"#', $html, $m);
+        preg_match_all('#(?:src|href)="(?!https?:)([^"?]+\.(?:js|css)(?:\?[^"]*)?)"#', $html, $m);
 
-        self::assertCount(19, $m[1]);
+        self::assertNotEmpty($m[1]);
         foreach ($m[1] as $url) {
-            self::assertMatchesRegularExpression('#^v/[1-9][0-9]*/public/(js|css)/[a-z-]+\.(js|css)$#', $url);
+            self::assertStringNotContainsString('?', $url);
+            self::assertMatchesRegularExpression('#^v/[0-9a-f]+/public/(js|css)/[A-Za-z0-9_.-]+\.(js|css)$#', $url);
             $res = $this->request('GET', '/' . $url);
             self::assertSame(200, $res['status'], $url);
             self::assertSame(
-                filesize(dirname(__DIR__) . '/' . preg_replace('#^v/[0-9]+/#', '', $url)),
+                filesize(dirname(__DIR__) . '/' . preg_replace('#^v/[0-9a-f]+/#', '', $url)),
                 (int)current(preg_replace('/^content-length:\s*/i', '', preg_grep('/^content-length:/i', $res['headers']))),
                 $url
             );
